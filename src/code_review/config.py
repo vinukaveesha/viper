@@ -12,7 +12,7 @@ class SCMConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SCM_", extra="ignore")
 
-    provider: Literal["gitea", "gitlab", "bitbucket"] = "gitea"
+    provider: Literal["gitea", "github", "gitlab", "bitbucket"] = "gitea"
     url: str = Field(..., description="API base URL (may differ from UI for self-hosted)")
     token: str = Field(..., description="API token for authentication")
     owner: str = Field(default="", description="Repo owner/org")
@@ -39,6 +39,14 @@ class LLMConfig(BaseSettings):
     disable_tool_calls: bool = Field(
         default=False,
         description="Disable tool calls for debugging runner logic",
+    )
+    timeout_seconds: float = Field(
+        default=60.0,
+        description="Per-request timeout for LLM API calls",
+    )
+    max_retries: int = Field(
+        default=3,
+        description="Max retries on transient LLM failures",
     )
 
 
