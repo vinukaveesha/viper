@@ -96,3 +96,50 @@ def test_get_existing_review_comments(mock_client):
     assert len(comments) == 2
     assert comments[0].id == "1" and comments[0].resolved is False
     assert comments[1].id == "2" and comments[1].resolved is True
+
+
+@patch("code_review.providers.gitea.httpx.Client")
+def test_get_pr_diff_for_file(mock_client):
+    full_diff = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1,2 +1,3 @@\n x\n+y\n z"
+    mock_resp = MagicMock()
+    mock_resp.text = full_diff
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = GiteaProvider("https://gitea.example.com", "tok")
+    diff = p.get_pr_diff_for_file("owner", "repo", 1, "foo.py")
+    assert "foo.py" in diff
+    assert "+y" in diff
+
+
+@patch("code_review.providers.gitea.httpx.Client")
+def test_get_file_lines(mock_client):
+    content_b64 = base64.b64encode(b"line1\nline2\nline3\nline4").decode()
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"content": content_b64}
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = GiteaProvider("https://gitea.example.com", "tok")
+    lines = p.get_file_lines("owner", "repo", "main", "foo.py", 2, 3)
+    assert lines == "line2\nline3"
+
+
+@patch("code_review.providers.gitea.httpx.Client")
+def test_post_pr_summary_comment(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = GiteaProvider("https://gitea.example.com", "tok")
+    p.post_pr_summary_comment("owner", "repo", 1, "Summary: 2 Critical, 1 Suggestion")
+    call_args = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/issues/1/comments" in call_args[0][0]
+    assert call_args[1]["json"]["body"] == "Summary: 2 Critical, 1 Suggestion"
+
+
+def test_capabilities():
+    p = GiteaProvider("https://gitea.example.com", "tok")
+    caps = p.capabilities()
+    assert caps.resolvable_comments is True
+    assert caps.supports_suggestions is False

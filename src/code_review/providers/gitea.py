@@ -4,8 +4,10 @@ from typing import Any
 
 import httpx
 
+from code_review.diff.parser import parse_unified_diff
 from code_review.providers.base import (
     FileInfo,
+    ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
 )
@@ -46,10 +48,42 @@ class GiteaProvider(ProviderInterface):
             r.raise_for_status()
             return r.json() if r.content else None
 
+    def _patch(self, path: str, json: Any) -> Any:
+        url = f"{self._base_url}/api/v1{path}"
+        with httpx.Client(timeout=self._timeout) as client:
+            r = client.patch(url, headers=self._headers(), json=json)
+            r.raise_for_status()
+            return r.json() if r.content else None
+
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR."""
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}.diff"
         return self._get_text(path)
+
+    def get_pr_diff_for_file(
+        self, owner: str, repo: str, pr_number: int, file_path: str
+    ) -> str:
+        """Return diff for a single file. Parses full diff and slices by file."""
+        full_diff = self.get_pr_diff(owner, repo, pr_number)
+        hunks = parse_unified_diff(full_diff)
+        lines: list[str] = []
+        for hunk in hunks:
+            if hunk.path != file_path:
+                continue
+            in_file = True
+            lines.append(f"--- a/{hunk.path}")
+            lines.append(f"+++ b/{hunk.path}")
+            lines.append(
+                f"@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@"
+            )
+            for content, old_ln, new_ln in hunk.lines:
+                if old_ln is not None and new_ln is not None:
+                    lines.append(" " + content)
+                elif new_ln is not None:
+                    lines.append("+" + content)
+                else:
+                    lines.append("-" + content)
+        return "\n".join(lines) if lines else ""
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref."""
@@ -59,6 +93,24 @@ class GiteaProvider(ProviderInterface):
             import base64
             return base64.b64decode(resp["content"]).decode("utf-8", errors="replace")
         raise ValueError(f"Unexpected response for {path} at {ref}")
+
+    def get_file_lines(
+        self,
+        owner: str,
+        repo: str,
+        ref: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> str:
+        """Return lines start_line..end_line (1-based inclusive) from file at ref."""
+        content = self.get_file_content(owner, repo, ref, path)
+        lines = content.splitlines()
+        if start_line < 1 or end_line < start_line:
+            return ""
+        start_idx = start_line - 1
+        end_idx = min(end_line, len(lines))
+        return "\n".join(lines[start_idx:end_idx])
 
     def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[FileInfo]:
         """Return list of changed files in the PR."""
@@ -129,3 +181,30 @@ class GiteaProvider(ProviderInterface):
                 )
             )
         return result
+
+    def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
+        """Mark comment as resolved via PATCH if Gitea supports it."""
+        self._patch(
+            f"/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+            {"resolved": True},
+        )
+
+    def unresolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
+        """Mark comment as unresolved."""
+        self._patch(
+            f"/repos/{owner}/{repo}/pulls/comments/{comment_id}",
+            {"resolved": False},
+        )
+
+    def post_pr_summary_comment(
+        self, owner: str, repo: str, pr_number: int, body: str
+    ) -> None:
+        """Post PR-level comment. In Gitea, PRs are issues; use issues comments endpoint."""
+        self._post(
+            f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
+            {"body": body},
+        )
+
+    def capabilities(self) -> ProviderCapabilities:
+        """Gitea may support resolved status; check API. Conservative: True for resolvable."""
+        return ProviderCapabilities(resolvable_comments=True, supports_suggestions=False)

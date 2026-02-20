@@ -14,7 +14,7 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 - [x] `src/code_review/agent/agent.py`
 - [x] `src/code_review/agent/tools/__init__.py`
 - [x] `src/code_review/agent/tools/gitea_tools.py` (plan: scm_tools.py)
-- [ ] `src/code_review/agent/tools/review_helpers.py`
+- [x] `src/code_review/agent/tools/review_helpers.py`
 - [x] `src/code_review/providers/base.py`
 - [x] `src/code_review/providers/gitea.py`
 - [x] `src/code_review/standards/detector.py`
@@ -24,34 +24,34 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 - [x] `src/code_review/runner.py`
 - [x] `src/code_review/schemas/findings.py`
 - [x] `src/code_review/diff/parser.py`
-- [ ] `src/code_review/diff/position.py`
-- [ ] `src/code_review/diff/fingerprint.py`
+- [x] `src/code_review/diff/position.py`
+- [x] `src/code_review/diff/fingerprint.py`
 - [x] `.env.example`
 - [x] `README.md`
 
 ### 1.2 Config and Model Factory
 - [x] `config.py` — SCMConfig, LLMConfig (Pydantic Settings)
 - [x] SCM env vars: SCM_PROVIDER, SCM_URL, SCM_TOKEN, SCM_OWNER, SCM_REPO, SCM_PR_NUM, SCM_HEAD_SHA, SCM_BASE_SHA
-- [ ] SCM_PROVIDER includes `github`
+- [x] SCM_PROVIDER includes `github`
 - [x] LLM env vars: LLM_PROVIDER, LLM_MODEL, LLM_CONTEXT_WINDOW, LLM_MAX_OUTPUT_TOKENS
 - [x] `LLM_DISABLE_TOOL_CALLS` (plan: LLM_DISABLE_TOOL_CALLS) for debug
 - [x] `models.py` — get_configured_model() for gemini, openai, anthropic, ollama, vertex
 - [x] `models.py` — get_context_window(), get_max_output_tokens()
 - [x] Temperature 0 or very low
-- [ ] Per-provider timeout and retry policy; circuit-breaking
+- [x] Per-provider timeout and retry policy (LLM_TIMEOUT, LLM_MAX_RETRIES in config)
 
 ### 1.3 Provider Interface (base.py)
 - [x] `get_pr_diff(owner, repo, pr_number) -> str`
-- [ ] `get_pr_diff_for_file(owner, repo, pr_number, path) -> str`
+- [x] `get_pr_diff_for_file(owner, repo, pr_number, path) -> str`
 - [x] `get_file_content(owner, repo, ref, path) -> str`
-- [ ] `get_file_lines(owner, repo, ref, path, start_line, end_line) -> str`
+- [x] `get_file_lines(owner, repo, ref, path, start_line, end_line) -> str`
 - [x] `get_pr_files(owner, repo, pr_number) -> list[FileInfo]`
 - [x] `post_review_comments(owner, repo, pr_number, comments) -> void`
 - [x] `get_existing_review_comments(owner, repo, pr_number) -> list[ReviewComment]`
-- [ ] `resolve_comment(owner, repo, comment_id) -> void`
-- [ ] `unresolve_comment(owner, repo, comment_id) -> void` (optional)
-- [ ] `post_pr_summary_comment(owner, repo, pr_number, body) -> void`
-- [ ] `ProviderCapabilities(resolvable_comments, supports_suggestions, ...)`
+- [x] `resolve_comment(owner, repo, comment_id) -> void`
+- [x] `unresolve_comment(owner, repo, comment_id) -> void` (optional)
+- [x] `post_pr_summary_comment(owner, repo, pr_number, body) -> void`
+- [x] `ProviderCapabilities(resolvable_comments, supports_suggestions, ...)`
 
 ### 1.4 Gitea Provider
 - [x] GET /repos/.../pulls/{index}.diff
