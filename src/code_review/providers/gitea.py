@@ -142,11 +142,6 @@ class GiteaProvider(ProviderInterface):
         """Post inline review comments. Gitea CreatePullReview accepts comments array."""
         if not comments:
             return
-        # Fetch PR to get head_sha if not provided
-        if not head_sha:
-            pr = self._get(f"/repos/{owner}/{repo}/pulls/{pr_number}")
-            head_sha = pr.get("head", {}).get("sha", "")
-
         # Gitea CreatePullReview: body, event (APPROVE/REQUEST_CHANGES/COMMENT), comments
         # Each comment: path, body, line (1-based)
         review_comments = [

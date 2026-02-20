@@ -24,9 +24,15 @@ def detect_language_context(
         return {"language": "unknown", "framework": None, "confidence": "low"}
     content_by_path: dict[str, str] = {}
     if sample_content:
-        # If caller provides sample, associate with first matching path
-        for p in repo_paths[:5]:
-            content_by_path[p] = sample_content
+        # Attach sample to first config-like path so detector can use it for framework inference
+        _CONFIG_NAMES = frozenset({
+            "requirements.txt", "pyproject.toml",
+            "pom.xml", "build.gradle", "build.gradle.kts",
+        })
+        for p in repo_paths:
+            if p.replace("\\", "/").split("/")[-1] in _CONFIG_NAMES:
+                content_by_path[p] = sample_content
+                break
     detected = (
         detect_from_paths_and_content(repo_paths, content_by_path)
         if content_by_path

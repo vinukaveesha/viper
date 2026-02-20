@@ -3,6 +3,11 @@
 from code_review.standards.prompts.base import BASE_REVIEW_PROMPT
 
 # Per-language fragments - minimal for Phase 1; extend incrementally
+_JS_TS_FRAGMENT = """
+### JavaScript/TypeScript
+- ESLint-style: null checks, async handling, no unused vars
+- React/Vue/Node patterns if detected in imports
+"""
 _LANGUAGE_FRAGMENTS: dict[str, str] = {
     "python": """
 ### Python
@@ -10,11 +15,8 @@ _LANGUAGE_FRAGMENTS: dict[str, str] = {
 - Avoid mutable default args; handle exceptions explicitly
 - Use async/await consistently; prefer context managers for resources
 """,
-    "javascript": """
-### JavaScript/TypeScript
-- ESLint-style: null checks, async handling, no unused vars
-- React/Vue/Node patterns if detected in imports
-""",
+    "javascript": _JS_TS_FRAGMENT,
+    "typescript": _JS_TS_FRAGMENT,
     "go": """
 ### Go
 - gofmt style; explicit error handling; defer/close for resources

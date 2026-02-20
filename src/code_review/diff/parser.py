@@ -120,5 +120,5 @@ def iter_new_lines(diff_text: str):
     """
     for hunk in parse_unified_diff(diff_text):
         for content, old_ln, new_ln in hunk.lines:
-            if new_ln is not None and old_ln is None and content:
+            if new_ln is not None and old_ln is None:
                 yield (hunk.path, new_ln, content)

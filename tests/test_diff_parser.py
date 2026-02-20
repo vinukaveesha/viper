@@ -38,6 +38,19 @@ def test_iter_new_lines():
     assert items == [("foo.py", 2, "y")]
 
 
+def test_iter_new_lines_includes_blank_lines():
+    diff = """diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -1,2 +1,4 @@
+ x
++
++z
+"""
+    items = list(iter_new_lines(diff))
+    assert items == [("foo.py", 2, ""), ("foo.py", 3, "z")]
+
+
 def test_parse_multi_file():
     diff = """diff --git a/a.py b/a.py
 --- a/a.py
