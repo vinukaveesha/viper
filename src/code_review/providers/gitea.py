@@ -5,6 +5,9 @@ from typing import Any
 import httpx
 
 from code_review.diff.parser import parse_unified_diff
+from code_review.providers.safety import truncate_repo_content
+
+MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 from code_review.providers.base import (
     FileInfo,
     ProviderCapabilities,
@@ -87,12 +90,13 @@ class GiteaProvider(ProviderInterface):
         return "\n".join(lines) if lines else ""
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
-        """Return file content at ref."""
+        """Return file content at ref; truncated with delimiter if over max size."""
         api_path = f"/repos/{owner}/{repo}/contents/{path}"
         resp = self._get(api_path, params={"ref": ref})
         if isinstance(resp, dict) and "content" in resp:
             import base64
-            return base64.b64decode(resp["content"]).decode("utf-8", errors="replace")
+            raw = base64.b64decode(resp["content"]).decode("utf-8", errors="replace")
+            return truncate_repo_content(raw, max_bytes=MAX_REPO_FILE_BYTES)
         raise ValueError(f"Unexpected response for {path} at {ref}")
 
     def get_file_lines(

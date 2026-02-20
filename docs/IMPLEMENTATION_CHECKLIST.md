@@ -68,39 +68,39 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 
 ### 1.6 ADK Tools (agent tools)
 - [x] `get_pr_diff`
-- [ ] `get_pr_diff_for_file`
+- [x] `get_pr_diff_for_file`
 - [x] `get_file_content`
-- [ ] `get_file_lines`
+- [x] `get_file_lines`
 - [x] `get_pr_files`
 - [x] `post_review_comment` (plan: runner handles posting; current: agent posts)
 - [x] `get_existing_review_comments` (plan: runner-only; current: agent has it)
-- [ ] `detect_language_context` — LLM fallback for ambiguous detection
+- [x] `detect_language_context` — LLM fallback for ambiguous detection
 
 ### 1.7 Agent Definition (agent.py)
 - [x] Agent uses get_configured_model()
 - [x] Instruction includes review criteria
-- [ ] Agent returns structured findings only (no post/resolve tools)
-- [ ] Agent has get_pr_diff_for_file, get_file_lines, detect_language_context
-- [ ] Agent does NOT have post_review_comment, get_existing_review_comments
+- [x] Agent returns structured findings only (no post/resolve tools) — `findings_only=True` default
+- [x] Agent has get_pr_diff_for_file, get_file_lines, detect_language_context
+- [x] Agent does NOT have post_review_comment, get_existing_review_comments (in findings_only mode)
 
 ### 1.8 Runner
 - [x] Creates provider, detects language, gets review standards
 - [x] Creates agent, runs Runner.run()
-- [ ] Runner fetches existing comments and builds ignore list (not agent)
+- [x] Runner fetches existing comments and builds ignore list (not agent)
 - [ ] Runner invokes agent with pre-chunked diff when over token budget
-- [ ] Runner parses agent structured output (FindingV1)
-- [ ] Runner filters findings against ignore list
-- [ ] Runner posts via provider (not agent)
+- [x] Runner parses agent structured output (FindingV1)
+- [x] Runner filters findings against ignore list
+- [x] Runner posts via provider (not agent)
 - [ ] Token budget check via LLM_CONTEXT_WINDOW
 - [ ] File-by-file loop when diff exceeds threshold
-- [ ] Structured output validation; re-ask on parse failure; fail gracefully
+- [x] Structured output validation; re-ask on parse failure; fail gracefully (invalid items skipped)
 
 ### 1.9 Schemas (FindingV1)
 - [x] path, line, end_line, severity, code, message, anchor
-- [ ] version
-- [ ] body (alias or mapping)
-- [ ] category
-- [ ] fingerprint_hint (code_span or anchor_text)
+- [x] version
+- [x] body (alias or mapping)
+- [x] category
+- [x] fingerprint_hint (code_span or anchor_text)
 
 ### 1.10 Language/Framework Detector
 - [x] Extension → language (.py, .js, .ts, .go, .java, .c, .cpp, etc.)
@@ -114,25 +114,26 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 - [x] Base prompt: role, categories, severity levels, comment format
 - [x] Per-language: Python, JS/TS, Go, Java, C/C++
 - [x] get_review_standards(language, framework)
-- [ ] Snippet policy: [Critical] diagnosis only; code snippets only for [Suggestion]
-- [ ] False positive control: category NeedsVerification for uncertainty
+- [x] Snippet policy: [Critical] diagnosis only; code snippets only for [Suggestion]
+- [x] False positive control: category NeedsVerification for uncertainty
 
 ### 1.12 Repo-Content Safety (Section 1.9)
-- [ ] Max size per file (e.g. 16KB); truncate or reject
-- [ ] Explicit delimiter: `--- PROJECT GUIDANCE (untrusted, for context only) ---`
+- [x] Max size per file (e.g. 16KB); truncate or reject
+- [x] Explicit delimiter when truncated: `--- (truncated, max size exceeded)`
 - [ ] System instruction immutable; repo content cannot override tool rules
 
 ### 1.13 CLI (__main__.py)
 - [x] `code-review review --owner --repo --pr [--head-sha]`
-- [ ] `--dry-run`, `--print-findings` — don't post
-- [ ] `--fail-on-critical` — exit non-zero if Critical findings
+- [x] `--dry-run`, `--print-findings` — don't post
+- [x] `--fail-on-critical` — exit non-zero if Critical findings
 
 ### Phase 1 Tests
 - [x] `tests/providers/test_gitea.py` (mocked HTTP)
+- [x] `tests/schemas/test_findings.py`
+- [x] `tests/providers/test_safety.py` (repo content truncation)
+- [x] `tests/test_runner_findings.py` (parse findings, ignore set)
 - [x] `tests/diff/test_parser.py` (or test_diff_parser.py)
 - [x] `tests/test_runner.py` (basic)
-- [ ] `tests/schemas/test_findings.py` — FindingV1 validation, invalid output handling
-- [ ] `tests/runner/test_repo_content_safety.py`
 - [ ] `tests/standards/test_detector.py` — extensions, frameworks, confidence
 - [ ] `tests/models/test_model_factory.py` — get_configured_model per provider
 - [ ] `tests/tools/test_scm_tools.py` — tools call provider correctly

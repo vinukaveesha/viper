@@ -34,6 +34,21 @@ def review(
         "--head-sha",
         help="Head commit SHA (or set SCM_HEAD_SHA)",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Parse and filter findings but do not post comments",
+    ),
+    print_findings: bool = typer.Option(
+        False,
+        "--print-findings",
+        help="Print each finding to stdout (path:line [severity] message)",
+    ),
+    fail_on_critical: bool = typer.Option(
+        False,
+        "--fail-on-critical",
+        help="Exit with non-zero status if any finding is critical",
+    ),
 ) -> None:
     """Run the code review agent on a pull request."""
     owner = owner or os.environ.get("SCM_OWNER", "")
@@ -48,7 +63,16 @@ def review(
         )
         raise typer.Exit(1)
 
-    run_review(owner=owner, repo=repo, pr_number=pr_num, head_sha=head_sha_val)
+    findings = run_review(
+        owner=owner,
+        repo=repo,
+        pr_number=pr_num,
+        head_sha=head_sha_val,
+        dry_run=dry_run,
+        print_findings=print_findings,
+    )
+    if fail_on_critical and any(f.severity == "critical" for f in findings):
+        raise typer.Exit(2)
 
 
 def _parse_int(s: str) -> int | None:

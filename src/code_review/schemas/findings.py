@@ -8,10 +8,18 @@ from pydantic import BaseModel, Field
 class FindingV1(BaseModel):
     """A single code review finding with position and metadata for fingerprinting."""
 
+    version: str = Field(default="1", description="Schema version for output contract")
     path: str = Field(..., description="File path (relative to repo root)")
     line: int = Field(..., ge=1, description="Line number (or start line for ranges)")
     end_line: int | None = Field(default=None, ge=1, description="Optional end line for multi-line findings")
     severity: Literal["critical", "suggestion", "info"]
     code: str = Field(..., description="Issue code (e.g. unused-var) for fingerprinting")
     message: str = Field(..., description="Human-readable message body")
+    body: str | None = Field(default=None, description="Alias for message; populated from message if unset")
+    category: str | None = Field(default=None, description="e.g. Correctness, Security, Style; use NeedsVerification for uncertainty")
     anchor: str | None = Field(default=None, description="Optional anchor text for stable positioning when lines shift")
+    fingerprint_hint: str | None = Field(default=None, description="Code span or anchor text to help runner fingerprinting")
+
+    def get_body(self) -> str:
+        """Comment body; use body if set else message."""
+        return self.body if self.body is not None else self.message

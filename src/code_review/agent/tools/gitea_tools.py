@@ -2,6 +2,7 @@
 
 from typing import Callable
 
+from code_review.agent.tools.review_helpers import detect_language_context
 from code_review.providers.base import ProviderInterface
 
 
@@ -22,6 +23,22 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
             The unified diff string.
         """
         return provider.get_pr_diff(owner, repo, pr_number)
+
+    def get_pr_diff_for_file(
+        owner: str, repo: str, pr_number: int, path: str
+    ) -> str:
+        """Fetch the unified diff for a single file in the PR.
+
+        Args:
+            owner: Repository owner.
+            repo: Repository name.
+            pr_number: Pull request number.
+            path: File path relative to repo root.
+
+        Returns:
+            Unified diff string for that file only.
+        """
+        return provider.get_pr_diff_for_file(owner, repo, pr_number, path)
 
     def get_file_content(owner: str, repo: str, ref: str, path: str) -> str:
         """Fetch file content at a given ref (branch, tag, or SHA).
@@ -50,6 +67,31 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
         """
         files = provider.get_pr_files(owner, repo, pr_number)
         return [f.model_dump() for f in files]
+
+    def get_file_lines(
+        owner: str,
+        repo: str,
+        ref: str,
+        path: str,
+        start_line: int,
+        end_line: int,
+    ) -> str:
+        """Fetch a line range from a file at ref (e.g. head_sha for context).
+
+        Args:
+            owner: Repository owner.
+            repo: Repository name.
+            ref: Git ref (branch or commit SHA).
+            path: File path.
+            start_line: Start line (1-based inclusive).
+            end_line: End line (1-based inclusive).
+
+        Returns:
+            Lines start_line..end_line as string.
+        """
+        return provider.get_file_lines(
+            owner, repo, ref, path, start_line, end_line
+        )
 
     def post_review_comment(
         owner: str,
@@ -95,8 +137,44 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
 
     return [
         get_pr_diff,
+        get_pr_diff_for_file,
         get_file_content,
+        get_file_lines,
         get_pr_files,
         post_review_comment,
         get_existing_review_comments,
+        detect_language_context,
+    ]
+
+
+def create_findings_only_tools(provider: ProviderInterface) -> list[Callable]:
+    """
+    Tools for agent that only returns findings (no post, no get_existing).
+    Runner will fetch comments, filter, and post.
+    """
+    def get_pr_diff(owner: str, repo: str, pr_number: int) -> str:
+        return provider.get_pr_diff(owner, repo, pr_number)
+
+    def get_pr_diff_for_file(owner: str, repo: str, pr_number: int, path: str) -> str:
+        return provider.get_pr_diff_for_file(owner, repo, pr_number, path)
+
+    def get_file_content(owner: str, repo: str, ref: str, path: str) -> str:
+        return provider.get_file_content(owner, repo, ref, path)
+
+    def get_file_lines(
+        owner: str, repo: str, ref: str, path: str, start_line: int, end_line: int
+    ) -> str:
+        return provider.get_file_lines(owner, repo, ref, path, start_line, end_line)
+
+    def get_pr_files(owner: str, repo: str, pr_number: int) -> list[dict]:
+        files = provider.get_pr_files(owner, repo, pr_number)
+        return [f.model_dump() for f in files]
+
+    return [
+        get_pr_diff,
+        get_pr_diff_for_file,
+        get_file_content,
+        get_file_lines,
+        get_pr_files,
+        detect_language_context,
     ]
