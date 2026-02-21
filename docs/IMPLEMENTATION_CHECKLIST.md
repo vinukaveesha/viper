@@ -144,42 +144,42 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 ## Phase 2: Resolved Issue Tracking
 
 ### 2.1 Fingerprinting
-- [ ] Fingerprint: (path, content_hash_of_surrounding_lines, issue_category)
-- [ ] Anchor: normalized added/changed line text
-- [ ] issue_code: stable ID per rule
-- [ ] Compare against file content at head_sha; locate anchor; if not found, resolve
+- [x] Fingerprint: (path, content_hash_of_surrounding_lines, issue_category)
+- [x] Anchor: normalized added/changed line text
+- [x] issue_code: stable ID per rule
+- [x] Compare against file content at head_sha; locate anchor; if not found, resolve (filter by fingerprint; auto-resolve skipped when provider has resolvable_comments=False)
 
 ### 2.2 Runner Flow
-- [ ] Runner fetches existing comments
-- [ ] Runner builds fingerprints from old comments
-- [ ] Runner runs agent; gets findings
-- [ ] Runner compares old fingerprints vs new diff; auto-resolves stale via resolve_comment
-- [ ] Runner filters new findings against manually-resolved ignore list
-- [ ] Runner posts net-new via post_review_comments
+- [x] Runner fetches existing comments
+- [x] Runner builds fingerprints from old comments (via marker parse + body_hash)
+- [x] Runner runs agent; gets findings
+- [x] Runner compares old fingerprints vs new diff; auto-resolves stale via resolve_comment (skipped for Gitea; fingerprint used for ignore only)
+- [x] Runner filters new findings against manually-resolved ignore list
+- [x] Runner posts net-new via post_review_comments
 
 ### 2.3 Provider: resolve_comment
-- [ ] Add resolve_comment to ProviderInterface
-- [ ] Gitea: PATCH /repos/.../pulls/comments/{id} for resolved (or marker fallback)
+- [x] Add resolve_comment to ProviderInterface
+- [x] Gitea: PATCH /repos/.../pulls/comments/{id} for resolved (or marker fallback)
 
 ### 2.4 Idempotency
-- [ ] Idempotency key: {provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/agent/{version}/config/{hash}
-- [ ] Storage: hidden marker in comment body or external cache (Redis, SQLite)
-- [ ] Before review: check if key already processed; skip if yes
+- [x] Idempotency key: {provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/agent/{version}/config/{hash}
+- [x] Storage: hidden marker in comment body or external cache (Redis, SQLite)
+- [x] Before review: check if key already processed; skip if yes
 
 ### 2.5 Manually Resolved / Ignore List
-- [ ] get_existing_review_comments returns resolved: bool
-- [ ] Build ignore fingerprint: (path, content_hash, message_body_hash)
-- [ ] Don't post when (path, content_hash, body_hash) in ignore set
-- [ ] Gitea resolved support or own lifecycle + marker
+- [x] get_existing_review_comments returns resolved: bool
+- [x] Build ignore fingerprint: (path, content_hash, message_body_hash)
+- [x] Don't post when (path, content_hash, body_hash) in ignore set
+- [x] Gitea resolved support or own lifecycle + marker
 
 ### 2.6 Force-Push / Rebase
-- [ ] If inline post fails (position invalid), degrade to PR-level comment
+- [x] If inline post fails (position invalid), degrade to PR-level comment
 
 ### Phase 2 Tests
-- [ ] tests/providers/test_resolved_tracking.py
-- [ ] tests/providers/test_ignore_fingerprint.py
-- [ ] tests/runner/test_idempotency.py
-- [ ] tests/agent/test_ignore_list_integration.py
+- [x] tests/providers/test_resolved_tracking.py
+- [x] tests/providers/test_ignore_fingerprint.py
+- [x] tests/runner/test_idempotency.py
+- [x] tests/agent/test_ignore_list_integration.py
 
 ---
 

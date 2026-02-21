@@ -81,6 +81,21 @@ class ProviderInterface(ABC):
         """Post inline comments. Each tuple is (path, line, body)."""
         ...
 
+    def post_review_comment(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        path: str,
+        line: int,
+        body: str,
+        head_sha: str = "",
+    ) -> None:
+        """Post a single inline comment. Default: call post_review_comments with one item."""
+        self.post_review_comments(
+            owner, repo, pr_number, [(path, line, body)], head_sha=head_sha
+        )
+
     @abstractmethod
     def get_existing_review_comments(
         self, owner: str, repo: str, pr_number: int
