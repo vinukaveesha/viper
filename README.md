@@ -44,6 +44,8 @@ docker compose up -d
 # Configure Gitea and Jenkins; trigger pipeline with SCM_* from webhook. See docker/jenkins/Jenkinsfile.
 ```
 
+If you run compose with a different project name (`docker compose -p myproject up`), set `COMPOSE_PROJECT_NAME=myproject` in Jenkins (or in a `.env` at repo root if Jenkins loads it) so the pipeline uses the correct Docker network (`${COMPOSE_PROJECT_NAME}_code-review-net`). The default project name is `code-review` (set in `docker-compose.yml`).
+
 ## Security (CI)
 
 - **Least-privilege token:** Use a bot account with repo-scoped (read + comment) permission only; avoid org-wide tokens.

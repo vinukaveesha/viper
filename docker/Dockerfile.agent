@@ -11,6 +11,11 @@ COPY pyproject.toml ./
 COPY src ./src/
 RUN pip install --no-cache-dir -e .
 
+# Run as unprivileged user
+RUN adduser --disabled-password --gecos "" --uid 1000 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 # No long-running process; Jenkins (or other CI) invokes: code-review review
 ENTRYPOINT ["code-review"]
 CMD ["review"]
