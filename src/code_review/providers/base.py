@@ -21,6 +21,13 @@ class FileInfo(BaseModel):
     deletions: int = 0
 
 
+class PRInfo(BaseModel):
+    """PR metadata for skip-review and similar checks."""
+
+    title: str = ""
+    labels: list[str] = Field(default_factory=list, description="Label names")
+
+
 class ReviewComment(BaseModel):
     """A review comment with resolved status for fingerprinting."""
 
@@ -122,3 +129,7 @@ class ProviderInterface(ABC):
     def capabilities(self) -> ProviderCapabilities:
         """Return provider capability flags."""
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=False)
+
+    def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
+        """Return PR title and labels for skip-review check. Default: None (skip check not supported)."""
+        return None

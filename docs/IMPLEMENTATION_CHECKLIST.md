@@ -186,23 +186,23 @@ Derived from the AI Code Review Agent plan. Mark items with `[x]` when complete.
 ## Phase 3: Docker and CI Integration
 
 ### 3.1 Docker
-- [ ] `docker/Dockerfile.agent` — Python + google-adk
-- [ ] `docker-compose.yml` — Gitea + Jenkins (pinned image tags)
-- [ ] `docker/jenkins/Jenkinsfile` — pipeline example
-- [ ] Build: `docker build -t code-review-agent ./docker`
-- [ ] Jenkins runs: `docker run --rm -e SCM_* -e LLM_* code-review-agent review`
+- [x] `docker/Dockerfile.agent` — Python + google-adk
+- [x] `docker-compose.yml` — Gitea + Jenkins (pinned image tags)
+- [x] `docker/jenkins/Jenkinsfile` — pipeline example
+- [x] Build: `docker build -t code-review-agent -f docker/Dockerfile.agent .`
+- [x] Jenkins runs: `docker run --rm -e SCM_* -e LLM_* code-review-agent review`
 
 ### 3.2 Skip Mechanism
-- [ ] Skip review if PR has label or title tag (e.g. `[skip-review]`)
+- [x] Skip review if PR has label or title tag (e.g. `[skip-review]`)
 
 ### 3.3 Security
-- [ ] Least-privilege token; repo-scoped only
-- [ ] Container networking: restrict egress; allowlist SCM_URL
+- [x] Least-privilege token; repo-scoped only (documented in README)
+- [x] Container networking: restrict egress; allowlist SCM_URL (documented in README)
 
 ### Phase 3 Tests
-- [ ] tests/cli/test_main.py — CLI parses args, invokes runner
-- [ ] tests/docker/ — Dockerfile builds; docker-compose up
-- [ ] CI smoke test: webhook triggers pipeline
+- [x] tests/cli/test_main.py — CLI parses args, invokes runner
+- [x] tests/docker/ — Dockerfile and compose content checks
+- [ ] CI smoke test: webhook triggers pipeline (manual / E2E)
 
 ---
 

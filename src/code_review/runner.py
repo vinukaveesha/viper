@@ -182,6 +182,22 @@ def run_review(
     cfg = get_scm_config()
     provider = get_provider(cfg.provider, cfg.url, cfg.token)
 
+    # Skip review if PR has skip label or title contains skip pattern (e.g. [skip-review])
+    if cfg.skip_label or cfg.skip_title_pattern:
+        pr_info = provider.get_pr_info(owner, repo, pr_number)
+        if pr_info:
+            if cfg.skip_label and cfg.skip_label.strip() and any(
+                lb.strip().lower() == cfg.skip_label.strip().lower()
+                for lb in pr_info.labels
+            ):
+                return []
+            if (
+                cfg.skip_title_pattern
+                and cfg.skip_title_pattern.strip()
+                and cfg.skip_title_pattern.strip() in pr_info.title
+            ):
+                return []
+
     # Runner fetches existing comments and builds ignore list
     existing = provider.get_existing_review_comments(owner, repo, pr_number)
     existing_dicts = [c.model_dump() for c in existing]
