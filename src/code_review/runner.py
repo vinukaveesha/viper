@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 
 from google.genai import types
@@ -17,8 +18,11 @@ from code_review.diff.fingerprint import (
     parse_marker_from_comment_body,
     surrounding_content_hash,
 )
+from code_review.formatters.comment import finding_to_comment_body
 from code_review.models import get_context_window
+from code_review import observability
 from code_review.providers import get_provider
+from code_review.providers.base import InlineComment
 from code_review.schemas.findings import FindingV1
 from code_review.standards import detect_from_paths, get_review_standards
 
@@ -98,6 +102,15 @@ def _get_file_lines_by_path(provider, owner: str, repo: str, ref: str, paths: li
     return out
 
 
+def _build_pr_summary_body(to_post: list[tuple[FindingV1, str]]) -> str:
+    """Build PR-level summary: counts by severity and link to inline comments (Phase 4.2)."""
+    from collections import Counter
+    counts = Counter(f.severity for f, _ in to_post)
+    parts = [f"{count} {str(sev).capitalize()}" for sev, count in sorted(counts.items())]
+    summary = "Code review: " + ", ".join(parts) + "."
+    return summary + "\n\nSee inline comments above."
+
+
 def _fingerprint_for_finding(
     f: FindingV1,
     file_lines_by_path: dict[str, list[str]],
@@ -145,10 +158,30 @@ def _findings_from_response(response_text: str) -> list[FindingV1]:
     return findings
 
 
-def _finding_to_comment_body(f: FindingV1) -> str:
-    """Format finding as inline comment body with severity prefix."""
-    severity_label = f"[{f.severity.title()}]"
-    return f"{severity_label} {f.get_body()}"
+def _log_run_complete(
+    trace_id: str,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    files_count: int,
+    findings_count: int,
+    posts_count: int,
+    duration_ms: float,
+) -> None:
+    """Emit structured run_complete log (Phase 4.3)."""
+    logger.info(
+        "run_complete",
+        extra={
+            "trace_id": trace_id,
+            "owner": owner,
+            "repo": repo,
+            "pr_number": pr_number,
+            "files_count": files_count,
+            "findings_count": findings_count,
+            "posts_count": posts_count,
+            "duration_ms": round(duration_ms, 2),
+        },
+    )
 
 
 def _run_agent_and_collect_response(
@@ -185,6 +218,10 @@ def run_review(
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
 
+    trace_id = str(uuid.uuid4())
+    start_time = time.perf_counter()
+    run_handle = observability.start_run(trace_id)
+
     cfg = get_scm_config()
     llm_cfg = get_llm_config()
     provider = get_provider(cfg.provider, cfg.url, cfg.token)
@@ -197,12 +234,26 @@ def run_review(
                 lb.strip().lower() == cfg.skip_label.strip().lower()
                 for lb in pr_info.labels
             ):
+                _duration_ms = (time.perf_counter() - start_time) * 1000
+                _log_run_complete(
+                    trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
+                )
+                observability.finish_run(
+                    run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
+                )
                 return []
             if (
                 cfg.skip_title_pattern
                 and cfg.skip_title_pattern.strip()
                 and cfg.skip_title_pattern.strip().lower() in pr_info.title.lower()
             ):
+                _duration_ms = (time.perf_counter() - start_time) * 1000
+                _log_run_complete(
+                    trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
+                )
+                observability.finish_run(
+                    run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
+                )
                 return []
 
     # Runner fetches existing comments and builds ignore list
@@ -216,6 +267,13 @@ def run_review(
             cfg, llm_cfg, owner, repo, pr_number, head_sha
         )
         if _idempotency_key_seen_in_comments(existing_dicts, run_id):
+            _duration_ms = (time.perf_counter() - start_time) * 1000
+            _log_run_complete(
+                trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
+            )
+            observability.finish_run(
+                run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
+            )
             return []
 
     files = provider.get_pr_files(owner, repo, pr_number)
@@ -276,7 +334,7 @@ def run_review(
         else {}
     )
     for f in all_findings:
-        body = _finding_to_comment_body(f)
+        body = finding_to_comment_body(f)
         body_hash = hashlib.sha256(body.encode()).hexdigest()
         if (f.path, body_hash) in ignore_set:
             continue
@@ -294,6 +352,7 @@ def run_review(
         for f, _ in to_post:
             print(f"{f.path}:{f.line} [{f.severity}] {f.get_body()}")
 
+    successful_post_count = 0
     if not dry_run and to_post:
         if not head_sha:
             raise ValueError(
@@ -303,36 +362,71 @@ def run_review(
         run_id = _build_idempotency_key(
             cfg, llm_cfg, owner, repo, pr_number, head_sha
         )
-        comments = []
+        comments: list[InlineComment] = []
         for f, fp in to_post:
-            body = _finding_to_comment_body(f)
+            body = finding_to_comment_body(f)
             if fp:
                 body = format_comment_body_with_marker(
                     body, fp, AGENT_VERSION, run_id=run_id
                 )
-            comments.append((f.path, f.line, body))
+            comments.append(
+                InlineComment(path=f.path, line=f.line, body=body, end_line=f.end_line)
+            )
         try:
             provider.post_review_comments(
                 owner, repo, pr_number, comments, head_sha=head_sha
             )
+            successful_post_count = len(comments)
+            try:
+                provider.post_pr_summary_comment(
+                    owner, repo, pr_number, _build_pr_summary_body(to_post)
+                )
+            except Exception as e:
+                logger.warning(
+                    "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
+                    owner, repo, pr_number, e,
+                )
         except Exception:
             # Batch failed (e.g. one position invalid); post one-by-one, degrade to PR-level on failure
-            for (_, _), (path, line, body) in zip(to_post, comments, strict=True):
+            for c in comments:
                 try:
                     provider.post_review_comment(
-                        owner, repo, pr_number, path, line, body, head_sha=head_sha
+                        owner, repo, pr_number, c.path, c.line, c.body, head_sha=head_sha
                     )
+                    successful_post_count += 1
                 except Exception:
-                    summary_body = f"**{path}:{line}**\n\n{body}"
+                    summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
                     try:
                         provider.post_pr_summary_comment(
                             owner, repo, pr_number, summary_body
                         )
+                        successful_post_count += 1
                     except Exception as e:
                         logger.error(
                             "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s",
-                            owner, repo, pr_number, path, line, e,
+                            owner, repo, pr_number, c.path, c.line, e,
                             exc_info=True,
                         )
 
+    _duration_ms = (time.perf_counter() - start_time) * 1000
+    _log_run_complete(
+        trace_id,
+        owner,
+        repo,
+        pr_number,
+        files_count=len(paths),
+        findings_count=len(all_findings),
+        posts_count=successful_post_count,
+        duration_ms=_duration_ms,
+    )
+    observability.finish_run(
+        run_handle,
+        owner,
+        repo,
+        pr_number,
+        files_count=len(paths),
+        findings_count=len(all_findings),
+        posts_count=successful_post_count,
+        duration_seconds=_duration_ms / 1000.0,
+    )
     return [f for f, _ in to_post]

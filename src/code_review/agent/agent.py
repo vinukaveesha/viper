@@ -1,10 +1,11 @@
-"""ADK agent definition for code review."""
+"""ADK agent definition for code review. Uses google.adk Agent (LlmAgent), tools, and generate_content_config."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from code_review.agent.tools.gitea_tools import create_findings_only_tools, create_gitea_tools
+from code_review.config import get_llm_config
 from code_review.models import get_configured_model
 from code_review.providers.base import ProviderInterface
 
@@ -38,6 +39,13 @@ def create_review_agent(
 ) -> Agent:
     """Create the code review LlmAgent. If findings_only=True, agent returns JSON findings; runner posts."""
     from google.adk.agents import Agent
+    from google.genai import types
+
+    llm_cfg = get_llm_config()
+    generate_content_config = types.GenerateContentConfig(
+        temperature=llm_cfg.temperature,
+        max_output_tokens=llm_cfg.max_output_tokens,
+    )
 
     if findings_only:
         tools = create_findings_only_tools(provider)
@@ -53,4 +61,5 @@ def create_review_agent(
         name="code_review_agent",
         instruction=instruction,
         tools=tools,
+        generate_content_config=generate_content_config,
     )
