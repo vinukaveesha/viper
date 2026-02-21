@@ -133,6 +133,29 @@ class GitLabProvider(ProviderInterface):
         end_idx = min(end_line, len(lines))
         return "\n".join(lines[start_idx:end_idx])
 
+    def _additions_deletions_from_diff(self, d: dict) -> tuple[int, int]:
+        """Get (additions, deletions) from API fields or by parsing diff text."""
+        add = d.get("additions")
+        dele = d.get("deletions")
+        if isinstance(add, int) and isinstance(dele, int):
+            return add, dele
+        new_lines = d.get("new_lines")
+        deleted_lines = d.get("deleted_lines")
+        if isinstance(new_lines, int) and isinstance(deleted_lines, int):
+            return new_lines, deleted_lines
+        diff_text = d.get("diff")
+        if isinstance(diff_text, str) and diff_text:
+            additions = 0
+            deletions = 0
+            for line in diff_text.splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    additions += 1
+                elif line.startswith("-") and not line.startswith("---"):
+                    deletions += 1
+            return additions, deletions
+        # Limitation: neither API counts nor diff text available; additions/deletions left zero
+        return 0, 0
+
     def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[FileInfo]:
         """Return list of changed files from MR diffs."""
         path = self._path(owner, repo, "merge_requests", str(pr_number), "diffs")
@@ -141,12 +164,15 @@ class GitLabProvider(ProviderInterface):
             return []
         result: list[FileInfo] = []
         for d in data:
+            if not isinstance(d, dict):
+                continue
             new_path = d.get("new_path") or d.get("old_path") or ""
             if not new_path:
                 continue
             status = "added" if d.get("new_file") else "removed" if d.get("deleted_file") else "modified"
+            additions, deletions = self._additions_deletions_from_diff(d)
             result.append(
-                FileInfo(path=new_path, status=status, additions=0, deletions=0)
+                FileInfo(path=new_path, status=status, additions=additions, deletions=deletions)
             )
         return result
 
@@ -188,9 +214,8 @@ class GitLabProvider(ProviderInterface):
                 "head_sha": head_sha_val,
                 "position_type": "text",
                 "new_path": c.path,
-                "new_line": c.line,
                 "old_path": c.path,
-                "old_line": c.line,
+                "new_line": c.line,
             }
             self._post(
                 self._path(owner, repo, "merge_requests", str(pr_number), "discussions"),
@@ -224,7 +249,7 @@ class GitLabProvider(ProviderInterface):
         return result
 
     def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
-        """Resolve a discussion thread (GitLab: resolve note in discussion). Not implemented per-note."""
+        """Resolve a discussion thread. Not implemented; capabilities() returns resolvable_comments=False so callers do not attempt this."""
         pass
 
     def post_pr_summary_comment(
@@ -254,5 +279,5 @@ class GitLabProvider(ProviderInterface):
             return None
 
     def capabilities(self) -> ProviderCapabilities:
-        """GitLab supports resolvable threads and suggestion blocks."""
-        return ProviderCapabilities(resolvable_comments=True, supports_suggestions=True)
+        """GitLab supports suggestion blocks; resolve_comment is not implemented so resolvable_comments=False to avoid silent failures."""
+        return ProviderCapabilities(resolvable_comments=False, supports_suggestions=True)

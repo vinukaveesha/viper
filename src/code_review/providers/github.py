@@ -127,7 +127,7 @@ class GitHubProvider(ProviderInterface):
     def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[FileInfo]:
         """Return list of changed files in the PR."""
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
-        data = self._get(path)
+        data = self._get(path, params={"per_page": 100})
         if not isinstance(data, list):
             return []
         result: list[FileInfo] = []
@@ -155,7 +155,14 @@ class GitHubProvider(ProviderInterface):
         if not comments:
             return
         review_comments = [
-            {"path": c.path, "line": c.line, "side": "RIGHT", "body": c.body}
+            {
+                **{"path": c.path, "side": "RIGHT", "body": c.body},
+                **(
+                    {"start_line": c.line, "line": c.end_line}
+                    if (c.end_line is not None and c.end_line != c.line)
+                    else {"line": c.line}
+                ),
+            }
             for c in comments
         ]
         payload: dict[str, Any] = {
@@ -172,7 +179,7 @@ class GitHubProvider(ProviderInterface):
     ) -> list[ReviewComment]:
         """Return existing review comments. GitHub does not expose 'resolved' on list."""
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/comments"
-        data = self._get(path)
+        data = self._get(path, params={"per_page": 100})
         if not isinstance(data, list):
             return []
         result: list[ReviewComment] = []

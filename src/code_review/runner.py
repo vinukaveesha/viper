@@ -106,10 +106,7 @@ def _build_pr_summary_body(to_post: list[tuple[FindingV1, str]]) -> str:
     """Build PR-level summary: counts by severity and link to inline comments (Phase 4.2)."""
     from collections import Counter
     counts = Counter(f.severity for f, _ in to_post)
-    critical = counts.get("critical", 0)
-    suggestion = counts.get("suggestion", 0)
-    info = counts.get("info", 0)
-    parts = [f"{critical} Critical", f"{suggestion} Suggestion", f"{info} Info"]
+    parts = [f"{count} {str(sev).capitalize()}" for sev, count in sorted(counts.items())]
     summary = "Code review: " + ", ".join(parts) + "."
     return summary + "\n\nSee inline comments above."
 
@@ -355,6 +352,7 @@ def run_review(
         for f, _ in to_post:
             print(f"{f.path}:{f.line} [{f.severity}] {f.get_body()}")
 
+    successful_post_count = 0
     if not dry_run and to_post:
         if not head_sha:
             raise ValueError(
@@ -378,6 +376,7 @@ def run_review(
             provider.post_review_comments(
                 owner, repo, pr_number, comments, head_sha=head_sha
             )
+            successful_post_count = len(comments)
             try:
                 provider.post_pr_summary_comment(
                     owner, repo, pr_number, _build_pr_summary_body(to_post)
@@ -394,12 +393,14 @@ def run_review(
                     provider.post_review_comment(
                         owner, repo, pr_number, c.path, c.line, c.body, head_sha=head_sha
                     )
+                    successful_post_count += 1
                 except Exception:
                     summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
                     try:
                         provider.post_pr_summary_comment(
                             owner, repo, pr_number, summary_body
                         )
+                        successful_post_count += 1
                     except Exception as e:
                         logger.error(
                             "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s",
@@ -415,7 +416,7 @@ def run_review(
         pr_number,
         files_count=len(paths),
         findings_count=len(all_findings),
-        posts_count=len(to_post),
+        posts_count=successful_post_count,
         duration_ms=_duration_ms,
     )
     observability.finish_run(
@@ -425,7 +426,7 @@ def run_review(
         pr_number,
         files_count=len(paths),
         findings_count=len(all_findings),
-        posts_count=len(to_post),
+        posts_count=successful_post_count,
         duration_seconds=_duration_ms / 1000.0,
     )
     return [f for f, _ in to_post]

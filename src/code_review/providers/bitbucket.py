@@ -205,6 +205,8 @@ class BitbucketProvider(ProviderInterface):
             if not isinstance(data, dict):
                 return None
             title = data.get("title", "") or ""
+            # Bitbucket Cloud REST API v2.0 does not support pull request labels,
+            # so skip-review-by-label is ineffective; labels will always be empty.
             labels_raw = data.get("labels") or []
             labels = [
                 lb.get("name", lb) if isinstance(lb, dict) else str(lb)
@@ -215,4 +217,5 @@ class BitbucketProvider(ProviderInterface):
             return None
 
     def capabilities(self) -> ProviderCapabilities:
+        # PR labels are not supported by Bitbucket Cloud API (skip-by-label ineffective; see get_pr_info).
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=False)

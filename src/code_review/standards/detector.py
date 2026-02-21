@@ -212,8 +212,9 @@ def _folder_roots_from_paths(paths: list[str]) -> set[str]:
 def detect_from_paths_per_folder_root(paths: list[str]) -> dict[str, DetectedContext]:
     """
     Monorepo mode: run detection per folder root (nearest package.json, go.mod, pom.xml, etc.).
-    Paths are grouped by the longest matching folder root; paths under no config dir go to "".
-    Returns dict mapping folder_root -> DetectedContext.
+    Paths are grouped by the longest matching folder root. The key "" represents only orphan
+    paths (files not under any detected config root) and is omitted from the returned dict
+    when there are no orphans. Returns dict mapping folder_root -> DetectedContext.
     """
     if not paths:
         return {}
@@ -228,9 +229,7 @@ def detect_from_paths_per_folder_root(paths: list[str]) -> dict[str, DetectedCon
         assigned = False
         for root in sorted_roots:
             if root == "":
-                groups[""].append(p)
-                assigned = True
-                break
+                continue
             if p == root or p.startswith(root + "/"):
                 groups[root].append(p)
                 assigned = True
