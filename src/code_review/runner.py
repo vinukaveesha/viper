@@ -201,7 +201,7 @@ def run_review(
             if (
                 cfg.skip_title_pattern
                 and cfg.skip_title_pattern.strip()
-                and cfg.skip_title_pattern.strip() in pr_info.title
+                and cfg.skip_title_pattern.strip().lower() in pr_info.title.lower()
             ):
                 return []
 
