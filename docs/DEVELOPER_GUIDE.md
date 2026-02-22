@@ -335,6 +335,5 @@ pytest --ignore=tests/e2e
 
 - **README.md**: Quick start, configuration summary, Docker/CI, observability.
 - **.env.example**: Example SCM and LLM env vars.
-- **docs/IMPLEMENTATION_CHECKLIST.md**: Plan-derived checklist of implemented features.
-- **docs/ADK_REVIEW.md**: How the implementation uses Google ADK (Agent, Runner, SessionService, tools, generate_content_config).
+- **AGENTS.md**: Project summary, where things live, ADK usage, conventions; optional context for the review agent.
 - **Google ADK**: [Agent Development Kit](https://google.github.io/adk-docs/) — LlmAgent, Runner, SessionService, function tools.

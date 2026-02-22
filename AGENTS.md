@@ -53,8 +53,8 @@ Tests mirror `src/`: `tests/test_runner.py`, `tests/providers/`, `tests/runner/`
 
 - **README.md** — Quick start, config, Docker/CI, observability.
 - **docs/DEVELOPER_GUIDE.md** — Full implementation guide: architecture, flow, modules, config, extension points, testing.
-- **docs/ADK_REVIEW.md** — How the project uses Google ADK (Agent, Runner, SessionService, tools).
-- **docs/IMPLEMENTATION_CHECKLIST.md** — Plan-derived checklist of implemented features.
+
+**ADK**: Runner builds an ADK Agent (model, instruction, tools from `agent/tools/`) and uses Runner + InMemorySessionService; it calls `Runner.run()` then parses the final response for a JSON array of findings. Tools delegate to the provider; the agent does not post or fetch comments.
 
 ---
 
