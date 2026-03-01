@@ -5,6 +5,12 @@
 pipeline {
     agent any
 
+    environment {
+        // Credentials IDs must exist in Jenkins (Secret text).
+        SCM_TOKEN = credentials('SCM_TOKEN')
+        GOOGLE_API_KEY = credentials('GOOGLE_API_KEY')
+    }
+
     parameters {
         string(name: 'SCM_OWNER', description: 'Repo owner')
         string(name: 'SCM_REPO', description: 'Repo name')
@@ -22,7 +28,7 @@ pipeline {
                     def image = 'code-review-agent'
                     def projectName = env.COMPOSE_PROJECT_NAME ?: params.COMPOSE_PROJECT_NAME
                     def network = "${projectName}_code-review-net"
-                    // SCM_TOKEN and GOOGLE_API_KEY: must be in Jenkins env (e.g. withCredentials); passed through via -e VAR (no interpolation)
+                    // SCM_TOKEN and GOOGLE_API_KEY are injected via Jenkins credentials (environment {} above).
                     sh """
                         docker run --rm --network ${network} \
                             -e SCM_PROVIDER=gitea \

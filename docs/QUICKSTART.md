@@ -14,14 +14,20 @@ Get the code review agent running quickly: **Docker Compose** (recommended for l
 
 ## Option 1: Test with Docker Compose (recommended)
 
-This brings up Gitea and Jenkins so you can run the agent from a CI pipeline or manually on the same network.
+This brings up Gitea and Jenkins so you can run the agent from a CI pipeline or manually on the same network. Jenkins is built with required plugins preinstalled (Pipeline, Credentials), and can auto-seed credentials for local testing.
 
 ### 1. Start the stack
 
-From the repository root:
+From the **repository root** (the folder that contains `docker-compose.yml`):
 
 ```bash
-docker compose up -d
+docker compose up -d --build
+```
+
+If you use Podman Compose instead:
+
+```bash
+podman-compose up -d --build
 ```
 
 - **Gitea**: http://localhost:3000  
@@ -38,14 +44,26 @@ The agent is **not** a long-running service; you run it as a one-shot container 
 
 ### 3. Configure Jenkins
 
-1. Open http://localhost:8080. If setup wizard appears, complete it.
-2. Add **credentials** so the pipeline can call Gitea and the LLM:
-   - **SCM_TOKEN**: Secret text — your Gitea API token.
-   - **GOOGLE_API_KEY** (or **OPENAI_API_KEY**, etc.): Secret text — your LLM API key.
+1. Open http://localhost:8080. Default credentials are `admin` / `admin` (from `docker-compose.yml`).
+2. **Add credentials** (this is where `SCM_TOKEN` goes — there is no direct field on the job page):
+   - Go to **Manage Jenkins → Credentials → System → Global credentials (unrestricted)**.
+   - **Add Credentials** → Kind: **Secret text**.
+   - Create:
+     - ID: `SCM_TOKEN`, Secret: your Gitea API token.
+     - ID: `GOOGLE_API_KEY` (or `OPENAI_API_KEY`, etc.), Secret: your LLM API key.
 3. Create a **Pipeline** job:
+   - Click **New Item** (left nav) or **Create a job** (home page), then choose **Pipeline**.
    - **Pipeline script from SCM** → point to this repo and set **Script Path** to `docker/jenkins/Jenkinsfile`,  
      **or** use **Pipeline script** and paste the contents of `docker/jenkins/Jenkinsfile`.
-   - Ensure the job has access to the credentials (e.g. bind `SCM_TOKEN` and `GOOGLE_API_KEY` to env vars in the job config).
+   - The Jenkinsfile reads credentials by ID (see `environment { SCM_TOKEN = credentials('SCM_TOKEN') ... }`).
+
+**Automated local setup (optional):**
+You can seed credentials via `docker-compose.yml` env vars before first boot:
+
+- `SCM_TOKEN` (Gitea API token)
+- `GOOGLE_API_KEY` or `OPENAI_API_KEY`
+
+These are loaded by an init script in `docker/jenkins/init.groovy.d/01-init.groovy` and show up in **Manage Jenkins → Credentials**.
 
 ### 4. Build the agent image
 

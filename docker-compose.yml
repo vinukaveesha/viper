@@ -21,16 +21,23 @@ services:
       - code-review-net
 
   jenkins:
-    image: jenkins/jenkins:2.449-jdk17
+    build:
+      context: .
+      dockerfile: docker/jenkins/Dockerfile
     container_name: code-review-jenkins
     ports:
       - "8080:8080"
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - ./docker/jenkins:/jenkins-config
     environment:
       JAVA_OPTS: -Djenkins.install.runSetupWizard=false
+      JENKINS_ADMIN_USER: admin
+      JENKINS_ADMIN_PASS: admin
+      # Optional: seed credentials for local testing
+      # SCM_TOKEN: your_gitea_token
+      # GOOGLE_API_KEY: your_google_api_key
+      # OPENAI_API_KEY: your_openai_api_key
     networks:
       - code-review-net
 
