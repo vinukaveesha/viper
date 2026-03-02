@@ -112,11 +112,17 @@ class GiteaProvider(ProviderInterface):
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref; truncated with delimiter if over max size."""
+        import base64
+        import binascii
+
         api_path = f"/repos/{owner}/{repo}/contents/{path}"
         resp = self._get(api_path, params={"ref": ref})
         if isinstance(resp, dict) and "content" in resp:
-            import base64
-            raw = base64.b64decode(resp["content"]).decode("utf-8", errors="replace")
+            try:
+                decoded = base64.b64decode(resp["content"])
+            except (binascii.Error, TypeError) as exc:  # malformed or non-base64 content
+                raise ValueError(f"Invalid base64 content for {path} at {ref}") from exc
+            raw = decoded.decode("utf-8", errors="replace")
             return truncate_repo_content(raw, max_bytes=MAX_REPO_FILE_BYTES)
         raise ValueError(f"Unexpected response for {path} at {ref}")
 

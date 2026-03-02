@@ -2,9 +2,17 @@
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_PRIVATE_NETWORK_PREFIXES = (
+    "127.",
+    "10.",
+    "192.168.",
+    "169.254.",
+)
 
 
 class SCMConfig(BaseSettings):
@@ -14,7 +22,7 @@ class SCMConfig(BaseSettings):
 
     provider: Literal["gitea", "github", "gitlab", "bitbucket"] = "gitea"
     url: str = Field(..., description="API base URL (may differ from UI for self-hosted)")
-    token: str = Field(..., description="API token for authentication")
+    token: SecretStr = Field(..., description="API token for authentication")
     owner: str = Field(default="", description="Repo owner/org")
     repo: str = Field(default="", description="Repo name")
     pr_num: int | None = Field(default=None, description="PR/MR number")
@@ -29,6 +37,36 @@ class SCMConfig(BaseSettings):
         default="[skip-review]",
         description="If PR title contains this substring, skip review (empty to disable)",
     )
+    allowed_hosts: str | None = Field(
+        default=None,
+        description=(
+            "Optional comma-separated allowlist of SCM hosts (host[:port]). When set, "
+            "SCM_URL must use one of these hosts."
+        ),
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("SCM_URL must be a valid http(s) URL with non-empty host")
+        host = parsed.hostname or ""
+        if host.startswith(_PRIVATE_NETWORK_PREFIXES) or host in ("localhost",):
+            raise ValueError("SCM_URL must not point to localhost or private IP ranges")
+        return v
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _normalize_allowed_hosts(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = ",".join(
+            h.strip()
+            for h in v.split(",")
+            if h.strip()
+        )
+        return cleaned or None
 
 
 class LLMConfig(BaseSettings):

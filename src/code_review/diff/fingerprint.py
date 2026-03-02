@@ -1,6 +1,8 @@
 """Fingerprinting for deduplication and resolved-issue tracking."""
 
 import hashlib
+import hmac
+import os
 import re
 
 # Hidden marker in comment body for fingerprint and idempotency (Phase 2)
@@ -10,6 +12,22 @@ _MARKER_RE = re.compile(
     re.escape(COMMENT_MARKER_PREFIX) + r"(.+?)" + re.escape(COMMENT_MARKER_SUFFIX)
 )
 _KEY_RE = re.compile(r"(fingerprint|version|run)=([^;]+)")
+
+_SIGNING_KEY_ENV = "CODE_REVIEW_SIGNING_KEY"
+
+
+def _get_signing_key() -> bytes:
+    """Return HMAC signing key for markers. Falls back to SCM_TOKEN for compatibility."""
+    key = os.environ.get(_SIGNING_KEY_ENV) or os.environ.get("SCM_TOKEN") or ""
+    return key.encode("utf-8")
+
+
+def _sign_marker(payload: str) -> str:
+    """Return hex HMAC of marker payload."""
+    key = _get_signing_key()
+    if not key:
+        return ""
+    return hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
 
 def normalize_anchor(text: str) -> str:
@@ -67,7 +85,11 @@ def format_comment_body_with_marker(
     parts = [f"fingerprint={fingerprint}", f"version={version}"]
     if run_id is not None:
         parts.append(f"run={run_id}")
-    marker = COMMENT_MARKER_PREFIX + ";".join(parts) + COMMENT_MARKER_SUFFIX
+    payload = ";".join(parts)
+    sig = _sign_marker(payload)
+    if sig:
+        payload = payload + f";sig={sig}"
+    marker = COMMENT_MARKER_PREFIX + payload + COMMENT_MARKER_SUFFIX
     return marker + "\n\n" + body
 
 
@@ -75,6 +97,7 @@ def parse_marker_from_comment_body(body: str) -> dict[str, str | None]:
     """
     Parse code-review-agent marker from comment body.
     Returns dict with keys fingerprint, version, run (values None if absent).
+    Ignores markers with invalid HMAC signatures when a signing key is configured.
     """
     out: dict[str, str | None] = {
         "fingerprint": None,
@@ -85,8 +108,35 @@ def parse_marker_from_comment_body(body: str) -> dict[str, str | None]:
     if not m:
         return out
     inner = m.group(1)
-    for key_m in _KEY_RE.finditer(inner):
-        key, val = key_m.group(1), key_m.group(2).strip()
-        if key in out:
-            out[key] = val
+    # Split payload and optional sig
+    segments = [seg for seg in inner.split(";") if seg]
+    fields: dict[str, str] = {}
+    sig_val: str | None = None
+    for seg in segments:
+        if "=" not in seg:
+            continue
+        k, v = seg.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        if k == "sig":
+            sig_val = v
+        elif k in ("fingerprint", "version", "run"):
+            fields[k] = v
+    key = _get_signing_key()
+    if key:
+        # Rebuild payload in canonical order for verification
+        payload_parts = []
+        if "fingerprint" in fields:
+            payload_parts.append(f"fingerprint={fields['fingerprint']}")
+        if "version" in fields:
+            payload_parts.append(f"version={fields['version']}")
+        if "run" in fields:
+            payload_parts.append(f"run={fields['run']}")
+        payload = ";".join(payload_parts)
+        expected = _sign_marker(payload)
+        if not sig_val or not expected or not hmac.compare_digest(sig_val, expected):
+            return out
+    for field in out:
+        if field in fields:
+            out[field] = fields[field]
     return out

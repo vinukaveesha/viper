@@ -9,6 +9,9 @@ from code_review.runner import run_review
 app = typer.Typer()
 
 
+OWNER_REPO_PATTERN = r"^[a-zA-Z0-9_.-]+$"
+
+
 @app.command()
 def review(
     owner: str = typer.Option(
@@ -59,6 +62,14 @@ def review(
     if not owner or not repo or pr_num is None:
         typer.echo(
             "Error: owner, repo, and pr are required (--owner, --repo, --pr or SCM_* env vars)",
+            err=True,
+        )
+        raise typer.Exit(1)
+    import re as _re
+
+    if not _re.match(OWNER_REPO_PATTERN, owner) or not _re.match(OWNER_REPO_PATTERN, repo):
+        typer.echo(
+            "Error: owner and repo may only contain letters, digits, '_', '-', and '.'.",
             err=True,
         )
         raise typer.Exit(1)

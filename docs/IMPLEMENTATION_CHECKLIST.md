@@ -10,12 +10,12 @@ Tick items as they are implemented.
 
 ## 1. Security
 
-- [ ] Implement SSRF protection and URL allow/deny-listing for `SCM_URL` (see `IMPROVEMENT_PLAN.md` §1.1).
-- [ ] Switch SCM and LLM tokens/API keys to `pydantic.SecretStr` and update providers accordingly (see §1.2).
-- [ ] Validate/sanitise `owner` and `repo` inputs at CLI/runner boundary (see §1.3).
-- [ ] Add HMAC signing or equivalent hardening for fingerprint markers (see §1.4).
-- [ ] Harden `get_file_content()` against malformed base64 responses in Gitea provider (see §1.5).
-- [ ] Move `pytest` and `pytest-asyncio` out of core dependencies into a dev extras group (see §1.6).
+- [x] Implement SSRF protection and URL allow/deny-listing for `SCM_URL` (see `IMPROVEMENT_PLAN.md` §1.1).
+- [x] Switch SCM tokens to `pydantic.SecretStr` (and prepare for LLM secrets) and update call sites accordingly (see §1.2).
+- [x] Validate/sanitise `owner` and `repo` inputs at CLI/runner boundary (see §1.3).
+- [x] Add HMAC signing or equivalent hardening for fingerprint markers (see §1.4).
+- [x] Harden `get_file_content()` against malformed base64 responses in Gitea provider (see §1.5).
+- [x] Move `pytest` and `pytest-asyncio` out of core dependencies into a dev extras group (see §1.6).
 
 ## 2. Code Quality and Architecture
 
