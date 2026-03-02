@@ -1,7 +1,7 @@
 // Pipeline example: code review on PR. Set SCM_* and LLM_* via parameters or Gitea webhook.
 // Agent runs as one-shot container: <runtime> run --rm code-review-agent review
+//   OR inline (USE_INLINE_AGENT=true): code-review review (avoids rootless Podman uid_map issues).
 // Build agent image from repo root: docker build -t code-review-agent -f docker/Dockerfile.agent .
-//   (or: podman build -t code-review-agent -f docker/Dockerfile.agent .)
 // Runtime: set CONTAINER_RUNTIME (e.g. podman) to force one; otherwise pipeline auto-detects docker or podman.
 
 pipeline {
@@ -60,6 +60,7 @@ pipeline {
                         error('SCM_HEAD_SHA not resolved from webhook. Check Generic Webhook Trigger JSONPath mapping.')
                     }
                     // SCM_TOKEN and GOOGLE_API_KEY are injected via Jenkins credentials (environment {} above).
+                    def useInlineAgent = env.USE_INLINE_AGENT == 'true' || env.USE_INLINE_AGENT == '1'
                     withEnv([
                         "CONTAINER_RUNTIME=${containerRuntime}",
                         "REVIEW_IMAGE=${image}",
@@ -70,31 +71,38 @@ pipeline {
                         "REVIEW_SCM_HEAD_SHA=${scmHeadSha}",
                         "REVIEW_LLM_PROVIDER=${llmProvider}",
                         "REVIEW_LLM_MODEL=${llmModel}",
+                        "USE_INLINE_AGENT=${useInlineAgent}",
                     ]) {
                         sh '''
-                            runtime="$CONTAINER_RUNTIME"
-                            if [ -z "$runtime" ] || ! command -v "$runtime" >/dev/null 2>&1; then
-                                if command -v docker >/dev/null 2>&1; then
-                                    runtime=docker
-                                elif command -v podman >/dev/null 2>&1; then
-                                    runtime=podman
-                                else
-                                    echo "ERROR: No container runtime found. Set CONTAINER_RUNTIME (e.g. podman) or install docker/podman in the Jenkins agent."
-                                    exit 1
+                            if [ "$USE_INLINE_AGENT" = "true" ] || [ "$USE_INLINE_AGENT" = "1" ]; then
+                                export SCM_PROVIDER=gitea SCM_URL=http://gitea:3000
+                                code-review review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"
+                            else
+                                runtime="$CONTAINER_RUNTIME"
+                                if [ -z "$runtime" ] || ! command -v "$runtime" >/dev/null 2>&1; then
+                                    if command -v docker >/dev/null 2>&1; then
+                                        runtime=docker
+                                    elif command -v podman >/dev/null 2>&1; then
+                                        runtime=podman
+                                    else
+                                        echo "ERROR: No container runtime found. Set CONTAINER_RUNTIME (e.g. podman) or USE_INLINE_AGENT=true (see docs/QUICKSTART.md)."
+                                        exit 1
+                                    fi
                                 fi
+                                "$runtime" run --rm --network "$REVIEW_NETWORK" \
+                                    -e SCM_PROVIDER=gitea \
+                                    -e SCM_URL=http://gitea:3000 \
+                                    -e SCM_TOKEN \
+                                    -e SCM_OWNER="$REVIEW_SCM_OWNER" \
+                                    -e SCM_REPO="$REVIEW_SCM_REPO" \
+                                    -e SCM_PR_NUM="$REVIEW_SCM_PR_NUM" \
+                                    -e SCM_HEAD_SHA="$REVIEW_SCM_HEAD_SHA" \
+                                    -e LLM_PROVIDER="$REVIEW_LLM_PROVIDER" \
+                                    -e LLM_MODEL="$REVIEW_LLM_MODEL" \
+                                    -e GOOGLE_API_KEY \
+                                    "$REVIEW_IMAGE" review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA" \
+                                || { echo "HINT: If using Podman and you see uid_map or 'Operation not permitted', set USE_INLINE_AGENT=true (see docs/QUICKSTART.md)."; exit 1; }
                             fi
-                            "$runtime" run --rm --network "$REVIEW_NETWORK" \
-                                -e SCM_PROVIDER=gitea \
-                                -e SCM_URL=http://gitea:3000 \
-                                -e SCM_TOKEN \
-                                -e SCM_OWNER="$REVIEW_SCM_OWNER" \
-                                -e SCM_REPO="$REVIEW_SCM_REPO" \
-                                -e SCM_PR_NUM="$REVIEW_SCM_PR_NUM" \
-                                -e SCM_HEAD_SHA="$REVIEW_SCM_HEAD_SHA" \
-                                -e LLM_PROVIDER="$REVIEW_LLM_PROVIDER" \
-                                -e LLM_MODEL="$REVIEW_LLM_MODEL" \
-                                -e GOOGLE_API_KEY \
-                                "$REVIEW_IMAGE" review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"
                         '''
                     }
                 }
