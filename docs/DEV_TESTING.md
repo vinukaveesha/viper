@@ -26,9 +26,19 @@ To run E2E tests without touching your normal `gitea_data` / `jenkins_home` volu
 provides an isolated Compose stack under `tests/e2e/docker-compose.e2e.yml` plus a pytest fixture
 that starts and stops it automatically.
 
+#### One-command E2E (hello-world PR auto-created)
+
+The E2E test will automatically:
+
+- Start Gitea + Jenkins via the isolated Compose stack.
+- Use the Gitea API to create (or reuse) a small `code-review-e2e-hello` repo.
+- Create a feature branch and a “hello world” PR.
+- Run the agent against that PR with a stubbed LLM.
+
 From the repo root:
 
 ```bash
+export GITEA_E2E_TOKEN=<gitea_personal_access_token>  # created in the E2E Gitea
 RUN_E2E=1 pytest -m e2e
 ```
 
@@ -36,7 +46,8 @@ What happens:
 
 - `tests/conftest.py::e2e_stack` uses `docker compose -f tests/e2e/docker-compose.e2e.yml -p code-review-e2e up -d`
   to start Gitea + Jenkins once per test session.
-- The E2E test(s) (marked with `@pytest.mark.e2e`) run against that stack.
+- `tests/e2e/test_docker_gitea_e2e.py` calls the Gitea REST API using `GITEA_E2E_TOKEN` to create the
+  hello-world repo and PR and then runs the agent via `run_review(...)` (with LLM stubbed).
 - When the session finishes, pytest tears the stack down with
   `docker compose -f tests/e2e/docker-compose.e2e.yml -p code-review-e2e down -v`.
 
