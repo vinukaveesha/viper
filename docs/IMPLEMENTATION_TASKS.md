@@ -32,16 +32,16 @@ An AI agent executing these tasks should always cross‑check behavior and edge 
 
 ## Phase 1: LLM Configuration and Debug Controls
 
-- [ ] **Task 1.1: Implement `LLM_DISABLE_TOOL_CALLS` debug mode**
-  - [ ] In `agent/agent.py`, read `disable_tool_calls` from `LLMConfig` (via `get_llm_config()`).
-  - [ ] When `disable_tool_calls` is `True`, construct the ADK `Agent` in a mode that **does not use function tools** (e.g. omit tools, or use ADK’s tool‑disable configuration if available).
-  - [ ] Ensure the default remains tools‑enabled for normal runs.
-  - [ ] Add or update tests (see Plan’s **Phase 1.2** notes) so that when `LLM_DISABLE_TOOL_CALLS` is set, the agent is created in the expected debug configuration.
+- [x] **Task 1.1: Implement `LLM_DISABLE_TOOL_CALLS` debug mode**
+  - [x] In `agent/agent.py`, read `disable_tool_calls` from `LLMConfig` (via `get_llm_config()`).
+  - [x] When `disable_tool_calls` is `True`, construct the ADK `Agent` in a mode that **does not use function tools** (e.g. omit tools, or use ADK’s tool‑disable configuration if available).
+  - [x] Ensure the default remains tools‑enabled for normal runs.
+  - [x] Add or update tests (see Plan’s **Phase 1.2** notes) so that when `LLM_DISABLE_TOOL_CALLS` is set, the agent is created in the expected debug configuration.
 
-- [ ] **Task 1.2: Wire LLM timeouts and retries (where supported)**
+- [x] **Task 1.2: Wire LLM timeouts and retries (where supported)**
   - [ ] Where the ADK model or Runner supports it, thread `LLMConfig.timeout_seconds` and `LLMConfig.max_retries` through to the appropriate constructors or configuration objects.
-  - [ ] If the current ADK version does not support this cleanly:
-    - [ ] Document the limitation in `docs/DEVELOPER_GUIDE.md` with a short note referencing the Plan’s “Timeouts + retry” section.
+  - [x] If the current ADK version does not support this cleanly:
+    - [x] Document the limitation in `docs/DEVELOPER_GUIDE.md` with a short note referencing the Plan’s “Timeouts + retry” section.
     - [ ] Optionally, introduce localized guards (e.g. for Ollama) in the HTTP/model layer that use these values, consistent with the Plan.
 
 ---
