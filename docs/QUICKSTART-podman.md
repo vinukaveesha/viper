@@ -106,7 +106,7 @@ In this mode:
 - The pipeline **does not call `podman run`**. Instead, it executes:
 
   ```bash
-  code-review review --owner ... --repo ... --pr ... --head-sha ...
+  code-review --owner ... --repo ... --pr ... --head-sha ...
   ```
 
   directly inside the Jenkins container.
