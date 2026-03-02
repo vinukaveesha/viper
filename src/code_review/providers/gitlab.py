@@ -184,6 +184,20 @@ class GitLabProvider(ProviderInterface):
             return data["diff_refs"]
         return None
 
+    def _render_body(self, comment: InlineComment, with_path_prefix: bool = False) -> str:
+        """
+        Render comment body, appending suggestion block when suggested_patch is present.
+        Optionally prefix with path/line header for MR-level notes.
+        """
+        base = (
+            comment.body
+            if not comment.suggested_patch
+            else f"{comment.body}\n\n```suggestion\n{comment.suggested_patch}\n```"
+        )
+        if with_path_prefix:
+            return f"**{comment.path}:L{comment.line}**\n\n{base}"
+        return base
+
     def post_review_comments(
         self,
         owner: str,
@@ -201,18 +215,14 @@ class GitLabProvider(ProviderInterface):
             for c in comments:
                 self._post(
                     self._path(owner, repo, "merge_requests", str(pr_number), "notes"),
-                    {"body": f"**{c.path}:L{c.line}**\n\n{c.body}"},
+                    {"body": self._render_body(c, with_path_prefix=True)},
                 )
             return
         base_sha = diff_refs.get("base_sha") or ""
         start_sha = diff_refs.get("start_sha") or base_sha
         head_sha_val = head_sha or diff_refs.get("head_sha") or ""
         for c in comments:
-            body = (
-                c.body
-                if not c.suggested_patch
-                else f"{c.body}\n\n```suggestion\n{c.suggested_patch}\n```"
-            )
+            body = self._render_body(c)
             position = {
                 "base_sha": base_sha,
                 "start_sha": start_sha,

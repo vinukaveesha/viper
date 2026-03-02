@@ -465,7 +465,15 @@ def run_review(
             for c in comments:
                 try:
                     provider.post_review_comment(
-                        owner, repo, pr_number, c.path, c.line, c.body, head_sha=head_sha
+                        owner,
+                        repo,
+                        pr_number,
+                        c.path,
+                        c.line,
+                        c.body,
+                        end_line=c.end_line,
+                        suggested_patch=c.suggested_patch,
+                        head_sha=head_sha,
                     )
                     successful_post_count += 1
                 except Exception:

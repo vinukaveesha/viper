@@ -123,11 +123,25 @@ class ProviderInterface(ABC):
         path: str,
         line: int,
         body: str,
+        end_line: int | None = None,
+        suggested_patch: str | None = None,
         head_sha: str = "",
     ) -> None:
         """Post a single inline comment. Default: call post_review_comments with one item."""
         self.post_review_comments(
-            owner, repo, pr_number, [InlineComment(path=path, line=line, body=body)], head_sha=head_sha
+            owner,
+            repo,
+            pr_number,
+            [
+                InlineComment(
+                    path=path,
+                    line=line,
+                    body=body,
+                    end_line=end_line,
+                    suggested_patch=suggested_patch,
+                )
+            ],
+            head_sha=head_sha,
         )
 
     @abstractmethod
