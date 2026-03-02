@@ -5,7 +5,6 @@ from typing import Any
 
 import httpx
 
-from code_review.providers.safety import truncate_repo_content
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -14,6 +13,7 @@ from code_review.providers.base import (
     ProviderInterface,
     ReviewComment,
 )
+from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.github.com"
@@ -173,9 +173,7 @@ class GitHubProvider(ProviderInterface):
             )
         return result
 
-    def post_pr_summary_comment(
-        self, owner: str, repo: str, pr_number: int, body: str
-    ) -> None:
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post PR-level comment (GitHub: issues comments endpoint for PRs)."""
         self._post(f"/repos/{owner}/{repo}/issues/{pr_number}/comments", {"body": body})
 
@@ -187,10 +185,7 @@ class GitHubProvider(ProviderInterface):
                 return None
             title = data.get("title", "") or ""
             labels_raw = data.get("labels") or []
-            labels = [
-                lb.get("name", lb) if isinstance(lb, dict) else str(lb)
-                for lb in labels_raw
-            ]
+            labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
             return PRInfo(title=title, labels=labels)
         except Exception:
             return None

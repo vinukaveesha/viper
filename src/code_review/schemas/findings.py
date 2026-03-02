@@ -11,25 +11,44 @@ class FindingV1(BaseModel):
     version: str = Field(default="1", description="Schema version for output contract")
     path: str = Field(..., description="File path (relative to repo root)")
     line: int = Field(..., ge=1, description="Line number (or start line for ranges)")
-    end_line: int | None = Field(default=None, ge=1, description="Optional end line for multi-line findings")
+    end_line: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional end line for multi-line findings",
+    )
     severity: Literal["critical", "suggestion", "info"]
     code: str = Field(..., description="Issue code (e.g. unused-var) for fingerprinting")
     message: str = Field(..., description="Human-readable message body")
-    body: str | None = Field(default=None, description="Alias for message; populated from message if unset")
-    category: str | None = Field(default=None, description="e.g. Correctness, Security, Style; use NeedsVerification for uncertainty")
-    anchor: str | None = Field(default=None, description="Optional anchor text for stable positioning when lines shift")
-    fingerprint_hint: str | None = Field(default=None, description="Code span or anchor text to help runner fingerprinting")
+    body: str | None = Field(
+        default=None,
+        description="Alias for message; populated from message if unset",
+    )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "e.g. Correctness, Security, Style; use NeedsVerification for uncertainty"
+        ),
+    )
+    anchor: str | None = Field(
+        default=None,
+        description="Optional anchor text for stable positioning when lines shift",
+    )
+    fingerprint_hint: str | None = Field(
+        default=None,
+        description="Code span or anchor text to help runner fingerprinting",
+    )
     suggested_patch: str | None = Field(
         default=None,
-        description="Optional suggested code change to render as a suggestion block when provider supports suggestions",
+        description=(
+            "Optional suggested code change to render as a suggestion block "
+            "when provider supports suggestions"
+        ),
     )
 
     @model_validator(mode="after")
     def end_line_not_less_than_line(self) -> "FindingV1":
         if self.end_line is not None and self.end_line < self.line:
-            raise ValueError(
-                f"end_line ({self.end_line}) must be >= line ({self.line})"
-            )
+            raise ValueError(f"end_line ({self.end_line}) must be >= line ({self.line})")
         return self
 
     def get_body(self) -> str:

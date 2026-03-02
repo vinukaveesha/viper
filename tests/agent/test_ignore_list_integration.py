@@ -76,8 +76,9 @@ def test_manually_resolved_comment_does_not_block_changed_code(
     provider.post_review_comments = MagicMock()
     provider.post_pr_summary_comment = MagicMock()
 
-    with patch("code_review.runner.get_provider", return_value=provider), patch(
-        "google.adk.runners.Runner", return_value=mock_runner_instance
+    with (
+        patch("code_review.runner.get_provider", return_value=provider),
+        patch("google.adk.runners.Runner", return_value=mock_runner_instance),
     ):
         to_post = run_review("o", "r", 1, head_sha="abc123", dry_run=False)
 

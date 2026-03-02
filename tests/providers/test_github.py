@@ -4,8 +4,8 @@ import base64
 from unittest.mock import MagicMock, patch
 
 from code_review.providers import get_provider
-from code_review.providers.github import GitHubProvider
 from code_review.providers.base import InlineComment
+from code_review.providers.github import GitHubProvider
 
 
 def test_get_provider_github():
@@ -68,7 +68,9 @@ def test_post_review_comments(mock_client):
 
     p = GitHubProvider("https://api.github.com", "tok")
     p.post_review_comments(
-        "owner", "repo", 1,
+        "owner",
+        "repo",
+        1,
         [InlineComment(path="foo.py", line=10, body="[Critical] Bug here")],
         head_sha="abc123",
     )

@@ -53,14 +53,12 @@ def test_format_comment_body_with_marker():
     assert "fingerprint=fp123" in body
     assert "version=0.1.0" in body
     assert "Hello." in body
-    body_with_run = format_comment_body_with_marker(
-        "Hi.", "fp", "1.0", run_id="run-xyz"
-    )
+    body_with_run = format_comment_body_with_marker("Hi.", "fp", "1.0", run_id="run-xyz")
     assert "run=run-xyz" in body_with_run
 
 
 def test_parse_marker_from_comment_body():
-    body = '<!-- code-review-agent:fingerprint=abc;version=0.1.0;run=key1 -->\n\n[Critical] Fix.'
+    body = "<!-- code-review-agent:fingerprint=abc;version=0.1.0;run=key1 -->\n\n[Critical] Fix."
     out = parse_marker_from_comment_body(body)
     assert out["fingerprint"] == "abc"
     assert out["version"] == "0.1.0"

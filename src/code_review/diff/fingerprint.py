@@ -45,9 +45,7 @@ def content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
 
-def surrounding_content_hash(
-    file_lines: list[str], line_1based: int, window: int = 2
-) -> str:
+def surrounding_content_hash(file_lines: list[str], line_1based: int, window: int = 2) -> str:
     """
     Hash a window of lines around the given 1-based line.
     Used for (path, content_hash_of_surrounding_lines, issue_code) fingerprint.

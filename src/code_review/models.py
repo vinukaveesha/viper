@@ -29,6 +29,7 @@ def get_configured_model() -> Any:
 
     try:
         from google.adk.models.lite_llm import LiteLlm
+
         return LiteLlm(model=litellm_model)
     except ImportError:
         # Fallback if ADK LiteLLM not available

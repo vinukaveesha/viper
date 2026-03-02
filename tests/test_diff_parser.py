@@ -1,6 +1,6 @@
 """Tests for diff parser."""
 
-from code_review.diff import DiffHunk, iter_new_lines, parse_unified_diff
+from code_review.diff import iter_new_lines, parse_unified_diff
 
 
 def test_parse_simple_diff():

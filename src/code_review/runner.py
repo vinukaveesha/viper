@@ -12,8 +12,9 @@ from collections import Counter
 from google.genai import types
 
 import code_review
+from code_review import observability
 from code_review.agent import create_review_agent
-from code_review.config import get_scm_config, get_llm_config
+from code_review.config import get_llm_config, get_scm_config
 from code_review.diff.fingerprint import (
     build_fingerprint,
     format_comment_body_with_marker,
@@ -22,7 +23,6 @@ from code_review.diff.fingerprint import (
 )
 from code_review.formatters.comment import finding_to_comment_body
 from code_review.models import get_context_window
-from code_review import observability
 from code_review.providers import get_provider
 from code_review.providers.base import InlineComment
 from code_review.schemas.findings import FindingV1
@@ -58,7 +58,10 @@ def _build_idempotency_key(
     config_hash = hashlib.sha256(
         f"{scm_cfg.provider}:{scm_cfg.url}:{llm_cfg.provider}:{llm_cfg.model}".encode()
     ).hexdigest()[:16]
-    return f"{scm_cfg.provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/agent/{AGENT_VERSION}/config/{config_hash}"
+    return (
+        f"{scm_cfg.provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/"
+        f"agent/{AGENT_VERSION}/config/{config_hash}"
+    )
 
 
 def _idempotency_key_seen_in_comments(comments: list, key: str) -> bool:
@@ -91,7 +94,9 @@ def _build_ignore_set(comments: list) -> set[tuple[str, str]]:
     return out
 
 
-def _get_file_lines_by_path(provider, owner: str, repo: str, ref: str, paths: list[str]) -> dict[str, list[str]]:
+def _get_file_lines_by_path(
+    provider, owner: str, repo: str, ref: str, paths: list[str]
+) -> dict[str, list[str]]:
     """Fetch file content at ref for each path; return dict path -> list of lines."""
     out: dict[str, list[str]] = {}
     for p in paths:
@@ -101,7 +106,11 @@ def _get_file_lines_by_path(provider, owner: str, repo: str, ref: str, paths: li
         except Exception as e:
             logger.warning(
                 "get_file_content failed for path=%s owner=%s repo=%s ref=%s: %s",
-                p, owner, repo, ref, e,
+                p,
+                owner,
+                repo,
+                ref,
+                e,
                 exc_info=True,
             )
             out[p] = []
@@ -189,9 +198,7 @@ def _log_run_complete(
     )
 
 
-def _run_agent_and_collect_response(
-    runner, session_id: str, content: types.Content
-) -> str:
+def _run_agent_and_collect_response(runner, session_id: str, content: types.Content) -> str:
     """Run agent once and return concatenated final response text."""
     parts: list[str] = []
     for event in runner.run(
@@ -230,9 +237,7 @@ def run_review(
     cfg = get_scm_config()
     llm_cfg = get_llm_config()
     token_val = (
-        cfg.token.get_secret_value()
-        if hasattr(cfg.token, "get_secret_value")
-        else cfg.token
+        cfg.token.get_secret_value() if hasattr(cfg.token, "get_secret_value") else cfg.token
     )
     provider = get_provider(
         cfg.provider,
@@ -244,14 +249,15 @@ def run_review(
     if cfg.skip_label or cfg.skip_title_pattern:
         pr_info = provider.get_pr_info(owner, repo, pr_number)
         if pr_info:
-            if cfg.skip_label and cfg.skip_label.strip() and any(
-                lb.strip().lower() == cfg.skip_label.strip().lower()
-                for lb in pr_info.labels
+            if (
+                cfg.skip_label
+                and cfg.skip_label.strip()
+                and any(
+                    lb.strip().lower() == cfg.skip_label.strip().lower() for lb in pr_info.labels
+                )
             ):
                 _duration_ms = (time.perf_counter() - start_time) * 1000
-                _log_run_complete(
-                    trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
-                )
+                _log_run_complete(trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms)
                 observability.finish_run(
                     run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
                 )
@@ -262,9 +268,7 @@ def run_review(
                 and cfg.skip_title_pattern.strip().lower() in pr_info.title.lower()
             ):
                 _duration_ms = (time.perf_counter() - start_time) * 1000
-                _log_run_complete(
-                    trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
-                )
+                _log_run_complete(trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms)
                 observability.finish_run(
                     run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
                 )
@@ -297,14 +301,10 @@ def run_review(
 
     # Idempotency: skip if we already ran for this PR/head/config (run id in comment marker)
     if head_sha:
-        run_id = _build_idempotency_key(
-            cfg, llm_cfg, owner, repo, pr_number, head_sha
-        )
+        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
         if _idempotency_key_seen_in_comments(existing_dicts, run_id):
             _duration_ms = (time.perf_counter() - start_time) * 1000
-            _log_run_complete(
-                trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms
-            )
+            _log_run_complete(trace_id, owner, repo, pr_number, 0, 0, 0, _duration_ms)
             observability.finish_run(
                 run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0
             )
@@ -350,31 +350,25 @@ def run_review(
             msg = (
                 f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}."
                 + (f" head_sha={head_sha}." if head_sha else "")
-                + f" Review only this file: {file_path}. Use get_pr_diff_for_file to fetch its diff."
+                + " Review only this file: "
+                f"{file_path}. Use get_pr_diff_for_file to fetch its diff."
             )
             content = types.Content(role="user", parts=[types.Part(text=msg)])
-            response_text = _run_agent_and_collect_response(
-                runner, file_session_id, content
-            )
+            response_text = _run_agent_and_collect_response(runner, file_session_id, content)
             all_findings.extend(_findings_from_response(response_text))
     else:
-        msg = (
-            f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}."
-            + (f" head_sha={head_sha}." if head_sha else "")
+        msg = f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}." + (
+            f" head_sha={head_sha}." if head_sha else ""
         )
         content = types.Content(role="user", parts=[types.Part(text=msg)])
-        response_text = _run_agent_and_collect_response(
-            runner, session_id, content
-        )
+        response_text = _run_agent_and_collect_response(runner, session_id, content)
         all_findings = _findings_from_response(response_text)
 
     # Filter out findings that match existing comments (by path + body_hash or path + fingerprint)
     to_post: list[tuple[FindingV1, str]] = []
     unique_paths = list(dict.fromkeys(f.path for f in all_findings))
     file_lines_by_path = (
-        _get_file_lines_by_path(provider, owner, repo, head_sha, unique_paths)
-        if head_sha
-        else {}
+        _get_file_lines_by_path(provider, owner, repo, head_sha, unique_paths) if head_sha else {}
     )
     for f in all_findings:
         body = finding_to_comment_body(f)
@@ -441,16 +435,12 @@ def run_review(
                 "head_sha is required when posting comments (dry_run=False). "
                 "Provide head_sha or use --dry-run to skip posting."
             )
-        run_id = _build_idempotency_key(
-            cfg, llm_cfg, owner, repo, pr_number, head_sha
-        )
+        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
         comments: list[InlineComment] = []
         for f, fp in to_post:
             body = finding_to_comment_body(f)
             if fp:
-                body = format_comment_body_with_marker(
-                    body, fp, AGENT_VERSION, run_id=run_id
-                )
+                body = format_comment_body_with_marker(body, fp, AGENT_VERSION, run_id=run_id)
             comments.append(
                 InlineComment(
                     path=f.path,
@@ -461,9 +451,7 @@ def run_review(
                 )
             )
         try:
-            provider.post_review_comments(
-                owner, repo, pr_number, comments, head_sha=head_sha
-            )
+            provider.post_review_comments(owner, repo, pr_number, comments, head_sha=head_sha)
             successful_post_count = len(comments)
             try:
                 provider.post_pr_summary_comment(
@@ -472,10 +460,14 @@ def run_review(
             except Exception as e:
                 logger.warning(
                     "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
-                    owner, repo, pr_number, e,
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
                 )
         except Exception:
-            # Batch failed (e.g. one position invalid); post one-by-one, degrade to PR-level on failure
+            # Batch failed (e.g. one position invalid); post one-by-one,
+            # degrade to PR-level on failure.
             for c in comments:
                 try:
                     provider.post_review_comment(
@@ -493,14 +485,18 @@ def run_review(
                 except Exception:
                     summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
                     try:
-                        provider.post_pr_summary_comment(
-                            owner, repo, pr_number, summary_body
-                        )
+                        provider.post_pr_summary_comment(owner, repo, pr_number, summary_body)
                         successful_post_count += 1
                     except Exception as e:
                         logger.error(
-                            "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s",
-                            owner, repo, pr_number, c.path, c.line, e,
+                            "post_pr_summary_comment failed owner=%s repo=%s "
+                            "pr_number=%s path=%s line=%s: %s",
+                            owner,
+                            repo,
+                            pr_number,
+                            c.path,
+                            c.line,
+                            e,
                             exc_info=True,
                         )
 

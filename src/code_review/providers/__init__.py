@@ -8,9 +8,9 @@ from code_review.providers.base import (
     ProviderInterface,
     ReviewComment,
 )
+from code_review.providers.bitbucket import BitbucketProvider
 from code_review.providers.gitea import GiteaProvider
 from code_review.providers.github import GitHubProvider
-from code_review.providers.bitbucket import BitbucketProvider
 from code_review.providers.gitlab import GitLabProvider
 
 

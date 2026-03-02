@@ -1,6 +1,6 @@
 """ADK FunctionTools wrapping the provider. Use create_gitea_tools(provider) to get tools."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from code_review.agent.tools.review_helpers import detect_language_context
 from code_review.providers.base import ProviderInterface
@@ -12,6 +12,7 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
     Return a list of ADK-compatible tool functions that use the given provider.
     Tools receive owner, repo, pr_number from the LLM (from user message context).
     """
+
     def get_pr_diff(owner: str, repo: str, pr_number: int) -> str:
         """Fetch the unified diff for a pull request.
 
@@ -25,9 +26,7 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
         """
         return provider.get_pr_diff(owner, repo, pr_number)
 
-    def get_pr_diff_for_file(
-        owner: str, repo: str, pr_number: int, path: str
-    ) -> str:
+    def get_pr_diff_for_file(owner: str, repo: str, pr_number: int, path: str) -> str:
         """Fetch the unified diff for a single file in the PR.
 
         Args:
@@ -90,9 +89,7 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
         Returns:
             Lines start_line..end_line as string.
         """
-        return provider.get_file_lines(
-            owner, repo, ref, path, start_line, end_line
-        )
+        return provider.get_file_lines(owner, repo, ref, path, start_line, end_line)
 
     def post_review_comment(
         owner: str,
@@ -118,8 +115,13 @@ def create_gitea_tools(provider: ProviderInterface) -> list[Callable]:
             Confirmation message.
         """
         from code_review.providers.base import InlineComment
+
         provider.post_review_comments(
-            owner, repo, pr_number, [InlineComment(path=path, line=line, body=body)], head_sha=head_sha
+            owner,
+            repo,
+            pr_number,
+            [InlineComment(path=path, line=line, body=body)],
+            head_sha=head_sha,
         )
         return f"Posted comment on {path}:{line}"
 
@@ -154,6 +156,7 @@ def create_findings_only_tools(provider: ProviderInterface) -> list[Callable]:
     Tools for agent that only returns findings (no post, no get_existing).
     Runner will fetch comments, filter, and post.
     """
+
     def get_pr_diff(owner: str, repo: str, pr_number: int) -> str:
         return provider.get_pr_diff(owner, repo, pr_number)
 

@@ -24,7 +24,7 @@ def get_commentable_positions(diff_text: str) -> list[CommentablePosition]:
     hunks = parse_unified_diff(diff_text)
     positions: list[CommentablePosition] = []
     for hunk_idx, hunk in enumerate(hunks):
-        for content, _old_ln, new_ln in hunk.lines:
+        for _content, _old_ln, new_ln in hunk.lines:
             if new_ln is not None:
                 positions.append(
                     CommentablePosition(

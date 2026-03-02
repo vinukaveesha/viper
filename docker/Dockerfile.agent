@@ -13,8 +13,10 @@ COPY pyproject.toml ./
 # Copy source code (changes frequently)
 COPY src ./src/
 
-# Install package and dependencies; pip will reuse wheels between layers when possible
-RUN pip install --no-cache-dir -e .
+# Upgrade pip to a version without the known CVEs, then install the package
+# and dependencies; pip will reuse wheels between layers when possible.
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.0" \
+    && pip install --no-cache-dir -e .
 
 # Run as unprivileged user
 RUN adduser --disabled-password --gecos "" --uid 1000 appuser \

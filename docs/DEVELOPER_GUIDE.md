@@ -353,13 +353,52 @@ Tests mirror the source layout and live under `tests/`:
 - **Config**: **Patch `get_scm_config`** and **get_llm_config** (and in runner tests **get_context_window**) so tests do not depend on real env.
 - **HTTP (Gitea, etc.)**: Patch `httpx.Client` (or the client used by the provider) and set `.request.return_value` (or `.get`/`.post` if the provider uses them) to a mock response with `.text`, `.json()`, `.headers` as needed.
 
-### 8.3 Running Tests
+### 8.3 Running Tests and Tooling
 
 ```bash
 pip install -e ".[dev]"
+
+# Linting (Ruff). CI runs this as a non-blocking check so lint
+# failures show up in GitHub Actions logs but do not fail the build.
+ruff check src tests
+
+# Optional local type checking (only if you install mypy yourself)
+# mypy src
+
+# Unit and integration tests
 pytest
-# Exclude E2E (requires RUN_E2E=1 and live Gitea):
+
+# Exclude E2E (requires RUN_E2E=1 and Docker/Podman):
 pytest --ignore=tests/e2e
+
+# Full-stack E2E (auto-managed Gitea + Jenkins stack and hello-world PR)
+RUN_E2E=1 pytest -m e2e
+```
+
+### 8.4 Pre-commit Hooks (optional)
+
+Pre-commit hooks are **not enabled by default**. The repository ships an empty
+`.pre-commit-config.yaml` so that contributors can opt in to local linting and
+formatting if they wish.
+
+If you want Ruff to run automatically on `git commit`, install and configure
+pre-commit locally:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Then add your preferred hooks to `.pre-commit-config.yaml`, for example:
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
 ```
 
 ---

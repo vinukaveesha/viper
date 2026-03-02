@@ -12,12 +12,18 @@ from code_review.providers.base import FileInfo
 def test_large_pr_file_by_file_no_duplicate_posts(
     mock_scm, mock_get_provider, mock_llm, mock_context_window
 ):
-    """When diff exceeds token budget, runner invokes agent per file; posted comments have no duplicate (path, line)."""
+    """
+    When diff exceeds the token budget, runner invokes the agent per file;
+    posted comments have no duplicate (path, line).
+    """
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
-        provider="gitea", url="https://x.com", token="x",
-        skip_label="", skip_title_pattern="",
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+        skip_label="",
+        skip_title_pattern="",
     )
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()
@@ -41,9 +47,15 @@ def test_large_pr_file_by_file_no_duplicate_posts(
         # Return one finding for the file mentioned in the message
         text = new_message.parts[0].text if new_message.parts else ""
         if "Review only this file: a.py" in text:
-            findings = '[{"path":"a.py","line":1,"severity":"suggestion","code":"x","message":"Fix a."}]'
+            findings = (
+                '[{"path":"a.py","line":1,"severity":"suggestion","code":"x",'
+                '"message":"Fix a."}]'
+            )
         elif "Review only this file: b.py" in text:
-            findings = '[{"path":"b.py","line":2,"severity":"info","code":"y","message":"Fix b."}]'
+            findings = (
+                '[{"path":"b.py","line":2,"severity":"info","code":"y",'
+                '"message":"Fix b."}]'
+            )
         else:
             findings = "[]"
         mock_event = MagicMock()
@@ -81,8 +93,11 @@ def test_large_pr_file_by_file_uses_separate_sessions(
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
-        provider="gitea", url="https://x.com", token="x",
-        skip_label="", skip_title_pattern="",
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+        skip_label="",
+        skip_title_pattern="",
     )
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()
@@ -133,8 +148,11 @@ def test_large_pr_file_by_file_message_requests_file_diff(
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
-        provider="gitea", url="https://x.com", token="x",
-        skip_label="", skip_title_pattern="",
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+        skip_label="",
+        skip_title_pattern="",
     )
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()
@@ -165,9 +183,9 @@ def test_large_pr_file_by_file_message_requests_file_diff(
 
     assert len(messages_sent) == 1
     msg = messages_sent[0]
-    assert "get_pr_diff_for_file" in msg, (
-        "message to agent should instruct use of get_pr_diff_for_file in file-by-file mode"
-    )
-    assert "a.py" in msg, (
-        "message to agent should include the file path so the agent knows which file to review"
-    )
+    assert (
+        "get_pr_diff_for_file" in msg
+    ), "message to agent should instruct use of get_pr_diff_for_file in file-by-file mode"
+    assert (
+        "a.py" in msg
+    ), "message to agent should include the file path so the agent knows which file to review"

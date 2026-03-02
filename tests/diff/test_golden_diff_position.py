@@ -5,7 +5,8 @@ import pytest
 from code_review.diff.parser import parse_unified_diff
 from code_review.diff.position import get_commentable_positions
 
-# Golden samples: (diff_text, list of (path, new_start, new_count), list of (path, line) commentable)
+# Golden samples: (diff_text, list of (path, new_start, new_count),
+# list of (path, line) commentable).
 GOLDEN_SAMPLES = [
     (
         """diff --git a/foo.py b/foo.py
@@ -58,7 +59,11 @@ def test_golden_parse_unified_diff(diff_text, expected_hunks, expected_positions
     """Parse golden diff and assert hunk paths and new_start/new_count."""
     hunks = parse_unified_diff(diff_text)
     assert len(hunks) == len(expected_hunks)
-    for hunk, (path, new_start, new_count) in zip(hunks, expected_hunks):
+    for hunk, (path, new_start, new_count) in zip(
+        hunks,
+        expected_hunks,
+        strict=True,
+    ):
         assert hunk.path == path
         assert hunk.new_start == new_start
         assert hunk.new_count == new_count

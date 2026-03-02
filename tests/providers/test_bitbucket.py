@@ -3,8 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 from code_review.providers import get_provider
-from code_review.providers.bitbucket import BitbucketProvider
 from code_review.providers.base import InlineComment
+from code_review.providers.bitbucket import BitbucketProvider
 
 
 def test_get_provider_bitbucket():
@@ -65,7 +65,9 @@ def test_post_review_comments(mock_client):
 
     p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
     p.post_review_comments(
-        "owner", "repo", 1,
+        "owner",
+        "repo",
+        1,
         [InlineComment(path="foo.py", line=10, body="[Critical] Bug here")],
         head_sha="abc123",
     )
