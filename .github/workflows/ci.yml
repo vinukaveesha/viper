@@ -66,4 +66,5 @@ jobs:
           format: table
           exit-code: "1"
           ignore-unfixed: true
+          version: v0.69.2
 
