@@ -103,13 +103,13 @@ class BitbucketProvider(ProviderInterface):
                     )
                     if not file_path:
                         continue
-                    status = (
-                        "removed"
-                        if f.get("status") == "removed"
-                        else "added"
-                        if f.get("status") == "added"
-                        else "modified"
-                    )
+                    raw_status = f.get("status")
+                    if raw_status == "removed":
+                        status = "removed"
+                    elif raw_status == "added":
+                        status = "added"
+                    else:
+                        status = "modified"
                     result.append(FileInfo(path=file_path, status=status, additions=0, deletions=0))
             next_url = data.get("next")
             if not next_url or not isinstance(next_url, str):

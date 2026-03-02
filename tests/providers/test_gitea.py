@@ -106,7 +106,8 @@ def test_get_existing_review_comments(mock_client):
 @patch("code_review.providers.gitea.httpx.Client")
 def test_get_pr_diff_for_file(mock_client):
     full_diff = (
-        "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n" "@@ -1,2 +1,3 @@\n x\n+y\n z"
+        "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n"
+        + "@@ -1,2 +1,3 @@\n x\n+y\n z"
     )
     mock_resp = MagicMock()
     mock_resp.text = full_diff

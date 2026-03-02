@@ -25,7 +25,9 @@ class FindingV1(BaseModel):
     )
     category: str | None = Field(
         default=None,
-        description=("e.g. Correctness, Security, Style; use NeedsVerification " "for uncertainty"),
+        description=(
+            "e.g. Correctness, Security, Style; use NeedsVerification for uncertainty"
+        ),
     )
     anchor: str | None = Field(
         default=None,

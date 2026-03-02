@@ -139,9 +139,12 @@ class GitLabProvider(ProviderInterface):
             new_path = d.get("new_path") or d.get("old_path") or ""
             if not new_path:
                 continue
-            status = (
-                "added" if d.get("new_file") else "removed" if d.get("deleted_file") else "modified"
-            )
+            if d.get("new_file"):
+                status = "added"
+            elif d.get("deleted_file"):
+                status = "removed"
+            else:
+                status = "modified"
             additions, deletions = self._additions_deletions_from_diff(d)
             result.append(
                 FileInfo(path=new_path, status=status, additions=additions, deletions=deletions)
