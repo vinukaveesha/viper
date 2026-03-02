@@ -229,7 +229,11 @@ def run_review(
 
     cfg = get_scm_config()
     llm_cfg = get_llm_config()
-    provider = get_provider(cfg.provider, cfg.url, cfg.token)
+    provider = get_provider(
+        cfg.provider,
+        cfg.url,
+        cfg.token.get_secret_value(),
+    )
 
     # Skip review if PR has skip label or title contains skip pattern (e.g. [skip-review])
     if cfg.skip_label or cfg.skip_title_pattern:
