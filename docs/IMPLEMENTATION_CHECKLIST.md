@@ -30,11 +30,11 @@ Tick items as they are implemented.
 
 ## 3. Testing
 
-- [ ] Add a GitHub Actions (or equivalent) CI workflow that runs linting and tests on pushes/PRs (see §3.1).
-- [ ] Expand tests to cover error paths and failure modes described in the plan (see §3.2).
-- [ ] Move Gitea provider tests into `tests/providers/test_gitea.py` for layout consistency (see §3.3).
-- [ ] Turn the placeholder E2E test into a real smoke test of the full stack (see §3.4).
-- [ ] Add unit tests for `detect_from_paths_per_folder_root()` covering the edge cases listed (see §3.5).
+- [x] Add a GitHub Actions (or equivalent) CI workflow that runs linting and tests on pushes/PRs (see §3.1).
+- [x] Expand tests to cover error paths and failure modes described in the plan (see §3.2).
+- [x] Move Gitea provider tests into `tests/providers/test_gitea.py` for layout consistency (see §3.3).
+- [x] Turn the placeholder E2E test into a real smoke test of the full stack (see §3.4).
+- [x] Add unit tests for `detect_from_paths_per_folder_root()` covering the edge cases listed (see §3.5).
 
 ## 4. CI/CD Pipeline
 
