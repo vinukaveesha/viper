@@ -29,17 +29,15 @@ def _strip_leading_tags(text: str) -> str:
 
 def finding_to_comment_body(f: FindingV1) -> str:
     """
-    Format a finding as inline comment body with emoji + [Critical]/[Suggestion]/[Info] prefix.
+    Format a finding as inline comment body with a [Critical]/[Suggestion]/[Info] prefix.
     Location (path, line, optional end_line) is carried by the runner when posting;
     this returns only the body text.
     """
     severity_key = f.severity.lower()
     label = SEVERITY_LABELS.get(severity_key, f"[{f.severity.title()}]")
-    emoji = SEVERITY_EMOJIS.get(severity_key, "")
 
     body = _strip_leading_tags(f.get_body())
 
-    prefix = f"{emoji} {label}".strip()
     if not body:
-        return prefix
-    return f"{prefix} {body}"
+        return label
+    return f"{label} {body}"

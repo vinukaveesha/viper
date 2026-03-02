@@ -190,15 +190,12 @@ class GiteaProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/comments"
         # Older Gitea versions (e.g. 1.21.x) do not expose this endpoint and return 404.
         # Treat 404 as "no existing review comments" instead of failing the whole run.
-        url = f"{self._base_url}/api/v1{path}"
-        r = self._request_with_retry("GET", url)
-        if r.status_code == 404:
-            return []
-        r.raise_for_status()
-        if r.headers.get("content-type", "").startswith("application/json"):
-            data = r.json()
-        else:
-            return []
+        try:
+            data = self._get(path)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return []
+            raise
         if not isinstance(data, list):
             return []
         result: list[ReviewComment] = []
