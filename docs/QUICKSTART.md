@@ -136,7 +136,7 @@ The pipeline also checks `PR_ACTION` itself and skips execution unless the actio
 5. Save the webhook.
 6. Confirm **Delivery History** shows a 2xx response.
 
-If delivery fails with `webhook can only call allowed HTTP servers`, verify [docker-compose.yml](/home/raditha/workspace/python/code-review/docker-compose.yml) includes `GITEA__webhook__ALLOWED_HOST_LIST: jenkins,jenkins:8080`.
+If delivery fails with `webhook can only call allowed HTTP servers`, verify [docker-compose.yml](../docker-compose.yml) includes `GITEA__webhook__ALLOWED_HOST_LIST: jenkins,jenkins:8080`.
 
 Now, when a PR is opened or updated, Jenkins will trigger the pipeline and run the review.
 
@@ -144,4 +144,4 @@ Now, when a PR is opened or updated, Jenkins will trigger the pipeline and run t
 
 ## Next steps
 
-For development workflows beyond this setup, see [docs/DEV_TESTING.md](/home/raditha/workspace/python/code-review/docs/DEV_TESTING.md).
+For development workflows beyond this setup, see [docs/DEV_TESTING.md](./DEV_TESTING.md).
