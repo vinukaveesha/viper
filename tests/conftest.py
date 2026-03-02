@@ -2,8 +2,10 @@
 
 import os
 import subprocess
+import time
 
 import pytest
+import requests
 
 
 E2E_COMPOSE_FILE = "tests/e2e/docker-compose.e2e.yml"
@@ -51,6 +53,48 @@ def e2e_stack():
         pytest.skip("Docker is not available to start E2E stack")
     except subprocess.CalledProcessError as exc:
         pytest.skip(f"Failed to start E2E stack: {exc}")
+
+    # Wait for Gitea and Jenkins to become ready before yielding to tests.
+    timeout_seconds = int(os.environ.get("E2E_READY_TIMEOUT", "120"))
+    poll_interval = float(os.environ.get("E2E_READY_POLL_INTERVAL", "2.0"))
+
+    gitea_url = os.environ.get("E2E_GITEA_URL", "http://localhost:3000")
+    jenkins_url = os.environ.get("E2E_JENKINS_URL", "http://localhost:8080")
+
+    gitea_health_endpoints = [
+        gitea_url,
+        f"{gitea_url}/api/v1/version",
+    ]
+    jenkins_health_endpoints = [
+        f"{jenkins_url}/login",
+        f"{jenkins_url}/api/json",
+    ]
+
+    def _service_ready(endpoints):
+        for url in endpoints:
+            try:
+                resp = requests.get(url, timeout=5)
+            except requests.RequestException:
+                continue
+            if 200 <= resp.status_code < 500:
+                return True
+        return False
+
+    start = time.time()
+    while True:
+        gitea_ready = _service_ready(gitea_health_endpoints)
+        jenkins_ready = _service_ready(jenkins_health_endpoints)
+
+        if gitea_ready and jenkins_ready:
+            break
+
+        if time.time() - start > timeout_seconds:
+            pytest.skip(
+                f"E2E stack failed to become ready within {timeout_seconds} seconds "
+                f"(Gitea ready={gitea_ready}, Jenkins ready={jenkins_ready})"
+            )
+
+        time.sleep(poll_interval)
 
     try:
         yield

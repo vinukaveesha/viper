@@ -38,16 +38,19 @@ The E2E test will automatically:
 From the repo root:
 
 ```bash
-export GITEA_E2E_TOKEN=<gitea_personal_access_token>  # created in the E2E Gitea
 RUN_E2E=1 pytest -m e2e
 ```
+
+No manual `GITEA_E2E_TOKEN` export is required; the E2E setup code handles creating and using a
+Gitea access token internally.
 
 What happens:
 
 - `tests/conftest.py::e2e_stack` uses `docker compose -f tests/e2e/docker-compose.e2e.yml -p code-review-e2e up -d`
   to start Gitea + Jenkins once per test session.
-- `tests/e2e/test_docker_gitea_e2e.py` calls the Gitea REST API using `GITEA_E2E_TOKEN` to create the
-  hello-world repo and PR and then runs the agent via `run_review(...)` (with LLM stubbed).
+- `tests/e2e/test_docker_gitea_e2e.py` calls the Gitea REST API using an internally created access
+  token to create the hello-world repo and PR and then runs the agent via `run_review(...)`
+  (with LLM stubbed).
 - When the session finishes, pytest tears the stack down with
   `docker compose -f tests/e2e/docker-compose.e2e.yml -p code-review-e2e down -v`.
 
