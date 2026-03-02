@@ -438,7 +438,13 @@ def run_review(
                     body, fp, AGENT_VERSION, run_id=run_id
                 )
             comments.append(
-                InlineComment(path=f.path, line=f.line, body=body, end_line=f.end_line)
+                InlineComment(
+                    path=f.path,
+                    line=f.line,
+                    body=body,
+                    end_line=f.end_line,
+                    suggested_patch=f.suggested_patch,
+                )
             )
         try:
             provider.post_review_comments(
@@ -459,7 +465,15 @@ def run_review(
             for c in comments:
                 try:
                     provider.post_review_comment(
-                        owner, repo, pr_number, c.path, c.line, c.body, head_sha=head_sha
+                        owner,
+                        repo,
+                        pr_number,
+                        c.path,
+                        c.line,
+                        c.body,
+                        end_line=c.end_line,
+                        suggested_patch=c.suggested_patch,
+                        head_sha=head_sha,
                     )
                     successful_post_count += 1
                 except Exception:
