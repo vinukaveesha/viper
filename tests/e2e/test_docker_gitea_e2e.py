@@ -6,6 +6,7 @@ Run only when Gitea is available (e.g. docker compose up):
 """
 
 import os
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -17,7 +18,7 @@ import pytest
 )
 def test_e2e_docker_gitea_full_review(e2e_stack):
     """Full E2E: against real Gitea (localhost), create PR, run agent, assert comments.
-    Requires: docker compose up (Gitea), repo with PR, SCM_* and LLM_* env set.
+    Uses a stubbed LLM so the test does not depend on external LLM latency.
     """
     from code_review.runner import run_review
 
@@ -28,6 +29,17 @@ def test_e2e_docker_gitea_full_review(e2e_stack):
     if not owner or not repo or not pr_num_str:
         pytest.skip("E2E requires SCM_OWNER, SCM_REPO, SCM_PR_NUM")
     pr_number = int(pr_num_str)
-    findings = run_review(owner, repo, pr_number, head_sha=head_sha, dry_run=True)
+
+    findings_json = "[]"
+    mock_event = MagicMock()
+    mock_event.is_final_response.return_value = True
+    mock_event.content = MagicMock()
+    mock_event.content.parts = [MagicMock(text=findings_json)]
+    mock_runner_instance = MagicMock()
+    mock_runner_instance.run.return_value = iter([mock_event])
+
+    with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
+        findings = run_review(owner, repo, pr_number, head_sha=head_sha, dry_run=True)
+
     # Dry run: no posts; we only assert the runner completes and returns a list
     assert isinstance(findings, list)
