@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field, model_validator
+
 from code_review.diff.parser import parse_unified_diff
 
 
@@ -10,7 +11,8 @@ class ProviderCapabilities(BaseModel):
     """
     Provider capability flags for branching behavior.
     - resolvable_comments: provider supports marking comments as resolved (e.g. GitLab).
-    - supports_suggestions: provider supports suggested-change / code suggestion blocks (e.g. GitHub, GitLab).
+    - supports_suggestions: provider supports suggested-change / code suggestion blocks
+     (e.g. GitHub, GitLab).
     """
 
     resolvable_comments: bool = False
@@ -54,15 +56,18 @@ class InlineComment(BaseModel):
     path: str
     line: int = Field(..., ge=1, description="Line in new file (1-based)")
     body: str
-    end_line: int | None = Field(default=None, ge=1, description="Optional end line for multi-line comments")
-    suggested_patch: str | None = Field(default=None, description="Optional suggested code change; used when provider supports_suggestions")
+    end_line: int | None = Field(
+        default=None, ge=1, description="Optional end line for multi-line comments"
+    )
+    suggested_patch: str | None = Field(
+        default=None,
+        description="Optional suggested code change; used when provider supports_suggestions",
+    )
 
     @model_validator(mode="after")
     def end_line_not_less_than_line(self) -> "InlineComment":
         if self.end_line is not None and self.end_line < self.line:
-            raise ValueError(
-                f"end_line ({self.end_line}) must be >= line ({self.line})"
-            )
+            raise ValueError(f"end_line ({self.end_line}) must be >= line ({self.line})")
         return self
 
 
@@ -74,9 +79,7 @@ class ProviderInterface(ABC):
         """Return unified diff string for the PR."""
         ...
 
-    def get_pr_diff_for_file(
-        self, owner: str, repo: str, pr_number: int, path: str
-    ) -> str:
+    def get_pr_diff_for_file(self, owner: str, repo: str, pr_number: int, path: str) -> str:
         """
         Return diff for a single file.
 
@@ -150,7 +153,11 @@ class ProviderInterface(ABC):
         comments: list[InlineComment],
         head_sha: str = "",
     ) -> None:
-        """Post inline comments. Accepts internal InlineComment; provider converts to SCM API payload."""
+        """
+        Post inline comments.
+
+        Accepts internal InlineComment; provider converts to SCM API payload.
+        """
         ...
 
     def post_review_comment(
@@ -189,26 +196,26 @@ class ProviderInterface(ABC):
         """Return existing review comments (include resolved status for ignore list)."""
         ...
 
-    def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
+    def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:  # noqa: B027
         """Mark a comment as resolved. Default no-op if provider lacks support."""
         pass
 
-    def unresolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
+    def unresolve_comment(self, owner: str, repo: str, comment_id: str) -> None:  # noqa: B027
         """Mark a comment as unresolved. Optional; default no-op."""
         pass
 
-    def post_pr_summary_comment(
-        self, owner: str, repo: str, pr_number: int, body: str
-    ) -> None:
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post a PR-level comment (e.g. when inline positioning fails or finding is file-level)."""
-        raise NotImplementedError(
-            "post_pr_summary_comment not implemented for this provider"
-        )
+        raise NotImplementedError("post_pr_summary_comment not implemented for this provider")
 
     def capabilities(self) -> ProviderCapabilities:
         """Return provider capability flags."""
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=False)
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
-        """Return PR title and labels for skip-review check. Default: None (skip check not supported)."""
+        """
+        Return PR title and labels for skip-review check.
+
+        Default: None (skip check not supported).
+        """
         return None

@@ -7,7 +7,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # Confidence thresholds: numeric 0.0-1.0 -> literal (plan: define thresholds and write tests)
 CONFIDENCE_THRESHOLD_HIGH = 0.8
 CONFIDENCE_THRESHOLD_MEDIUM = 0.5
@@ -26,7 +25,9 @@ class DetectedContext(BaseModel):
     """Result of language/framework detection."""
 
     language: str = Field(..., description="Primary language (e.g. python, javascript)")
-    framework: str | None = Field(default=None, description="Detected framework (e.g. django, fastapi)")
+    framework: str | None = Field(
+        default=None, description="Detected framework (e.g. django, fastapi)"
+    )
     confidence: Literal["high", "medium", "low"] = Field(
         ..., description="Confidence based on signal strength"
     )
@@ -87,11 +88,12 @@ def _extract_python_frameworks(content: str) -> list[str]:
         line = line.strip().lower()
         if not line or line.startswith("#") or line.startswith("["):
             continue
-        # requirements.txt: package==version or package>=version
+        # requirements.txt: package==version or package>=version.
         pkg = line.split("==")[0].split(">=")[0].split("[")[0].strip()
         if pkg in _PYTHON_FRAMEWORKS:
             found.append(pkg)
-        # pyproject.toml: "django" or django = "^4.0" (match as standalone token, not e.g. my-django-app)
+        # pyproject.toml: "django" or django = "^4.0".
+        # Match as standalone token, not e.g. my-django-app.
         for fw in _PYTHON_FRAMEWORKS:
             if fw not in found and re.search(rf"(?<!-)\b{re.escape(fw)}\b(?!-)", line):
                 found.append(fw)
@@ -102,7 +104,9 @@ def _extract_java_frameworks(content: str) -> list[str]:
     """Extract Java/Spring deps from pom.xml or build.gradle content."""
     found: list[str] = []
     for fw in _JAVA_FRAMEWORKS:
-        if fw not in found and re.search(rf"(?<!-)\b{re.escape(fw)}(?:-|\b)", content, re.IGNORECASE):
+        if fw not in found and re.search(
+            rf"(?<!-)\b{re.escape(fw)}(?:-|\b)", content, re.IGNORECASE
+        ):
             found.append(fw)
     return found
 
@@ -195,7 +199,10 @@ def detect_from_paths_and_content(
 
 
 def _folder_roots_from_paths(paths: list[str]) -> set[str]:
-    """Return folder roots: dirname of any path whose basename is a config file (package.json, go.mod, etc.)."""
+    """
+    Return folder roots: dirname of any path whose basename is a config file
+    (package.json, go.mod, etc.).
+    """
     roots: set[str] = set()
     for p in paths:
         norm = _normalize_path(p)
@@ -236,8 +243,4 @@ def detect_from_paths_per_folder_root(paths: list[str]) -> dict[str, DetectedCon
         if not assigned:
             groups[""].append(p)
 
-    return {
-        root: detect_from_paths(group)
-        for root, group in groups.items()
-        if group
-    }
+    return {root: detect_from_paths(group) for root, group in groups.items() if group}

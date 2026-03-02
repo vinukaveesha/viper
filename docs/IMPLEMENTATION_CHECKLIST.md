@@ -38,7 +38,7 @@ Tick items as they are implemented.
 
 ## 4. CI/CD Pipeline
 
-- [x] Tighten `ruff` configuration and introduce mypy (or equivalent) type checking, then integrate both into CI (see §4.1).
+- [x] Tighten `ruff` configuration and integrate it into CI; mypy is optional and can be run locally if desired (see §4.1).
 - [x] Pin the Docker base image by digest and add image scanning to CI (see §4.2).
 - [x] Introduce a `.pre-commit-config.yaml` with formatting, linting, and type-checking hooks (see §4.3).
 - [x] Improve Jenkins credential handling and documentation to decouple from hard-coded IDs (see §4.4).

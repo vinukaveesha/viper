@@ -5,7 +5,6 @@ from urllib.parse import quote
 
 import httpx
 
-from code_review.providers.safety import truncate_repo_content
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -14,6 +13,7 @@ from code_review.providers.base import (
     ProviderInterface,
     ReviewComment,
 )
+from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 
@@ -139,7 +139,9 @@ class GitLabProvider(ProviderInterface):
             new_path = d.get("new_path") or d.get("old_path") or ""
             if not new_path:
                 continue
-            status = "added" if d.get("new_file") else "removed" if d.get("deleted_file") else "modified"
+            status = (
+                "added" if d.get("new_file") else "removed" if d.get("deleted_file") else "modified"
+            )
             additions, deletions = self._additions_deletions_from_diff(d)
             result.append(
                 FileInfo(path=new_path, status=status, additions=additions, deletions=deletions)
@@ -234,12 +236,15 @@ class GitLabProvider(ProviderInterface):
         return result
 
     def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
-        """Resolve a discussion thread. Not implemented; capabilities() returns resolvable_comments=False so callers do not attempt this."""
+        """
+        Resolve a discussion thread.
+
+        Not implemented; capabilities() returns resolvable_comments=False so callers
+        do not attempt this.
+        """
         pass
 
-    def post_pr_summary_comment(
-        self, owner: str, repo: str, pr_number: int, body: str
-    ) -> None:
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post MR-level note (no position)."""
         self._post(
             self._path(owner, repo, "merge_requests", str(pr_number), "notes"),
@@ -255,14 +260,16 @@ class GitLabProvider(ProviderInterface):
                 return None
             title = data.get("title", "") or ""
             labels_raw = data.get("labels") or []
-            labels = [
-                lb.get("name", lb) if isinstance(lb, dict) else str(lb)
-                for lb in labels_raw
-            ]
+            labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
             return PRInfo(title=title, labels=labels)
         except Exception:
             return None
 
     def capabilities(self) -> ProviderCapabilities:
-        """GitLab supports suggestion blocks; resolve_comment is not implemented so resolvable_comments=False to avoid silent failures."""
+        """
+        Return provider capability flags for GitLab.
+
+        GitLab supports suggestion blocks. resolve_comment is not implemented, so
+        resolvable_comments=False to avoid silent failures.
+        """
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=True)

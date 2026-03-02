@@ -5,8 +5,6 @@ from typing import Any
 
 import httpx
 
-from code_review.providers.safety import truncate_repo_content
-
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -15,6 +13,7 @@ from code_review.providers.base import (
     ProviderInterface,
     ReviewComment,
 )
+from code_review.providers.safety import truncate_repo_content
 
 
 class GiteaProvider(ProviderInterface):
@@ -54,7 +53,9 @@ class GiteaProvider(ProviderInterface):
         url = f"{self._base_url}/api/v1{path}"
         r = self._request_with_retry("GET", url, params=params)
         r.raise_for_status()
-        return r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
+        return (
+            r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text
+        )
 
     def _get_text(self, path: str) -> str:
         url = f"{self._base_url}/api/v1{path}"
@@ -145,10 +146,7 @@ class GiteaProvider(ProviderInterface):
             return
         # Gitea CreatePullReview: body, event (APPROVE/REQUEST_CHANGES/COMMENT), comments
         # Each comment: path, body, line (1-based); end_line not in Gitea API
-        review_comments = [
-            {"path": c.path, "body": c.body, "line": c.line}
-            for c in comments
-        ]
+        review_comments = [{"path": c.path, "body": c.body, "line": c.line} for c in comments]
         payload: dict[str, Any] = {
             "body": "Code review comments",
             "event": "COMMENT",
@@ -211,9 +209,7 @@ class GiteaProvider(ProviderInterface):
             # No-op for runtime safety if called despite capabilities() returning False
             pass
 
-    def post_pr_summary_comment(
-        self, owner: str, repo: str, pr_number: int, body: str
-    ) -> None:
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post PR-level comment. In Gitea, PRs are issues; use issues comments endpoint."""
         self._post(
             f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
@@ -228,14 +224,15 @@ class GiteaProvider(ProviderInterface):
                 return None
             title = data.get("title", "") or ""
             labels_raw = data.get("labels") or []
-            labels = [
-                lb.get("name", lb) if isinstance(lb, dict) else str(lb)
-                for lb in labels_raw
-            ]
+            labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
             return PRInfo(title=title, labels=labels)
         except Exception:
             return None
 
     def capabilities(self) -> ProviderCapabilities:
-        """Return provider capability flags. Gitea does not support resolving/unresolving PR review comments."""
+        """
+        Return provider capability flags.
+
+        Gitea does not support resolving/unresolving PR review comments.
+        """
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=False)

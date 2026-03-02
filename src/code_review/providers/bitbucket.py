@@ -4,7 +4,6 @@ from typing import Any
 
 import httpx
 
-from code_review.providers.safety import truncate_repo_content
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -13,6 +12,7 @@ from code_review.providers.base import (
     ProviderInterface,
     ReviewComment,
 )
+from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.bitbucket.org/2.0"
@@ -98,10 +98,18 @@ class BitbucketProvider(ProviderInterface):
                 for f in values:
                     if not isinstance(f, dict):
                         continue
-                    file_path = (f.get("new") or {}).get("path") or (f.get("old") or {}).get("path") or ""
+                    file_path = (
+                        (f.get("new") or {}).get("path") or (f.get("old") or {}).get("path") or ""
+                    )
                     if not file_path:
                         continue
-                    status = "removed" if f.get("status") == "removed" else "added" if f.get("status") == "added" else "modified"
+                    status = (
+                        "removed"
+                        if f.get("status") == "removed"
+                        else "added"
+                        if f.get("status") == "added"
+                        else "modified"
+                    )
                     result.append(FileInfo(path=file_path, status=status, additions=0, deletions=0))
             next_url = data.get("next")
             if not next_url or not isinstance(next_url, str):
@@ -122,7 +130,11 @@ class BitbucketProvider(ProviderInterface):
         for c in comments:
             payload: dict[str, Any] = {
                 "content": {"raw": c.body},
-                "inline": {"path": c.path, "from": c.line, "to": c.end_line if c.end_line is not None else c.line},
+                "inline": {
+                    "path": c.path,
+                    "from": c.line,
+                    "to": c.end_line if c.end_line is not None else c.line,
+                },
             }
             self._post(path, payload)
 
@@ -160,9 +172,7 @@ class BitbucketProvider(ProviderInterface):
             url = next_url.strip() or None
         return result
 
-    def post_pr_summary_comment(
-        self, owner: str, repo: str, pr_number: int, body: str
-    ) -> None:
+    def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post PR-level comment (no inline)."""
         path = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
         self._post(path, {"content": {"raw": body}})
@@ -178,14 +188,12 @@ class BitbucketProvider(ProviderInterface):
             # Bitbucket Cloud REST API v2.0 does not support pull request labels,
             # so skip-review-by-label is ineffective; labels will always be empty.
             labels_raw = data.get("labels") or []
-            labels = [
-                lb.get("name", lb) if isinstance(lb, dict) else str(lb)
-                for lb in labels_raw
-            ]
+            labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
             return PRInfo(title=title, labels=labels)
         except Exception:
             return None
 
     def capabilities(self) -> ProviderCapabilities:
-        # PR labels are not supported by Bitbucket Cloud API (skip-by-label ineffective; see get_pr_info).
+        # PR labels are not supported by Bitbucket Cloud API.
+        # Skip-by-label is ineffective; see get_pr_info.
         return ProviderCapabilities(resolvable_comments=False, supports_suggestions=False)
