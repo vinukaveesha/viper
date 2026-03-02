@@ -1,7 +1,5 @@
 """Tests for language/framework detector."""
 
-import pytest
-
 from code_review.standards.detector import (
     CONFIDENCE_THRESHOLD_HIGH,
     CONFIDENCE_THRESHOLD_MEDIUM,
