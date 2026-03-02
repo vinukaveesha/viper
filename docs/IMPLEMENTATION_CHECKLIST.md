@@ -19,14 +19,14 @@ Tick items as they are implemented.
 
 ## 2. Code Quality and Architecture
 
-- [ ] Deduplicate shared provider logic into `ProviderInterface` (e.g. `get_pr_diff_for_file`, `get_file_lines`, `MAX_REPO_FILE_BYTES`) (see §2.1).
+- [x] Deduplicate shared provider logic into `ProviderInterface` (e.g. `get_pr_diff_for_file`, `get_file_lines`, `MAX_REPO_FILE_BYTES`) (see §2.1).
 - [ ] Refactor `run_review()` into smaller helpers or a `ReviewOrchestrator`-style abstraction while preserving the documented flow in `AGENTS.md` (see §2.2).
-- [ ] Replace `@lru_cache` config caching with a resettable pattern suitable for tests (see §2.3).
-- [ ] Either wire `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` into the model client or clearly deprecate them in code and docs (see §2.4).
-- [ ] Decide on and implement a strategy for the legacy non–findings-only agent mode (remove or fully support) (see §2.5).
-- [ ] Fix language detection for `Makefile` so it is not a strong `cpp` signal (see §2.6).
-- [ ] Move the `Counter` import out of `_build_pr_summary_body()` to module scope (see §2.7).
-- [ ] Make the diff token budget ratio configurable or better tuned to large-context models (see §2.8).
+- [x] Replace `@lru_cache` config caching with a resettable pattern suitable for tests (see §2.3).
+- [x] Either wire `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` into the model client or clearly deprecate them in code and docs (see §2.4).
+- [x] Decide on and implement a strategy for the legacy non–findings-only agent mode (remove or fully support) (see §2.5).
+- [x] Fix language detection for `Makefile` so it is not a strong `cpp` signal (see §2.6).
+- [x] Move the `Counter` import out of `_build_pr_summary_body()` to module scope (see §2.7).
+- [x] Make the diff token budget ratio configurable or better tuned to large-context models (see §2.8).
 
 ## 3. Testing
 

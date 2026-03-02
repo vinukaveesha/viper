@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field, model_validator
+from code_review.diff.parser import parse_unified_diff
 
 
 class ProviderCapabilities(BaseModel):
@@ -77,8 +78,31 @@ class ProviderInterface(ABC):
     def get_pr_diff_for_file(
         self, owner: str, repo: str, pr_number: int, path: str
     ) -> str:
-        """Return diff for a single file. Parse full diff and slice by file if SCM lacks per-file endpoint."""
-        ...
+        """Return diff for a single file. Default: parse full diff and slice by file."""
+        full_diff = self.get_pr_diff(owner, repo, pr_number)
+        hunks = parse_unified_diff(full_diff)
+        lines: list[str] = []
+        headers_emitted = False
+        for hunk in hunks:
+            if hunk.path != path:
+                continue
+            if not headers_emitted:
+                lines.append(f"--- a/{hunk.path}")
+                lines.append(f"+++ b/{hunk.path}")
+                headers_emitted = True
+            lines.append(
+                f"@@ -{hunk.old_start},{hunk.old_count} +{hunk.new_start},{hunk.new_count} @@"
+            )
+            for content, old_ln, new_ln in hunk.lines:
+                if old_ln is not None and new_ln is not None:
+                    lines.append(" " + content)
+                elif new_ln is not None:
+                    lines.append("+" + content)
+                elif old_ln is not None:
+                    lines.append("-" + content)
+                else:
+                    lines.append("\\" + content)
+        return "\n".join(lines) if lines else ""
 
     @abstractmethod
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
@@ -96,7 +120,13 @@ class ProviderInterface(ABC):
         end_line: int,
     ) -> str:
         """Return lines start_line..end_line (1-based inclusive) from file at ref."""
-        ...
+        content = self.get_file_content(owner, repo, ref, path)
+        lines = content.splitlines()
+        if start_line < 1 or end_line < start_line:
+            return ""
+        start_idx = start_line - 1
+        end_idx = min(end_line, len(lines))
+        return "\n".join(lines[start_idx:end_idx])
 
     @abstractmethod
     def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[FileInfo]:
