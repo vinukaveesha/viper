@@ -13,6 +13,8 @@ services:
       GITEA__server__DOMAIN: localhost
       GITEA__server__ROOT_URL: http://localhost:3000
       GITEA__server__HTTP_PORT: "3000"
+      # Allow local webhooks to Jenkins inside the Compose network
+      GITEA__webhook__ALLOWED_HOST_LIST: jenkins,jenkins:8080
     ports:
       - "3000:3000"
     volumes:

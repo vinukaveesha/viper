@@ -1,22 +1,17 @@
-# Quick Start Guide
+# Quick Start Guide (Docker Only)
 
-Get the code review agent running quickly: **Docker Compose** (recommended for local testing with Gitea + Jenkins) or **local install** (venv + CLI, e.g. against GitHub or a remote Gitea).
+Get the code review agent running quickly with **Docker Compose** (Gitea + Jenkins) and **auto-triggered PR reviews**.
 
 ---
 
 ## Prerequisites
 
-- **Docker** and **Docker Compose** (for the Docker Compose path)
-- **Python 3.12+** (for the non-Docker path)
+- **Docker** and **Docker Compose**
 - **LLM API key** (e.g. `GOOGLE_API_KEY` for Gemini, or `OPENAI_API_KEY` for OpenAI)
 
 ---
 
-## Option 1: Test with Docker Compose (recommended)
-
-This brings up Gitea and Jenkins so you can run the agent from a CI pipeline or manually on the same network. Jenkins is built with required plugins preinstalled (Pipeline, Credentials), and can auto-seed credentials for local testing.
-
-### 1. Start the stack
+## 1. Start the stack
 
 From the **repository root** (the folder that contains `docker-compose.yml`):
 
@@ -33,19 +28,22 @@ podman-compose up -d --build
 - **Gitea**: http://localhost:3000  
 - **Jenkins**: http://localhost:8080  
 
-The agent is **not** a long-running service; you run it as a one-shot container (see below).
+---
 
-### 2. Configure Gitea
+## 2. Configure Gitea
 
 1. Open http://localhost:3000 and complete first-run setup (admin user, etc.).
 2. Create a **repository** (e.g. `myrepo`) under a user or org (e.g. `myorg`).
 3. Create an **API token**: **Settings → Applications → Generate New Token** (scope: read/write for the repo).
-4. (Optional) For webhook-triggered pipelines: install a Gitea plugin in Jenkins and configure a webhook in Gitea to point to Jenkins (e.g. `http://jenkins:8080/gitea-webhook/post`). The webhook payload can be mapped to pipeline parameters (`SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`).
+4. If webhooks fail with **“webhook can only call allowed HTTP servers”**, ensure `docker-compose.yml` includes:
+   - `GITEA__webhook__ALLOWED_HOST_LIST: jenkins,jenkins:8080`
 
-### 3. Configure Jenkins
+---
+
+## 3. Configure Jenkins
 
 1. Open http://localhost:8080. Default credentials are `admin` / `admin` (from `docker-compose.yml`).
-2. **Add credentials** (this is where `SCM_TOKEN` goes — there is no direct field on the job page):
+2. **Add credentials**:
    - Go to **Manage Jenkins → Credentials → System → Global credentials (unrestricted)**.
    - **Add Credentials** → Kind: **Secret text**.
    - Create:
@@ -57,133 +55,52 @@ The agent is **not** a long-running service; you run it as a one-shot container 
      **or** use **Pipeline script** and paste the contents of `docker/jenkins/Jenkinsfile`.
    - The Jenkinsfile reads credentials by ID (see `environment { SCM_TOKEN = credentials('SCM_TOKEN') ... }`).
 
-**Automated local setup (optional):**
-You can seed credentials via `docker-compose.yml` env vars before first boot:
+**How environment variables are set (clarity):**
+- `docker compose` reads a `.env` file **only** to substitute values in `docker-compose.yml`. It does **not** inject those values into Jenkins jobs.
+- Jenkins job env vars come from **Credentials**, **build parameters**, or **webhook variables** (below).
+- In this setup, the Jenkinsfile sets `SCM_TOKEN`/`GOOGLE_API_KEY` from **Credentials**, and sets `SCM_OWNER`/`SCM_REPO`/`SCM_PR_NUM`/`SCM_HEAD_SHA` from **webhook variables** (or from build parameters if you trigger manually).
 
-- `SCM_TOKEN` (Gitea API token)
-- `GOOGLE_API_KEY` or `OPENAI_API_KEY`
+---
 
-These are loaded by an init script in `docker/jenkins/init.groovy.d/01-init.groovy` and show up in **Manage Jenkins → Credentials**.
+## 4. Build the agent image
 
-### 4. Build the agent image
-
-From the repository root (so `docker/Dockerfile.agent` and `src/` are in context):
+From the repository root:
 
 ```bash
 docker build -t code-review-agent -f docker/Dockerfile.agent .
 ```
 
-### 5. Run a review
-
-**Option A — From Jenkins (pipeline):**
-
-- Run the pipeline with parameters: `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA` (and optionally `LLM_PROVIDER`, `LLM_MODEL`, `COMPOSE_PROJECT_NAME`).  
-- The Jenkinsfile runs the agent container on the same Docker network as Gitea (`SCM_URL=http://gitea:3000`).
-
-**Option B — Manual one-shot run:**
-
-```bash
-docker run --rm --network code-review_code-review-net \
-  -e SCM_PROVIDER=gitea \
-  -e SCM_URL=http://gitea:3000 \
-  -e SCM_TOKEN=your_gitea_token \
-  -e SCM_OWNER=myorg \
-  -e SCM_REPO=myrepo \
-  -e SCM_PR_NUM=1 \
-  -e SCM_HEAD_SHA=abc123... \
-  -e LLM_PROVIDER=gemini \
-  -e LLM_MODEL=gemini-2.5-flash \
-  -e GOOGLE_API_KEY=your_google_api_key \
-  code-review-agent review --owner myorg --repo myrepo --pr 1 --head-sha abc123...
-```
-
-Replace `your_gitea_token`, `myorg`, `myrepo`, `1`, `abc123...`, and `your_google_api_key` with real values. Get the head SHA from the PR’s latest commit (e.g. from Gitea’s PR page).
-
-### Custom Compose project name
-
-If you start Compose with a different project name (e.g. `docker compose -p myproject up`), the Docker network name changes (e.g. `myproject_code-review-net`). Set **COMPOSE_PROJECT_NAME** in Jenkins (or in a `.env` at repo root if Jenkins loads it) so the pipeline uses the correct network. The default project name in `docker-compose.yml` is `code-review`.
-
 ---
 
-## Option 2: Run without Docker Compose
+## 5. Auto-trigger PR reviews (Gitea webhook → Jenkins)
 
-Use this to run the agent on your host against any supported SCM (e.g. GitHub, or a remote Gitea instance).
+### 5.1 Enable a webhook trigger in Jenkins
 
-### 1. Install
+Use **Generic Webhook Trigger** (recommended for simplicity):
 
-```bash
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS; on Windows: .venv\Scripts\activate
-pip install -e .
-```
+1. **Manage Jenkins → Plugins** → install **Generic Webhook Trigger Plugin**.
+2. Open your Pipeline job → **Configure** → **Build Triggers**:
+   - Check **Generic Webhook Trigger**.
+   - Add 4 variables (JSONPath). These become **build env vars** for the job (and the Jenkinsfile falls back to them if parameters aren’t set):
+     - `SCM_OWNER` → `$.pull_request.base.repo.owner.username`
+     - `SCM_REPO` → `$.pull_request.base.repo.name`
+     - `SCM_PR_NUM` → `$.pull_request.number`
+     - `SCM_HEAD_SHA` → `$.pull_request.head.sha`
+   - Save the job.
+3. Copy the **Webhook URL** shown by the plugin (you’ll need it in Gitea).
 
-### 2. Configure environment
+### 5.2 Configure the Gitea webhook
 
-Copy `.env.example` to `.env` and set at least:
+1. In Gitea, open your repo → **Settings → Webhooks → Add Webhook → Gitea**.
+2. **Target URL**: paste the Jenkins webhook URL from step 5.1.
+3. **Content Type**: `application/json`.
+4. **Trigger On**: **Pull Request**.
+5. Save the webhook.
 
-- **SCM**: `SCM_PROVIDER`, `SCM_URL`, `SCM_TOKEN` (and for Gitea: URL like `http://localhost:3000` or your Gitea host).
-- **LLM**: `LLM_PROVIDER`, `LLM_MODEL`, and the provider key (e.g. `GOOGLE_API_KEY`, `OPENAI_API_KEY`).
-
-Optional: `SCM_SKIP_LABEL`, `SCM_SKIP_TITLE_PATTERN`. See [Configuration](#configuration) and `.env.example`.
-
-### 3. Run a review
-
-```bash
-code-review review --owner <owner> --repo <repo> --pr <pr_number> --head-sha <commit_sha>
-```
-
-Example for a GitHub PR:
-
-```bash
-export SCM_PROVIDER=github
-export SCM_URL=https://api.github.com
-export SCM_TOKEN=ghp_...
-export LLM_PROVIDER=gemini
-export GOOGLE_API_KEY=...
-code-review review --owner myorg --repo myrepo --pr 42 --head-sha abc123...
-```
-
-You can also use a `.env` file (e.g. with `dotenv` or by sourcing it) instead of exporting variables.
-
-### One-shot run with Docker (no Compose)
-
-If you only want the agent in Docker but no Gitea/Jenkins:
-
-```bash
-docker build -t code-review-agent -f docker/Dockerfile.agent .
-docker run --rm \
-  -e SCM_PROVIDER=github \
-  -e SCM_URL=https://api.github.com \
-  -e SCM_TOKEN=ghp_... \
-  -e SCM_OWNER=myorg \
-  -e SCM_REPO=myrepo \
-  -e SCM_PR_NUM=42 \
-  -e SCM_HEAD_SHA=abc123... \
-  -e LLM_PROVIDER=gemini \
-  -e GOOGLE_API_KEY=... \
-  code-review-agent review --owner myorg --repo myrepo --pr 42 --head-sha abc123...
-```
-
----
-
-## Configuration
-
-| Variable | Description |
-|----------|-------------|
-| `SCM_PROVIDER` | `gitea`, `github`, `gitlab`, or `bitbucket` |
-| `SCM_URL` | SCM API base URL (e.g. `http://gitea:3000`, `https://api.github.com`) |
-| `SCM_TOKEN` | API token with repo read + comment scope |
-| `LLM_PROVIDER` | `gemini`, `openai`, `anthropic`, `ollama`, etc. |
-| `LLM_MODEL` | Model name (e.g. `gemini-2.5-flash`) |
-| `SCM_SKIP_LABEL` | (Optional) PR label to skip review |
-| `SCM_SKIP_TITLE_PATTERN` | (Optional) PR title substring to skip review |
-
-See `.env.example` in the repo root for a full list and provider-specific keys (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, etc.).
+Now, when a PR is opened or updated, Jenkins will trigger the pipeline and run the review.
 
 ---
 
 ## Next steps
 
-- **Security (CI)**: Use least-privilege tokens; restrict container egress. See README.
-- **Observability**: Optional Prometheus/OpenTelemetry — see README and [Developer Guide](DEVELOPER_GUIDE.md).
-- **Development**: Install dev deps and run tests — see README.
+For a fuller development workflow (Docker + non-Docker paths), see **[Development Testing Guide](DEV_TESTING.md)**.
