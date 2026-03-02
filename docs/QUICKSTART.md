@@ -50,17 +50,12 @@ podman-compose up -d --build
 ## 3. Configure Jenkins
 
 1. Open http://localhost:8080. Default credentials are `admin` / `admin` (from `docker-compose.yml`).
-2. **Add credentials**:
-   - Go to **Manage Jenkins → Credentials → System → Global credentials (unrestricted)**.
-   - **Add Credentials** → Kind: **Secret text**.
-   - Create:
-     - ID: `SCM_TOKEN`, Secret: your Gitea API token.
-     - ID: `GOOGLE_API_KEY` (or `OPENAI_API_KEY`, etc.), Secret: your LLM API key.
-3. Create a **Pipeline** job:
-   - Click **New Item** (left nav) or **Create a job** (home page), then choose **Pipeline**.
-   - **Pipeline script from SCM** → point to this repo and set **Script Path** to `docker/jenkins/Jenkinsfile`,  
-     **or** use **Pipeline script** and paste the contents of `docker/jenkins/Jenkinsfile`.
-   - The Jenkinsfile reads credentials by ID (see `environment { SCM_TOKEN = credentials('SCM_TOKEN') ... }`).
+2. The **Jenkins job is auto-created** via JCasC as `code-review` (no manual job setup required). It loads its pipeline from `docker/jenkins/Jenkinsfile` (mounted into the Jenkins container).
+3. **Credentials** (required):
+   - Option A: set `SCM_TOKEN` and `GOOGLE_API_KEY` in `docker-compose.yml` before first boot.
+   - Option B: add them in **Manage Jenkins → Credentials → Global** as **Secret text** IDs.
+4. Manual runs: use **Build with Parameters** on the `code-review` job.
+5. Webhook runs: `SCM_*` are injected automatically as environment variables by the webhook trigger.
 
 **How environment variables are set (clarity):**
 - `docker compose` reads a `.env` file **only** to substitute values in `docker-compose.yml`. It does **not** inject those values into Jenkins jobs.
@@ -81,25 +76,17 @@ docker build -t code-review-agent -f docker/Dockerfile.agent .
 
 ## 5. Auto-trigger PR reviews (Gitea webhook → Jenkins)
 
-### 5.1 Enable a webhook trigger in Jenkins
+The Jenkins job is preconfigured (via JCasC) with a **Generic Webhook Trigger** and JSONPath mappings:
 
-Use **Generic Webhook Trigger** (recommended for simplicity):
+- `SCM_OWNER` → `$.pull_request.base.repo.owner.login`
+- `SCM_REPO` → `$.pull_request.base.repo.name`
+- `SCM_PR_NUM` → `$.pull_request.number`
+- `SCM_HEAD_SHA` → `$.pull_request.head.sha`
 
-1. **Manage Jenkins → Plugins** → install **Generic Webhook Trigger Plugin**.
-2. Open your Pipeline job → **Configure** → **Build Triggers**:
-   - Check **Generic Webhook Trigger**.
-   - Add 4 variables (JSONPath). These become **build env vars** for the job (and the Jenkinsfile falls back to them if parameters aren’t set):
-     - `SCM_OWNER` → `$.pull_request.base.repo.owner.username`
-     - `SCM_REPO` → `$.pull_request.base.repo.name`
-     - `SCM_PR_NUM` → `$.pull_request.number`
-     - `SCM_HEAD_SHA` → `$.pull_request.head.sha`
-   - Save the job.
-3. Copy the **Webhook URL** shown by the plugin (you’ll need it in Gitea).
-
-### 5.2 Configure the Gitea webhook
+### 5.1 Configure the Gitea webhook
 
 1. In Gitea, open your repo → **Settings → Webhooks → Add Webhook → Gitea**.
-2. **Target URL**: paste the Jenkins webhook URL from step 5.1.
+2. **Target URL**: `http://jenkins:8080/generic-webhook-trigger/invoke`
 3. **Content Type**: `application/json`.
 4. **Trigger On**: **Pull Request**.
 5. Save the webhook.
