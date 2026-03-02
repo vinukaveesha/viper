@@ -15,6 +15,7 @@ This guide explains the implementation of the AI-driven code review agent: archi
 7. [Extension Points](#7-extension-points)
 8. [Testing](#8-testing)
 9. [References](#9-references)
+10. [Development Testing](#10-development-testing)
 
 ---
 
@@ -337,3 +338,7 @@ pytest --ignore=tests/e2e
 - **.env.example**: Example SCM and LLM env vars.
 - **AGENTS.md**: Project summary, where things live, ADK usage, conventions; optional context for the review agent.
 - **Google ADK**: [Agent Development Kit](https://google.github.io/adk-docs/) — LlmAgent, Runner, SessionService, function tools.
+
+## 10. Development Testing
+
+For local Gitea + Jenkins testing (including webhook auto-triggers) and for running against remote SCMs during development, see **[Development Testing Guide](DEV_TESTING.md)**.

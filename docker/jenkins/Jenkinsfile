@@ -1,15 +1,24 @@
 // Pipeline example: code review on PR. Set SCM_* and LLM_* via parameters or Gitea webhook.
-// Agent runs as one-shot container: docker run --rm code-review-agent review
+// Agent runs as one-shot container: $CONTAINER_RUNTIME run --rm code-review-agent review
 // Build agent image from repo root: docker build -t code-review-agent -f docker/Dockerfile.agent .
+//   (or: podman build -t code-review-agent -f docker/Dockerfile.agent .)
+// Set CONTAINER_RUNTIME env var (default: docker) to use a different container runtime (e.g. podman).
 
 pipeline {
     agent any
+
+    environment {
+        // Credentials IDs must exist in Jenkins (Secret text).
+        SCM_TOKEN = credentials('SCM_TOKEN')
+        GOOGLE_API_KEY = credentials('GOOGLE_API_KEY')
+    }
 
     parameters {
         string(name: 'SCM_OWNER', description: 'Repo owner')
         string(name: 'SCM_REPO', description: 'Repo name')
         string(name: 'SCM_PR_NUM', description: 'PR number')
         string(name: 'SCM_HEAD_SHA', description: 'Head commit SHA')
+        string(name: 'PR_ACTION', description: 'Pull request webhook action')
         string(name: 'LLM_PROVIDER', defaultValue: 'gemini', description: 'LLM provider')
         string(name: 'LLM_MODEL', defaultValue: 'gemini-2.5-flash', description: 'LLM model')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name for agent network; set env COMPOSE_PROJECT_NAME or use -p when starting compose')
@@ -22,21 +31,61 @@ pipeline {
                     def image = 'code-review-agent'
                     def projectName = env.COMPOSE_PROJECT_NAME ?: params.COMPOSE_PROJECT_NAME
                     def network = "${projectName}_code-review-net"
-                    // SCM_TOKEN and GOOGLE_API_KEY: must be in Jenkins env (e.g. withCredentials); passed through via -e VAR (no interpolation)
-                    sh """
-                        docker run --rm --network ${network} \
-                            -e SCM_PROVIDER=gitea \
-                            -e SCM_URL=http://gitea:3000 \
-                            -e SCM_TOKEN \
-                            -e SCM_OWNER=${params.SCM_OWNER} \
-                            -e SCM_REPO=${params.SCM_REPO} \
-                            -e SCM_PR_NUM=${params.SCM_PR_NUM} \
-                            -e SCM_HEAD_SHA=${params.SCM_HEAD_SHA} \
-                            -e LLM_PROVIDER=${params.LLM_PROVIDER} \
-                            -e LLM_MODEL=${params.LLM_MODEL} \
-                            -e GOOGLE_API_KEY \
-                            ${image} review --owner ${params.SCM_OWNER} --repo ${params.SCM_REPO} --pr ${params.SCM_PR_NUM} --head-sha ${params.SCM_HEAD_SHA}
-                    """
+                    def scmOwner = params.SCM_OWNER ?: env.SCM_OWNER
+                    def scmRepo = params.SCM_REPO ?: env.SCM_REPO
+                    def scmPrNum = params.SCM_PR_NUM ?: env.SCM_PR_NUM
+                    def scmHeadSha = params.SCM_HEAD_SHA ?: env.SCM_HEAD_SHA
+                    def prAction = params.PR_ACTION ?: env.PR_ACTION
+                    def llmProvider = params.LLM_PROVIDER ?: env.LLM_PROVIDER
+                    def llmModel = params.LLM_MODEL ?: env.LLM_MODEL
+                    def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
+                    def allowedActions = ['opened', 'synchronize']
+
+                    if (prAction && !allowedActions.contains(prAction)) {
+                        currentBuild.description = "Skipped PR action: ${prAction}"
+                        echo "Skipping PR action '${prAction}'. Allowed actions: ${allowedActions.join(', ')}."
+                        return
+                    }
+
+                    if (!scmOwner || scmOwner.contains('$.pull_request')) {
+                        error('SCM_OWNER not resolved from webhook. Check Generic Webhook Trigger JSONPath mapping.')
+                    }
+                    if (!scmRepo || scmRepo.contains('$.pull_request')) {
+                        error('SCM_REPO not resolved from webhook. Check Generic Webhook Trigger JSONPath mapping.')
+                    }
+                    if (!scmPrNum || scmPrNum.contains('$.pull_request')) {
+                        error('SCM_PR_NUM not resolved from webhook. Check Generic Webhook Trigger JSONPath mapping.')
+                    }
+                    if (!scmHeadSha || scmHeadSha.contains('$.pull_request')) {
+                        error('SCM_HEAD_SHA not resolved from webhook. Check Generic Webhook Trigger JSONPath mapping.')
+                    }
+                    // SCM_TOKEN and GOOGLE_API_KEY are injected via Jenkins credentials (environment {} above).
+                    withEnv([
+                        "CONTAINER_RUNTIME=${containerRuntime}",
+                        "REVIEW_IMAGE=${image}",
+                        "REVIEW_NETWORK=${network}",
+                        "REVIEW_SCM_OWNER=${scmOwner}",
+                        "REVIEW_SCM_REPO=${scmRepo}",
+                        "REVIEW_SCM_PR_NUM=${scmPrNum}",
+                        "REVIEW_SCM_HEAD_SHA=${scmHeadSha}",
+                        "REVIEW_LLM_PROVIDER=${llmProvider}",
+                        "REVIEW_LLM_MODEL=${llmModel}",
+                    ]) {
+                        sh '''
+                            "$CONTAINER_RUNTIME" run --rm --network "$REVIEW_NETWORK" \
+                                -e SCM_PROVIDER=gitea \
+                                -e SCM_URL=http://gitea:3000 \
+                                -e SCM_TOKEN \
+                                -e SCM_OWNER="$REVIEW_SCM_OWNER" \
+                                -e SCM_REPO="$REVIEW_SCM_REPO" \
+                                -e SCM_PR_NUM="$REVIEW_SCM_PR_NUM" \
+                                -e SCM_HEAD_SHA="$REVIEW_SCM_HEAD_SHA" \
+                                -e LLM_PROVIDER="$REVIEW_LLM_PROVIDER" \
+                                -e LLM_MODEL="$REVIEW_LLM_MODEL" \
+                                -e GOOGLE_API_KEY \
+                                "$REVIEW_IMAGE" review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"
+                        '''
+                    }
                 }
             }
         }

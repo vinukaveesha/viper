@@ -13,9 +13,13 @@ Full steps, configuration, and one-shot Docker usage are in the **[Quick Start G
 
 Copy `.env.example` to `.env` and set SCM (`SCM_PROVIDER`, `SCM_URL`, `SCM_TOKEN`) and LLM (`LLM_PROVIDER`, `LLM_MODEL`, and the provider API key). Optional: `SCM_SKIP_LABEL`, `SCM_SKIP_TITLE_PATTERN`. See [Quick Start](docs/QUICKSTART.md#configuration) and `.env.example`.
 
+For Jenkins, store secrets in **Manage Jenkins → Credentials** as Secret text IDs (e.g. `SCM_TOKEN`, `GOOGLE_API_KEY`) and let the pipeline read them (see `docker/jenkins/Jenkinsfile`).
+
 ## Docker and CI
 
 The agent runs as a **one-shot container** (no long-running service). Build: `docker build -t code-review-agent -f docker/Dockerfile.agent .` Run with `SCM_*` and `LLM_*` env vars; for Compose-based testing and Jenkins pipeline details, see [Quick Start](docs/QUICKSTART.md#option-1-test-with-docker-compose-recommended).
+
+The Compose-based Jenkins image preinstalls required plugins and can auto-seed credentials for local testing during first-boot bootstrap (see Quick Start).
 
 ## Security (CI)
 

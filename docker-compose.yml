@@ -1,7 +1,10 @@
 # Gitea + Jenkins for local testing. Agent is NOT a service; run via:
-#   docker run --rm --network code-review_code-review-net -e SCM_* -e LLM_* code-review-agent review
+#   $CONTAINER_RUNTIME run --rm --network code-review_code-review-net -e SCM_* -e LLM_* code-review-agent review
 # Build agent image from repo root: docker build -t code-review-agent -f docker/Dockerfile.agent .
+#   (or: podman build -t code-review-agent -f docker/Dockerfile.agent .)
 # Network name uses project name "code-review" (set below); if you use -p othername, use othername_code-review-net.
+# Set CONTAINER_SOCKET to override the socket path (e.g. podman socket).
+# Set CONTAINER_RUNTIME to override the container runtime (e.g. podman). Defaults to docker.
 
 name: code-review
 
@@ -13,6 +16,8 @@ services:
       GITEA__server__DOMAIN: localhost
       GITEA__server__ROOT_URL: http://localhost:3000
       GITEA__server__HTTP_PORT: "3000"
+      # Allow local webhooks to Jenkins inside the Compose network
+      GITEA__webhook__ALLOWED_HOST_LIST: jenkins,jenkins:8080
     ports:
       - "3000:3000"
     volumes:
@@ -21,16 +26,25 @@ services:
       - code-review-net
 
   jenkins:
-    image: jenkins/jenkins:2.449-jdk17
+    build:
+      context: .
+      dockerfile: docker/jenkins/Dockerfile
     container_name: code-review-jenkins
     ports:
       - "8080:8080"
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - ./docker/jenkins:/jenkins-config
+      - ${CONTAINER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     environment:
-      JAVA_OPTS: -Djenkins.install.runSetupWizard=false
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false -Dhudson.model.ParametersAction.safeParameters=jenkins-generic-webhook-trigger-plugin_uuid
+      JENKINS_ADMIN_USER: admin
+      JENKINS_ADMIN_PASS: admin
+      CONTAINER_RUNTIME: ${CONTAINER_RUNTIME:-docker}
+      # Optional: seed credentials for local testing
+      # SCM_TOKEN: your_gitea_token
+      # GOOGLE_API_KEY: your_google_api_key
+      # OPENAI_API_KEY: your_openai_api_key
     networks:
       - code-review-net
 
