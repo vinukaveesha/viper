@@ -68,8 +68,7 @@ def _ensure_admin_and_token() -> str:
         result = subprocess.run(
             token_cmd,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     except subprocess.CalledProcessError as exc:
@@ -223,8 +222,9 @@ def test_e2e_docker_gitea_full_review(e2e_stack):
     mock_runner_instance = MagicMock()
     mock_runner_instance.run.return_value = iter([mock_event])
 
-    with patch("code_review.runner.get_provider", return_value=mock_provider), patch(
-        "google.adk.runners.Runner", return_value=mock_runner_instance
+    with (
+        patch("code_review.runner.get_provider", return_value=mock_provider),
+        patch("google.adk.runners.Runner", return_value=mock_runner_instance),
     ):
         findings = run_review(owner, repo, pr_number, head_sha=head_sha, dry_run=True)
 

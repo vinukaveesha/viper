@@ -63,11 +63,7 @@ class SCMConfig(BaseSettings):
     def _normalize_allowed_hosts(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        cleaned = ",".join(
-            h.strip()
-            for h in v.split(",")
-            if h.strip()
-        )
+        cleaned = ",".join(h.strip() for h in v.split(",") if h.strip())
         return cleaned or None
 
 
@@ -92,14 +88,16 @@ class LLMConfig(BaseSettings):
         default=60.0,
         description=(
             "Per-request timeout for LLM API calls. "
-            "NOTE: currently configuration-only; see IMPROVEMENT_PLAN §2.4/§5.5 before relying on it."
+            "NOTE: currently configuration-only; see IMPROVEMENT_PLAN "
+            "§2.4/§5.5 before relying on it."
         ),
     )
     max_retries: int = Field(
         default=3,
         description=(
             "Max retries on transient LLM failures. "
-            "NOTE: currently configuration-only; see IMPROVEMENT_PLAN §2.4/§5.5 before relying on it."
+            "NOTE: currently configuration-only; see IMPROVEMENT_PLAN "
+            "§2.4/§5.5 before relying on it."
         ),
     )
 

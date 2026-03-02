@@ -34,13 +34,9 @@ def test_get_pr_diff_calls_provider():
 def test_get_pr_diff_for_file_calls_provider():
     provider = _mock_provider()
     tools = create_gitea_tools(provider)
-    get_pr_diff_for_file = next(
-        t for t in tools if t.__name__ == "get_pr_diff_for_file"
-    )
+    get_pr_diff_for_file = next(t for t in tools if t.__name__ == "get_pr_diff_for_file")
     result = get_pr_diff_for_file("org", "repo", 7, "src/foo.py")
-    provider.get_pr_diff_for_file.assert_called_once_with(
-        "org", "repo", 7, "src/foo.py"
-    )
+    provider.get_pr_diff_for_file.assert_called_once_with("org", "repo", 7, "src/foo.py")
     assert result == "file diff"
 
 
@@ -67,10 +63,9 @@ def test_get_pr_files_calls_provider_returns_dicts():
 def test_post_review_comment_calls_provider_with_head_sha():
     provider = _mock_provider()
     tools = create_gitea_tools(provider)
-    post_review_comment = next(
-        t for t in tools if t.__name__ == "post_review_comment"
-    )
+    post_review_comment = next(t for t in tools if t.__name__ == "post_review_comment")
     from code_review.providers.base import InlineComment
+
     post_review_comment("o", "r", 2, "x.py", 10, "body", head_sha="abc")
     provider.post_review_comments.assert_called_once_with(
         "o", "r", 2, [InlineComment(path="x.py", line=10, body="body")], head_sha="abc"

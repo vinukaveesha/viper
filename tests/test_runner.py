@@ -79,10 +79,10 @@ def test_run_review_ignore_list_and_posts_net_new(
     mock_get_context_window.return_value = 1_000_000
 
     # Mock Runner.run to yield one final response with JSON findings (one duplicate, one net-new)
-    findings_json = '''[
+    findings_json = """[
         {"path":"foo.py","line":1,"severity":"critical","code":"x","message":"Duplicate finding."},
         {"path":"foo.py","line":2,"severity":"suggestion","code":"y","message":"Net new finding."}
-    ]'''
+    ]"""
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()
@@ -140,7 +140,9 @@ def test_run_review_raises_when_posting_without_head_sha(
     mock_get_provider.return_value = provider
     mock_get_context_window.return_value = 1_000_000
 
-    findings_json = '[{"path":"foo.py","line":1,"severity":"suggestion","code":"x","message":"Fix."}]'
+    findings_json = (
+        '[{"path":"foo.py","line":1,"severity":"suggestion",' '"code":"x","message":"Fix."}]'
+    )
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()
@@ -160,7 +162,10 @@ def test_run_review_raises_when_posting_without_head_sha(
 def test_run_review_skips_when_pr_has_skip_label(
     mock_get_scm_config, mock_get_provider, mock_get_context_window
 ):
-    """When PR has skip-review label (or title pattern), run_review returns [] without running agent."""
+    """
+    When PR has skip-review label (or title pattern), run_review returns []
+    without running the agent.
+    """
     from code_review.runner import run_review
 
     mock_get_scm_config.return_value = MagicMock(
@@ -287,7 +292,9 @@ def test_run_review_uses_file_by_file_mode_when_diff_exceeds_budget(
     # Small context window so diff_token_budget is tiny and file-by-file path is used
     mock_get_context_window.return_value = 16
 
-    findings_json = '[{"path":"foo.py","line":1,"severity":"suggestion","code":"x","message":"Fix."}]'
+    findings_json = (
+        '[{"path":"foo.py","line":1,"severity":"suggestion",' '"code":"x","message":"Fix."}]'
+    )
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()

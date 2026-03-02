@@ -1,14 +1,14 @@
 """Tests for language/framework detector."""
 
-from code_review.standards.detector import (
-    CONFIDENCE_THRESHOLD_HIGH,
-    CONFIDENCE_THRESHOLD_MEDIUM,
-    _confidence_from_score,
-)
 from code_review.standards import (
     detect_from_paths,
     detect_from_paths_and_content,
     detect_from_paths_per_folder_root,
+)
+from code_review.standards.detector import (
+    CONFIDENCE_THRESHOLD_HIGH,
+    CONFIDENCE_THRESHOLD_MEDIUM,
+    _confidence_from_score,
 )
 
 

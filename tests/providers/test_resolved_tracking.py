@@ -29,14 +29,22 @@ class _ProviderWithCapabilities(ProviderInterface):
     """Minimal provider for testing auto-resolve behavior via capabilities()."""
 
     def __init__(self, resolvable: bool):
-        self._caps = ProviderCapabilities(resolvable_comments=resolvable, supports_suggestions=False)
+        self._caps = ProviderCapabilities(
+            resolvable_comments=resolvable,
+            supports_suggestions=False,
+        )
         self._resolved_ids: list[str] = []
 
     def capabilities(self) -> ProviderCapabilities:
         return self._caps
 
     # The following methods are only what's needed by run_review in these tests.
-    def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:  # pragma: no cover - not used directly
+    def get_pr_diff(  # pragma: no cover - not used directly
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> str:
         return "diff"
 
     def get_pr_diff_for_file(self, owner: str, repo: str, pr_number: int, path: str) -> str:
@@ -76,8 +84,15 @@ def test_auto_resolve_stale_comments_when_capabilities_true(
     """When capabilities().resolvable_comments is True, stale comments are auto-resolved."""
     from code_review.runner import run_review
 
-    mock_get_scm_config.return_value = MagicMock(provider="gitea", url="https://x.com", token="x")
-    mock_get_llm_config.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
+    mock_get_scm_config.return_value = MagicMock(
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+    )
+    mock_get_llm_config.return_value = MagicMock(
+        provider="gemini",
+        model="gemini-2.5-flash",
+    )
     mock_get_context_window.return_value = 1_000_000
 
     provider = _ProviderWithCapabilities(resolvable=True)
@@ -97,9 +112,10 @@ def test_auto_resolve_stale_comments_when_capabilities_true(
     provider.get_existing_review_comments = MagicMock(return_value=existing)
 
     # Patch provider factory and ADK Runner so run_review sees no findings (empty array).
-    with patch("code_review.runner.get_provider", return_value=provider), patch(
-        "google.adk.runners.Runner"
-    ) as mock_runner_cls:
+    with (
+        patch("code_review.runner.get_provider", return_value=provider),
+        patch("google.adk.runners.Runner") as mock_runner_cls,
+    ):
         findings_json = "[]"
         mock_event = MagicMock()
         mock_event.is_final_response.return_value = True
@@ -122,11 +138,21 @@ def test_auto_resolve_stale_comments_when_capabilities_true(
 def test_auto_resolve_not_called_when_capabilities_false(
     mock_get_scm_config, mock_get_llm_config, mock_get_context_window
 ):
-    """When resolvable_comments is False, resolve_comment is not called even if comments are stale."""
+    """
+    When resolvable_comments is False, resolve_comment is not called
+    even if comments are stale.
+    """
     from code_review.runner import run_review
 
-    mock_get_scm_config.return_value = MagicMock(provider="gitea", url="https://x.com", token="x")
-    mock_get_llm_config.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
+    mock_get_scm_config.return_value = MagicMock(
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+    )
+    mock_get_llm_config.return_value = MagicMock(
+        provider="gemini",
+        model="gemini-2.5-flash",
+    )
     mock_get_context_window.return_value = 1_000_000
 
     provider = _ProviderWithCapabilities(resolvable=False)
@@ -144,9 +170,10 @@ def test_auto_resolve_not_called_when_capabilities_false(
     ]
     provider.get_existing_review_comments = MagicMock(return_value=existing)
 
-    with patch("code_review.runner.get_provider", return_value=provider), patch(
-        "google.adk.runners.Runner"
-    ) as mock_runner_cls:
+    with (
+        patch("code_review.runner.get_provider", return_value=provider),
+        patch("google.adk.runners.Runner") as mock_runner_cls,
+    ):
         findings_json = "[]"
         mock_event = MagicMock()
         mock_event.is_final_response.return_value = True
@@ -191,9 +218,10 @@ def test_auto_resolve_not_called_in_dry_run(
     ]
     provider.get_existing_review_comments = MagicMock(return_value=existing)
 
-    with patch("code_review.runner.get_provider", return_value=provider), patch(
-        "google.adk.runners.Runner"
-    ) as mock_runner_cls:
+    with (
+        patch("code_review.runner.get_provider", return_value=provider),
+        patch("google.adk.runners.Runner") as mock_runner_cls,
+    ):
         findings_json = "[]"
         mock_event = MagicMock()
         mock_event.is_final_response.return_value = True

@@ -54,4 +54,3 @@ def test_create_review_agent_disable_tool_calls_uses_no_tools(
     assert mock_agent_cls.call_count == 1
     _, kwargs = mock_agent_cls.call_args
     assert kwargs["tools"] == []
-

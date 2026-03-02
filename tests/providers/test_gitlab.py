@@ -3,8 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 from code_review.providers import get_provider
-from code_review.providers.gitlab import GitLabProvider
 from code_review.providers.base import InlineComment
+from code_review.providers.gitlab import GitLabProvider
 
 
 def test_get_provider_gitlab():
@@ -16,7 +16,11 @@ def test_get_provider_gitlab():
 def test_get_pr_diff(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = [
-        {"new_path": "foo.py", "old_path": "foo.py", "diff": "--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,4 @@\n line\n"}
+        {
+            "new_path": "foo.py",
+            "old_path": "foo.py",
+            "diff": "--- a/foo.py\n+++ b/foo.py\n@@ -1,3 +1,4 @@\n line\n",
+        }
     ]
     mock_resp.headers = {"content-type": "application/json"}
     mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
@@ -43,8 +47,20 @@ def test_get_file_content(mock_client):
 def test_get_pr_files(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = [
-        {"new_path": "foo.py", "old_path": "foo.py", "new_file": False, "deleted_file": False, "diff": ""},
-        {"new_path": "bar.go", "old_path": "bar.go", "new_file": True, "deleted_file": False, "diff": ""},
+        {
+            "new_path": "foo.py",
+            "old_path": "foo.py",
+            "new_file": False,
+            "deleted_file": False,
+            "diff": "",
+        },
+        {
+            "new_path": "bar.go",
+            "old_path": "bar.go",
+            "new_file": True,
+            "deleted_file": False,
+            "diff": "",
+        },
     ]
     mock_resp.headers = {"content-type": "application/json"}
     mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
@@ -70,13 +86,16 @@ def test_post_review_comments(mock_client):
     post_resp = MagicMock()
     post_resp.raise_for_status = MagicMock()
     post_resp.json.return_value = {"id": "disc1"}
-    get_calls = [mr_resp, mr_resp]  # two MR fetches if we post two comments separately, or one then post
+    # Two MR fetches if we post two comments separately, or one then post.
+    get_calls = [mr_resp, mr_resp]
     mock_client.return_value.__enter__.return_value.get.side_effect = get_calls
     mock_client.return_value.__enter__.return_value.post.return_value = post_resp
 
     p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
     p.post_review_comments(
-        "owner", "repo", 1,
+        "owner",
+        "repo",
+        1,
         [InlineComment(path="foo.py", line=10, body="[Critical] Bug here")],
         head_sha="head123",
     )

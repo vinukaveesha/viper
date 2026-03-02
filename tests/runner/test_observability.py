@@ -17,8 +17,11 @@ def test_run_review_emits_trace_id_and_run_complete(
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
-        provider="gitea", url="https://x.com", token="x",
-        skip_label="", skip_title_pattern="",
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+        skip_label="",
+        skip_title_pattern="",
     )
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()
@@ -31,7 +34,9 @@ def test_run_review_emits_trace_id_and_run_complete(
     mock_get_provider.return_value = provider
     mock_context_window.return_value = 1_000_000
 
-    findings_json = '[{"path":"foo.py","line":1,"severity":"suggestion","code":"x","message":"Fix."}]'
+    findings_json = (
+        '[{"path":"foo.py","line":1,"severity":"suggestion",' '"code":"x","message":"Fix."}]'
+    )
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()
@@ -69,8 +74,11 @@ def test_run_review_emits_run_complete_on_early_exit(
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
-        provider="gitea", url="https://x.com", token="x",
-        skip_label="skip-review", skip_title_pattern="",
+        provider="gitea",
+        url="https://x.com",
+        token="x",
+        skip_label="skip-review",
+        skip_title_pattern="",
     )
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()

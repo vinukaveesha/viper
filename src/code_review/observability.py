@@ -17,6 +17,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 # Env flags: accept "1", "true", "yes", "prometheus" / "otel"
 def _env_enabled(name: str, value_ok: str | None = None) -> bool:
     v = os.environ.get(name, "").strip().lower()
@@ -30,9 +31,7 @@ def _env_enabled(name: str, value_ok: str | None = None) -> bool:
 PROMETHEUS_ENABLED = _env_enabled("CODE_REVIEW_METRICS", "prometheus") or _env_enabled(
     "CODE_REVIEW_PROMETHEUS"
 )
-OTEL_ENABLED = _env_enabled("CODE_REVIEW_TRACING", "otel") or _env_enabled(
-    "CODE_REVIEW_OTEL"
-)
+OTEL_ENABLED = _env_enabled("CODE_REVIEW_TRACING", "otel") or _env_enabled("CODE_REVIEW_OTEL")
 
 # Lazy refs to optional libs
 _prometheus_registry: Any = None
@@ -105,14 +104,16 @@ def _init_otel() -> bool:
                 from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                     OTLPSpanExporter,
                 )
+
                 current = trace.get_tracer_provider()
                 # Only set our provider when no application-level provider exists
                 # (i.e. current is the default proxy or no-op, not an SDK/app provider).
                 _cls = type(current)
-                _is_default = (
-                    _cls.__name__ in ("ProxyTracerProvider", "NoOpTracerProvider", "_DefaultTracerProvider")
-                    and (_cls.__module__ or "").startswith("opentelemetry.trace")
-                )
+                _is_default = _cls.__name__ in (
+                    "ProxyTracerProvider",
+                    "NoOpTracerProvider",
+                    "_DefaultTracerProvider",
+                ) and (_cls.__module__ or "").startswith("opentelemetry.trace")
                 if _is_default:
                     exporter = OTLPSpanExporter(endpoint=endpoint)
                     _otel_tracer_provider = TracerProvider()
@@ -152,9 +153,12 @@ def start_run(trace_id: str) -> RunHandle:
     handle = RunHandle(trace_id=trace_id)
     if _init_otel():
         try:
-            handle._span = _otel_tracer.start_span("run_review", attributes={
-                "code_review.trace_id": trace_id,
-            })
+            handle._span = _otel_tracer.start_span(
+                "run_review",
+                attributes={
+                    "code_review.trace_id": trace_id,
+                },
+            )
         except Exception as e:
             logger.debug("OTel start_span failed: %s", e)
     return handle

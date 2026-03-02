@@ -82,7 +82,10 @@ def test_marker_injection_after_formatter():
 
 
 def test_location_path_line_consistency():
-    """Runner posts (path, line, body); body from formatter has no path/line (payload carries location)."""
+    """
+    Runner posts (path, line, body); body from formatter has no path/line
+    (payload carries location).
+    """
     f = FindingV1(
         path="src/bar.py",
         line=42,

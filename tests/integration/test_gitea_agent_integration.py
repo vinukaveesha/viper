@@ -65,19 +65,33 @@ def test_agent_vs_gitea_posts_findings_to_mocked_api(
     respx_mock.get(path__regex=files_path).mock(
         return_value=httpx.Response(
             200,
-            json=[{"filename": "foo.py", "path": "foo.py", "status": "modified", "additions": 1, "deletions": 0}],
+            json=[
+                {
+                    "filename": "foo.py",
+                    "path": "foo.py",
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 0,
+                }
+            ],
         )
     )
     respx_mock.get(path__regex=diff_path).mock(return_value=httpx.Response(200, text=SAMPLE_DIFF))
-    respx_mock.get(path__regex=pr_path).mock(return_value=httpx.Response(200, json={"title": "PR", "labels": []}))
+    respx_mock.get(path__regex=pr_path).mock(
+        return_value=httpx.Response(200, json={"title": "PR", "labels": []})
+    )
     respx_mock.get(path__regex=contents_path).mock(
         return_value=httpx.Response(
             200,
             json={"content": base64.b64encode(b"import os\ndef main():\n    pass\n").decode()},
         )
     )
-    post_review = respx_mock.post(path__regex=reviews_path).mock(return_value=httpx.Response(200, json={}))
-    post_summary = respx_mock.post(path__regex=issues_comments_path).mock(return_value=httpx.Response(200, json={}))
+    post_review = respx_mock.post(path__regex=reviews_path).mock(
+        return_value=httpx.Response(200, json={})
+    )
+    post_summary = respx_mock.post(path__regex=issues_comments_path).mock(
+        return_value=httpx.Response(200, json={})
+    )
 
     mock_cfg.return_value = MagicMock(
         provider="gitea",
@@ -89,9 +103,15 @@ def test_agent_vs_gitea_posts_findings_to_mocked_api(
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
     mock_get_provider.return_value = GiteaProvider(base_url=BASE, token="test-token")
 
-    findings_json = '''[
-        {"path":"foo.py","line":2,"severity":"suggestion","code":"unused-import","message":"Remove unused import os."}
-    ]'''
+    findings_json = """[
+        {
+            "path": "foo.py",
+            "line": 2,
+            "severity": "suggestion",
+            "code": "unused-import",
+            "message": "Remove unused import os."
+        }
+    ]"""
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()

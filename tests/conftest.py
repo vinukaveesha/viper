@@ -7,7 +7,6 @@ import time
 import pytest
 import requests
 
-
 E2E_COMPOSE_FILE = "tests/e2e/docker-compose.e2e.yml"
 E2E_PROJECT_NAME = "code-review-e2e"
 
@@ -104,4 +103,3 @@ def e2e_stack():
             subprocess.run(down_cmd, check=False)
         except FileNotFoundError:
             pass
-

@@ -46,7 +46,12 @@ def test_cli_invokes_run_review_with_args():
 def test_cli_uses_env_vars():
     with patch.dict(
         os.environ,
-        {"SCM_OWNER": "env-owner", "SCM_REPO": "env-repo", "SCM_PR_NUM": "7", "SCM_HEAD_SHA": "sha"},
+        {
+            "SCM_OWNER": "env-owner",
+            "SCM_REPO": "env-repo",
+            "SCM_PR_NUM": "7",
+            "SCM_HEAD_SHA": "sha",
+        },
         clear=False,
     ):
         with patch("code_review.__main__.run_review") as mock_run:

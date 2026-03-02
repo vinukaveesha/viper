@@ -2,7 +2,10 @@
 
 import hashlib
 
-from code_review.diff.fingerprint import format_comment_body_with_marker, parse_marker_from_comment_body
+from code_review.diff.fingerprint import (
+    format_comment_body_with_marker,
+    parse_marker_from_comment_body,
+)
 from code_review.runner import _build_ignore_set
 
 
