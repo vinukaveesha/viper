@@ -144,7 +144,7 @@ class GiteaProvider(ProviderInterface):
         """Post inline review comments. Convert internal InlineComment to Gitea API payload."""
         if not comments:
             return
-        # Gitea CreatePullReview: body, event (APPROVED/REQUEST_CHANGES/COMMENT), comments
+        # Gitea CreatePullReview: body, event (APPROVED/REQUEST_CHANGES/COMMENT), comments.
         # Each comment: path, body, old_position (old file) / new_position (new file) in the diff.
         # Our InlineComment.line is the 1-based line in the new file, so we always use new_position.
         review_comments = [
