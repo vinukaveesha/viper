@@ -178,7 +178,7 @@ class BitbucketProvider(ProviderInterface):
         self._post(path, {"content": {"raw": body}})
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
-        """Return PR title and labels for skip-review check."""
+        """Return PR title, labels, and description for skip-review and metadata."""
         try:
             path = self._path(owner, repo, "pullrequests", str(pr_number))
             data = self._get(path)
@@ -189,7 +189,8 @@ class BitbucketProvider(ProviderInterface):
             # so skip-review-by-label is ineffective; labels will always be empty.
             labels_raw = data.get("labels") or []
             labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
-            return PRInfo(title=title, labels=labels)
+            description = data.get("description", "") or ""
+            return PRInfo(title=title, labels=labels, description=description)
         except Exception:
             return None
 

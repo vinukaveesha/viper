@@ -255,7 +255,7 @@ class GitLabProvider(ProviderInterface):
         )
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
-        """Return MR title and labels for skip-review check."""
+        """Return MR title, labels, and description for skip-review and metadata."""
         try:
             path = self._path(owner, repo, "merge_requests", str(pr_number))
             data = self._get(path)
@@ -264,7 +264,8 @@ class GitLabProvider(ProviderInterface):
             title = data.get("title", "") or ""
             labels_raw = data.get("labels") or []
             labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
-            return PRInfo(title=title, labels=labels)
+            description = data.get("description", "") or ""
+            return PRInfo(title=title, labels=labels, description=description)
         except Exception:
             return None
 

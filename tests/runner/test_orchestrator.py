@@ -4,7 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_review.runner import ReviewOrchestrator
+from code_review.runner import (
+    ReviewOrchestrator,
+    _generate_auto_pr_description,
+    _maybe_post_started_review_comment,
+)
 
 # --- ReviewOrchestrator._load_config_and_provider() ---
 
@@ -439,3 +443,43 @@ def test_record_observability_and_build_result_returns_findings_and_emits_log():
     assert result == [finding]
     mock_log.assert_called_once()
     mock_obs.finish_run.assert_called_once()
+
+
+def test_generate_auto_pr_description_uses_title_and_paths():
+    """_generate_auto_pr_description builds a simple summary from title and file paths."""
+    title = "Add new feature"
+    paths = ["a.py", "b.py", "a.py"]
+    desc = _generate_auto_pr_description(title, paths)
+    assert "Add new feature" in desc
+    assert "2 file(s)" in desc
+    assert "`a.py`" in desc and "`b.py`" in desc
+
+
+def test_maybe_post_started_review_comment_posts_when_description_missing():
+    """_maybe_post_started_review_comment posts a comment when description is empty/short."""
+    provider = MagicMock()
+    pr_info = MagicMock(title="T", description="")
+    paths = ["foo.py", "bar.py"]
+
+    _maybe_post_started_review_comment(provider, "o", "r", 1, pr_info, paths)
+
+    provider.post_pr_summary_comment.assert_called_once()
+    args, kwargs = provider.post_pr_summary_comment.call_args
+    assert args[0:3] == ("o", "r", 1)
+    body = args[3]
+    assert "Viper has started a review" in body
+    assert "foo.py" in body or "bar.py" in body
+
+
+def test_maybe_post_started_review_comment_skips_when_description_present():
+    """When PR already has a non-trivial description, no started-review comment is posted."""
+    provider = MagicMock()
+    pr_info = MagicMock(
+        title="T",
+        description="This is an existing, sufficiently detailed description for the PR.",
+    )
+    paths = ["foo.py"]
+
+    _maybe_post_started_review_comment(provider, "o", "r", 1, pr_info, paths)
+
+    provider.post_pr_summary_comment.assert_not_called()

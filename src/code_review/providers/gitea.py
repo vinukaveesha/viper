@@ -217,7 +217,7 @@ class GiteaProvider(ProviderInterface):
         )
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
-        """Return PR title and labels for skip-review check."""
+        """Return PR title, labels, and description for skip-review and metadata."""
         try:
             data = self._get(f"/repos/{owner}/{repo}/pulls/{pr_number}")
             if not isinstance(data, dict):
@@ -225,7 +225,8 @@ class GiteaProvider(ProviderInterface):
             title = data.get("title", "") or ""
             labels_raw = data.get("labels") or []
             labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
-            return PRInfo(title=title, labels=labels)
+            description = data.get("body", "") or ""
+            return PRInfo(title=title, labels=labels, description=description)
         except Exception:
             return None
 

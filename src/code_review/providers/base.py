@@ -34,6 +34,7 @@ class PRInfo(BaseModel):
 
     title: str = ""
     labels: list[str] = Field(default_factory=list, description="Label names")
+    description: str = ""
 
 
 class ReviewComment(BaseModel):
