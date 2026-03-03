@@ -193,11 +193,11 @@ At each step below:
 
 ### Step 3 – Extract Files, Diffs, and Language Detection
 
-- **[ ]** Extract PR files/diffs into `_fetch_pr_files_and_diffs()`.
-- **[ ]** Extract ignore‑set + file filtering into `_build_ignore_set_and_filter_files()`.
-- **[ ]** Extract language detection into `_detect_languages_for_files()`.
-- **[ ]** Ensure early‑return conditions (e.g. “no files to review”) are preserved.
-- **[ ]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
+- **[x]** Extract PR files/diffs into `_fetch_pr_files_and_diffs()`.
+- **[x]** Extract ignore‑set + file filtering into `_build_ignore_set_and_filter_files()`.
+- **[x]** Extract language detection into `_detect_languages_for_files()`.
+- **[x]** Ensure early‑return conditions (e.g. “no files to review”) are preserved.
+- **[x]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
 
 ### Step 4 – Extract Agent and Runner Creation
 

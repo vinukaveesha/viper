@@ -278,3 +278,48 @@ def test_compute_idempotency_and_maybe_short_circuit_returns_empty_list_when_key
         )
     assert result == []
     mock_obs.finish_run.assert_called_once()
+
+
+# --- Step 3: _fetch_pr_files_and_diffs, _build_ignore_set_and_filter_files, _detect_languages_for_files ---
+
+
+def test_fetch_pr_files_and_diffs_returns_files_paths_and_full_diff():
+    """_fetch_pr_files_and_diffs returns (files, paths, full_diff) from provider."""
+    from code_review.providers.base import FileInfo
+
+    provider = MagicMock()
+    provider.get_pr_files.return_value = [
+        FileInfo(path="foo.py", status="modified"),
+        FileInfo(path="bar.go", status="added"),
+    ]
+    provider.get_pr_diff.return_value = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py"
+
+    o = ReviewOrchestrator("o", "r", 1)
+    files, paths, full_diff = o._fetch_pr_files_and_diffs(provider, "o", "r", 1)
+
+    assert len(files) == 2
+    assert paths == ["foo.py", "bar.go"]
+    assert "diff --git" in full_diff
+    provider.get_pr_files.assert_called_once_with("o", "r", 1)
+    provider.get_pr_diff.assert_called_once_with("o", "r", 1)
+
+
+def test_build_ignore_set_and_filter_files_returns_paths_unchanged():
+    """_build_ignore_set_and_filter_files currently returns paths unchanged (no filtering)."""
+    o = ReviewOrchestrator("o", "r", 1)
+    paths = ["a.py", "b.go", "c.rs"]
+    result = o._build_ignore_set_and_filter_files(paths)
+    assert result == ["a.py", "b.go", "c.rs"]
+
+
+def test_detect_languages_for_files_returns_detected_and_review_standards():
+    """_detect_languages_for_files returns (detected, review_standards) from detect_from_paths."""
+    o = ReviewOrchestrator("o", "r", 1)
+    paths = ["src/main.py", "tests/test_foo.py"]
+    detected, review_standards = o._detect_languages_for_files(paths)
+
+    assert hasattr(detected, "language")
+    assert hasattr(detected, "framework")
+    assert detected.language == "python"
+    assert isinstance(review_standards, str)
+    assert "python" in review_standards.lower() or "Python" in review_standards

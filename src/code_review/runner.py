@@ -352,6 +352,27 @@ class ReviewOrchestrator:
         )
         return []
 
+    def _fetch_pr_files_and_diffs(self, provider, owner: str, repo: str, pr_number: int):
+        """Fetch PR file list and full diff from the provider. Returns (files, paths, full_diff)."""
+        files = provider.get_pr_files(owner, repo, pr_number)
+        paths = [f.path for f in files]
+        full_diff = provider.get_pr_diff(owner, repo, pr_number)
+        return (files, paths, full_diff)
+
+    def _build_ignore_set_and_filter_files(self, paths: list[str]) -> list[str]:
+        """
+        Optionally filter which file paths to review (e.g. by ignore patterns).
+        Currently returns paths unchanged; ignore_set is built in _load_existing_comments_and_markers
+        and used later to filter findings.
+        """
+        return paths
+
+    def _detect_languages_for_files(self, paths: list[str]):
+        """Run language detection on paths and return (detected, review_standards)."""
+        detected = detect_from_paths(paths)
+        review_standards = get_review_standards(detected.language, detected.framework)
+        return (detected, review_standards)
+
     def run(self) -> list[FindingV1]:
         """
         Execute the full review flow. Returns list of findings that were posted
@@ -405,10 +426,11 @@ class ReviewOrchestrator:
         if idempotency_result is not None:
             return idempotency_result
 
-        files = provider.get_pr_files(owner, repo, pr_number)
-        paths = [f.path for f in files]
-        detected = detect_from_paths(paths)
-        review_standards = get_review_standards(detected.language, detected.framework)
+        files, paths, full_diff = self._fetch_pr_files_and_diffs(
+            provider, owner, repo, pr_number
+        )
+        paths = self._build_ignore_set_and_filter_files(paths)
+        detected, review_standards = self._detect_languages_for_files(paths)
 
         agent = create_review_agent(provider, review_standards, findings_only=True)
 
@@ -427,7 +449,6 @@ class ReviewOrchestrator:
         )
 
         diff_budget = int(get_context_window() * DIFF_TOKEN_BUDGET_RATIO)
-        full_diff = provider.get_pr_diff(owner, repo, pr_number)
         use_file_by_file = _estimate_tokens(full_diff) > diff_budget
 
         all_findings: list[FindingV1] = []
