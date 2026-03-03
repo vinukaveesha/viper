@@ -20,7 +20,7 @@ Tick items as they are implemented.
 ## 2. Code Quality and Architecture
 
 - [x] Deduplicate shared provider logic into `ProviderInterface` (e.g. `get_pr_diff_for_file`, `get_file_lines`, `MAX_REPO_FILE_BYTES`) (see §2.1).
-- [ ] Refactor `run_review()` into smaller helpers or a `ReviewOrchestrator`-style abstraction while preserving the documented flow in `AGENTS.md` (see §2.2).
+- [x] Refactor `run_review()` into smaller helpers or a `ReviewOrchestrator`-style abstraction while preserving the documented flow in `AGENTS.md` (see §2.2).
 - [x] Replace `@lru_cache` config caching with a resettable pattern suitable for tests (see §2.3).
 - [x] Either wire `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` into the model client or clearly deprecate them in code and docs (see §2.4).
 - [x] Decide on and implement a strategy for the legacy non–findings-only agent mode (remove or fully support) (see §2.5).
