@@ -233,6 +233,16 @@ class ReviewOrchestrator:
         self.dry_run = dry_run
         self.print_findings = print_findings
 
+    def _load_config_and_provider(self):
+        """Load SCM/LLM config and create the provider instance. Returns (cfg, llm_cfg, provider)."""
+        cfg = get_scm_config()
+        llm_cfg = get_llm_config()
+        token_val = (
+            cfg.token.get_secret_value() if hasattr(cfg.token, "get_secret_value") else cfg.token
+        )
+        provider = get_provider(cfg.provider, cfg.url, token_val)
+        return (cfg, llm_cfg, provider)
+
     def run(self) -> list[FindingV1]:
         """
         Execute the full review flow. Returns list of findings that were posted
@@ -254,16 +264,7 @@ class ReviewOrchestrator:
         start_time = time.perf_counter()
         run_handle = observability.start_run(trace_id)
 
-        cfg = get_scm_config()
-        llm_cfg = get_llm_config()
-        token_val = (
-            cfg.token.get_secret_value() if hasattr(cfg.token, "get_secret_value") else cfg.token
-        )
-        provider = get_provider(
-            cfg.provider,
-            cfg.url,
-            token_val,
-        )
+        cfg, llm_cfg, provider = self._load_config_and_provider()
 
         # Skip review if PR has skip label or title contains skip pattern (e.g. [skip-review])
         if cfg.skip_label or cfg.skip_title_pattern:
