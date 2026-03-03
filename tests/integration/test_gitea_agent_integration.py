@@ -132,9 +132,12 @@ def test_agent_vs_gitea_posts_findings_to_mocked_api(
     payload = json.loads(call.request.content.decode())
     assert "comments" in payload
     assert len(payload["comments"]) == 1
-    assert payload["comments"][0]["path"] == "foo.py"
-    assert payload["comments"][0]["line"] == 2
-    assert "[Suggestion]" in payload["comments"][0]["body"]
+    comment = payload["comments"][0]
+    assert comment["path"] == "foo.py"
+    # Gitea CreatePullReviewComment uses old_position/new_position for diff coordinates.
+    assert comment["old_position"] == 0
+    assert comment["new_position"] == 2
+    assert "[Suggestion]" in comment["body"]
     assert payload.get("commit_id") == head_sha
 
     # Phase 4.2: PR summary comment posted after successful inline post

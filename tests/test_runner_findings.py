@@ -59,3 +59,20 @@ def test_finding_to_comment_body():
     f = FindingV1(path="a.py", line=1, severity="suggestion", code="x", message="Do Y.")
     body = finding_to_comment_body(f)
     assert body == "[Suggestion] Do Y."
+
+
+def test_finding_to_comment_body_includes_agent_fix_prompt_in_collapsible_block():
+    f = FindingV1(
+        path="a.py",
+        line=1,
+        severity="suggestion",
+        code="x",
+        message="Do Y.",
+        agent_fix_prompt="Verify Y and apply fix.",
+    )
+    body = finding_to_comment_body(f)
+    assert body.startswith("[Suggestion] Do Y.")
+    assert "<details>" in body
+    assert "<summary>Prompt for AI Agents</summary>" in body
+    assert "Verify Y and apply fix." in body
+    assert body.strip().endswith("</details>")

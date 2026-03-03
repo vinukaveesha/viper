@@ -39,5 +39,19 @@ def finding_to_comment_body(f: FindingV1) -> str:
     body = _strip_leading_tags(f.get_body())
 
     if not body:
-        return label
-    return f"{label} {body}"
+        main = label
+    else:
+        main = f"{label} {body}"
+
+    # Optionally append a collapsible block containing an agent fix prompt, when provided.
+    if f.agent_fix_prompt:
+        prompt_block = (
+            "\n\n"
+            "<details>\n"
+            "<summary>Prompt for AI Agents</summary>\n\n"
+            f"{f.agent_fix_prompt}\n"
+            "</details>"
+        )
+        return main + prompt_block
+
+    return main

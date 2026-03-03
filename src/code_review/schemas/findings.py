@@ -44,6 +44,13 @@ class FindingV1(BaseModel):
             "when provider supports suggestions"
         ),
     )
+    agent_fix_prompt: str | None = Field(
+        default=None,
+        description=(
+            "Optional natural-language prompt that a downstream AI coding agent can use "
+            "to validate and apply the fix for this finding"
+        ),
+    )
 
     @model_validator(mode="after")
     def end_line_not_less_than_line(self) -> "FindingV1":

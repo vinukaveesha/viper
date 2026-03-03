@@ -82,7 +82,14 @@ def test_post_review_comments(mock_client):
     call_args = mock_client.return_value.__enter__.return_value.request.call_args
     assert call_args[0][1].endswith("/reviews")  # url is second positional arg
     payload = call_args[1]["json"]
-    assert payload["comments"] == [{"path": "foo.py", "body": "[Critical] Bug here", "line": 10}]
+    assert payload["comments"] == [
+        {
+            "path": "foo.py",
+            "body": "[Critical] Bug here",
+            "old_position": 0,
+            "new_position": 10,
+        }
+    ]
     assert payload["commit_id"] == "abc123"
 
 

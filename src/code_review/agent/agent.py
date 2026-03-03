@@ -42,10 +42,19 @@ post comments. The orchestrator handles that.
 Return your response as a JSON array of findings. Each finding must have:
 path (str), line (int), severity ("critical"|"suggestion"|"info"),
 code (str, e.g. unused-var), and message (str).
-Optional fields: end_line, category, anchor, fingerprint_hint.
+Optional fields: end_line, category, anchor, fingerprint_hint,
+suggested_patch, agent_fix_prompt.
+
+agent_fix_prompt (optional) is a natural-language prompt that another AI
+coding agent can use to verify and implement the fix for this specific issue.
+When the issue is fixable with code changes, include a concise but complete
+agent_fix_prompt that:
+- Mentions the file path and line(s)
+- Describes the problem and the desired fix
+- Includes any relevant project-specific constraints or context
 
 Format:
-[{"path":"...","line":N,"severity":"...","code":"...","message":"..."}, ...]
+[{"path":"...","line":N,"severity":"...","code":"...","message":"...","agent_fix_prompt":"..."}, ...]
 
 If no issues are found, return an empty array: []
 """
