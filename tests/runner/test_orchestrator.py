@@ -358,3 +358,50 @@ def test_create_agent_and_runner_returns_session_id_service_runner(mock_create_a
     MockRunner.assert_called_once_with(
         agent=mock_agent, app_name="code_review", session_service=mock_svc
     )
+
+
+# --- Step 5: _run_agent_and_collect_findings, _attach_fingerprints_and_filter_findings, _post_findings_and_summary ---
+
+
+def test_attach_fingerprints_and_filter_findings_returns_to_post():
+    """_attach_fingerprints_and_filter_findings filters by ignore set and returns (finding, fp) list."""
+    from code_review.schemas.findings import FindingV1
+
+    o = ReviewOrchestrator("o", "r", 1, head_sha="abc")
+    finding = FindingV1(
+        path="foo.py", line=1, severity="info", code="X", message="msg"
+    )
+    all_findings = [finding]
+    provider = MagicMock()
+    provider.get_file_content.return_value = "line1\nline2\n"
+    ignore_set = set()
+    resolved_body_set = set()
+    resolved_fp_set = set()
+
+    to_post = o._attach_fingerprints_and_filter_findings(
+        all_findings,
+        provider,
+        "o",
+        "r",
+        "abc",
+        ignore_set,
+        resolved_body_set,
+        resolved_fp_set,
+    )
+
+    assert len(to_post) == 1
+    assert to_post[0][0] is finding
+    assert isinstance(to_post[0][1], str)
+    assert len(ignore_set) >= 1
+
+
+def test_post_findings_and_summary_returns_zero_when_dry_run():
+    """_post_findings_and_summary returns 0 when dry_run=True (no posts)."""
+    o = ReviewOrchestrator("o", "r", 1, head_sha="abc", dry_run=True)
+    provider = MagicMock()
+    to_post = []
+    count = o._post_findings_and_summary(
+        provider, "o", "r", 1, "abc", True, to_post, MagicMock(), MagicMock(), []
+    )
+    assert count == 0
+    provider.post_review_comments.assert_not_called()

@@ -208,11 +208,11 @@ At each step below:
 
 ### Step 5 – Extract Agent Execution and Findings Handling
 
-- **[ ]** Move `Runner.run()` + response parsing into `_run_agent_and_collect_findings()`.
-- **[ ]** Move fingerprinting/filtering into `_attach_fingerprints_and_filter_findings()`.
-- **[ ]** Move posting logic into `_post_findings_and_summary()`.
-- **[ ]** Verify batch/per‑comment/summary fallback and logging are unchanged.
-- **[ ]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
+- **[x]** Move `Runner.run()` + response parsing into `_run_agent_and_collect_findings()`.
+- **[x]** Move fingerprinting/filtering into `_attach_fingerprints_and_filter_findings()`.
+- **[x]** Move posting logic into `_post_findings_and_summary()`.
+- **[x]** Verify batch/per‑comment/summary fallback and logging are unchanged.
+- **[x]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
 
 ### Step 6 – Extract Final Observability and Result Construction
 

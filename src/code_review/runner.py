@@ -398,6 +398,205 @@ class ReviewOrchestrator:
         )
         return (session_id, session_service, runner)
 
+    def _run_agent_and_collect_findings(
+        self,
+        runner,
+        session_service,
+        session_id: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        paths: list[str],
+        use_file_by_file: bool,
+    ) -> list[FindingV1]:
+        """
+        Run the agent (file-by-file or single shot), parse response into FindingV1 list.
+        Returns all_findings (unfiltered).
+        """
+        all_findings: list[FindingV1] = []
+        if use_file_by_file and paths:
+            for file_path in paths:
+                file_session_id = f"{owner}/{repo}/pr-{pr_number}/file/{uuid.uuid4().hex[:12]}"
+                session_service.create_session_sync(
+                    app_name=APP_NAME,
+                    user_id=USER_ID,
+                    session_id=file_session_id,
+                )
+                msg = (
+                    f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}."
+                    + (f" head_sha={head_sha}." if head_sha else "")
+                    + " Review only this file: "
+                    f"{file_path}. Use get_pr_diff_for_file to fetch its diff."
+                )
+                content = types.Content(role="user", parts=[types.Part(text=msg)])
+                response_text = _run_agent_and_collect_response(
+                    runner, file_session_id, content
+                )
+                all_findings.extend(_findings_from_response(response_text))
+        else:
+            msg = f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}." + (
+                f" head_sha={head_sha}." if head_sha else ""
+            )
+            content = types.Content(role="user", parts=[types.Part(text=msg)])
+            response_text = _run_agent_and_collect_response(runner, session_id, content)
+            all_findings = _findings_from_response(response_text)
+        return all_findings
+
+    def _attach_fingerprints_and_filter_findings(
+        self,
+        all_findings: list[FindingV1],
+        provider,
+        owner: str,
+        repo: str,
+        head_sha: str,
+        ignore_set: set[tuple[str, str]],
+        resolved_body_set: set[tuple[str, str]],
+        resolved_fp_set: set[tuple[str, str]],
+    ) -> list[tuple[FindingV1, str]]:
+        """
+        Attach fingerprints to findings, filter by ignore/resolved sets.
+        Mutates ignore_set (adds new keys). Returns to_post: list of (finding, fingerprint).
+        """
+        to_post: list[tuple[FindingV1, str]] = []
+        unique_paths = list(dict.fromkeys(f.path for f in all_findings))
+        file_lines_by_path = (
+            _get_file_lines_by_path(provider, owner, repo, head_sha, unique_paths)
+            if head_sha
+            else {}
+        )
+        for f in all_findings:
+            body = finding_to_comment_body(f)
+            body_hash = hashlib.sha256(body.encode()).hexdigest()
+            if file_lines_by_path:
+                fp = _fingerprint_for_finding(f, file_lines_by_path)
+            else:
+                fp = ""
+            if fp and (f.path, fp) in resolved_fp_set:
+                continue
+            if (f.path, body_hash) in ignore_set and (f.path, body_hash) not in resolved_body_set:
+                continue
+            if fp and (f.path, fp) in ignore_set and (f.path, fp) not in resolved_fp_set:
+                continue
+            if fp:
+                ignore_set.add((f.path, fp))
+            ignore_set.add((f.path, body_hash))
+            to_post.append((f, fp))
+        return to_post
+
+    def _post_findings_and_summary(
+        self,
+        provider,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        dry_run: bool,
+        to_post: list[tuple[FindingV1, str]],
+        cfg,
+        llm_cfg,
+        existing: list,
+    ) -> int:
+        """
+        Auto-resolve stale comments (if supported), then post inline comments and PR summary.
+        Returns successful_post_count.
+        """
+        successful_post_count = 0
+        if provider.capabilities().resolvable_comments and head_sha and not dry_run:
+            new_fps = {fp for _, fp in to_post if fp}
+            for c in existing:
+                body = getattr(c, "body", "") or ""
+                parsed = parse_marker_from_comment_body(body)
+                fp_old = parsed.get("fingerprint")
+                if not fp_old or fp_old in new_fps:
+                    continue
+                try:
+                    provider.resolve_comment(owner, repo, c.id)
+                except Exception as e:
+                    logger.warning(
+                        "resolve_comment failed owner=%s repo=%s pr_number=%s comment_id=%s: %s",
+                        owner,
+                        repo,
+                        pr_number,
+                        getattr(c, "id", ""),
+                        e,
+                    )
+        if not dry_run and to_post:
+            if not head_sha:
+                raise ValueError(
+                    "head_sha is required when posting comments (dry_run=False). "
+                    "Provide head_sha or use --dry-run to skip posting."
+                )
+            run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+            comments: list[InlineComment] = []
+            for f, fp in to_post:
+                body = finding_to_comment_body(f)
+                if fp:
+                    body = format_comment_body_with_marker(
+                        body, fp, AGENT_VERSION, run_id=run_id
+                    )
+                comments.append(
+                    InlineComment(
+                        path=f.path,
+                        line=f.line,
+                        body=body,
+                        end_line=f.end_line,
+                        suggested_patch=f.suggested_patch,
+                    )
+                )
+            try:
+                provider.post_review_comments(
+                    owner, repo, pr_number, comments, head_sha=head_sha
+                )
+                successful_post_count = len(comments)
+                try:
+                    provider.post_pr_summary_comment(
+                        owner, repo, pr_number, _build_pr_summary_body(to_post)
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
+                        owner,
+                        repo,
+                        pr_number,
+                        e,
+                    )
+            except Exception:
+                for c in comments:
+                    try:
+                        provider.post_review_comment(
+                            owner,
+                            repo,
+                            pr_number,
+                            c.path,
+                            c.line,
+                            c.body,
+                            end_line=c.end_line,
+                            suggested_patch=c.suggested_patch,
+                            head_sha=head_sha,
+                        )
+                        successful_post_count += 1
+                    except Exception:
+                        summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
+                        try:
+                            provider.post_pr_summary_comment(
+                                owner, repo, pr_number, summary_body
+                            )
+                            successful_post_count += 1
+                        except Exception as e:
+                            logger.error(
+                                "post_pr_summary_comment failed owner=%s repo=%s "
+                                "pr_number=%s path=%s line=%s: %s",
+                                owner,
+                                repo,
+                                pr_number,
+                                c.path,
+                                c.line,
+                                e,
+                                exc_info=True,
+                            )
+        return successful_post_count
+
     def run(self) -> list[FindingV1]:
         """
         Execute the full review flow. Returns list of findings that were posted
@@ -461,170 +660,45 @@ class ReviewOrchestrator:
         diff_budget = int(get_context_window() * DIFF_TOKEN_BUDGET_RATIO)
         use_file_by_file = _estimate_tokens(full_diff) > diff_budget
 
-        all_findings: list[FindingV1] = []
-        if use_file_by_file and paths:
-            for file_path in paths:
-                # Create a fresh session per file: avoids accumulating prior-file context
-                # in the ADK session history, which would grow the context window linearly
-                # and waste tokens across files.
-                file_session_id = f"{owner}/{repo}/pr-{pr_number}/file/{uuid.uuid4().hex[:12]}"
-                session_service.create_session_sync(
-                    app_name=APP_NAME,
-                    user_id=USER_ID,
-                    session_id=file_session_id,
-                )
-                msg = (
-                    f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}."
-                    + (f" head_sha={head_sha}." if head_sha else "")
-                    + " Review only this file: "
-                    f"{file_path}. Use get_pr_diff_for_file to fetch its diff."
-                )
-                content = types.Content(role="user", parts=[types.Part(text=msg)])
-                response_text = _run_agent_and_collect_response(runner, file_session_id, content)
-                all_findings.extend(_findings_from_response(response_text))
-        else:
-            msg = f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}." + (
-                f" head_sha={head_sha}." if head_sha else ""
-            )
-            content = types.Content(role="user", parts=[types.Part(text=msg)])
-            response_text = _run_agent_and_collect_response(runner, session_id, content)
-            all_findings = _findings_from_response(response_text)
-
-        # Filter out findings that match existing comments (by path + body_hash or path + fingerprint)
-        to_post: list[tuple[FindingV1, str]] = []
-        unique_paths = list(dict.fromkeys(f.path for f in all_findings))
-        file_lines_by_path = (
-            _get_file_lines_by_path(provider, owner, repo, head_sha, unique_paths) if head_sha else {}
+        all_findings = self._run_agent_and_collect_findings(
+            runner,
+            session_service,
+            session_id,
+            owner,
+            repo,
+            pr_number,
+            head_sha,
+            paths,
+            use_file_by_file,
         )
-        for f in all_findings:
-            body = finding_to_comment_body(f)
-            body_hash = hashlib.sha256(body.encode()).hexdigest()
-            # Compute fingerprint (when possible) before consulting resolved sets.
-            if file_lines_by_path:
-                fp = _fingerprint_for_finding(f, file_lines_by_path)
-            else:
-                fp = ""
 
-            # Manually resolved comments act as an ignore list keyed by fingerprint:
-            # if the fingerprint matches a resolved entry, skip reposting the same issue.
-            if fp and (f.path, fp) in resolved_fp_set:
-                continue
-
-            # For unresolved comments, use the combined ignore_set, but do not let
-            # manually-resolved body hashes suppress findings when the fingerprint
-            # (code anchor) has changed.
-            # For comments without markers (e.g. older runs or manual comments), we
-            # still use body-hash based dedupe so the basic "duplicate vs net-new"
-            # behavior (tested in test_run_review_ignore_list_and_posts_net_new)
-            # remains intact. Resolved-body entries are handled separately.
-            if (f.path, body_hash) in ignore_set and (f.path, body_hash) not in resolved_body_set:
-                continue
-            if fp and (f.path, fp) in ignore_set and (f.path, fp) not in resolved_fp_set:
-                continue
-
-            # Update ignore_set so subsequent duplicate findings in this run are filtered.
-            if fp:
-                ignore_set.add((f.path, fp))
-            ignore_set.add((f.path, body_hash))
-            to_post.append((f, fp))
+        to_post = self._attach_fingerprints_and_filter_findings(
+            all_findings,
+            provider,
+            owner,
+            repo,
+            head_sha,
+            ignore_set,
+            resolved_body_set,
+            resolved_fp_set,
+        )
 
         if print_findings:
             for f, _ in to_post:
                 print(f"{f.path}:{f.line} [{f.severity}] {f.get_body()}")
 
-        successful_post_count = 0
-        # Auto-resolve stale comments when the provider supports it and we are not in dry_run:
-        # if a comment's fingerprint marker is no longer present in any findings
-        # for this run, consider it stale and resolve it.
-        if provider.capabilities().resolvable_comments and head_sha and not dry_run:
-            new_fps = {fp for _, fp in to_post if fp}
-            for c in existing:
-                body = getattr(c, "body", "") or ""
-                parsed = parse_marker_from_comment_body(body)
-                fp_old = parsed.get("fingerprint")
-                if not fp_old or fp_old in new_fps:
-                    continue
-                try:
-                    provider.resolve_comment(owner, repo, c.id)
-                except Exception as e:
-                    logger.warning(
-                        "resolve_comment failed owner=%s repo=%s pr_number=%s comment_id=%s: %s",
-                        owner,
-                        repo,
-                        pr_number,
-                        getattr(c, "id", ""),
-                        e,
-                    )
-        if not dry_run and to_post:
-            if not head_sha:
-                raise ValueError(
-                    "head_sha is required when posting comments (dry_run=False). "
-                    "Provide head_sha or use --dry-run to skip posting."
-                )
-            run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
-            comments: list[InlineComment] = []
-            for f, fp in to_post:
-                body = finding_to_comment_body(f)
-                if fp:
-                    body = format_comment_body_with_marker(body, fp, AGENT_VERSION, run_id=run_id)
-                comments.append(
-                    InlineComment(
-                        path=f.path,
-                        line=f.line,
-                        body=body,
-                        end_line=f.end_line,
-                        suggested_patch=f.suggested_patch,
-                    )
-                )
-            try:
-                provider.post_review_comments(owner, repo, pr_number, comments, head_sha=head_sha)
-                successful_post_count = len(comments)
-                try:
-                    provider.post_pr_summary_comment(
-                        owner, repo, pr_number, _build_pr_summary_body(to_post)
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
-                        owner,
-                        repo,
-                        pr_number,
-                        e,
-                    )
-            except Exception:
-                # Batch failed (e.g. one position invalid); post one-by-one,
-                # degrade to PR-level on failure.
-                for c in comments:
-                    try:
-                        provider.post_review_comment(
-                            owner,
-                            repo,
-                            pr_number,
-                            c.path,
-                            c.line,
-                            c.body,
-                            end_line=c.end_line,
-                            suggested_patch=c.suggested_patch,
-                            head_sha=head_sha,
-                        )
-                        successful_post_count += 1
-                    except Exception:
-                        summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
-                        try:
-                            provider.post_pr_summary_comment(owner, repo, pr_number, summary_body)
-                            successful_post_count += 1
-                        except Exception as e:
-                            logger.error(
-                                "post_pr_summary_comment failed owner=%s repo=%s "
-                                "pr_number=%s path=%s line=%s: %s",
-                                owner,
-                                repo,
-                                pr_number,
-                                c.path,
-                                c.line,
-                                e,
-                                exc_info=True,
-                            )
+        successful_post_count = self._post_findings_and_summary(
+            provider,
+            owner,
+            repo,
+            pr_number,
+            head_sha,
+            dry_run,
+            to_post,
+            cfg,
+            llm_cfg,
+            existing,
+        )
 
         _duration_ms = (time.perf_counter() - start_time) * 1000
         _log_run_complete(
