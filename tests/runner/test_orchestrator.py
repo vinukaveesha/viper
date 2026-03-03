@@ -405,3 +405,24 @@ def test_post_findings_and_summary_returns_zero_when_dry_run():
     )
     assert count == 0
     provider.post_review_comments.assert_not_called()
+
+
+# --- Step 6: _record_observability_and_build_result ---
+
+
+def test_record_observability_and_build_result_returns_findings_and_emits_log():
+    """_record_observability_and_build_result calls _log_run_complete and observability.finish_run, returns findings list."""
+    from code_review.schemas.findings import FindingV1
+
+    o = ReviewOrchestrator("o", "r", 1)
+    finding = FindingV1(path="a.py", line=1, severity="info", code="X", message="m")
+    to_post = [(finding, "fp1")]
+    with patch("code_review.runner._log_run_complete") as mock_log, patch(
+        "code_review.runner.observability"
+    ) as mock_obs:
+        result = o._record_observability_and_build_result(
+            "trace-1", "o", "r", 1, 0.0, MagicMock(), ["a.py"], [finding], 1, to_post
+        )
+    assert result == [finding]
+    mock_log.assert_called_once()
+    mock_obs.finish_run.assert_called_once()

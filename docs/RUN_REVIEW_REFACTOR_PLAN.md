@@ -216,14 +216,14 @@ At each step below:
 
 ### Step 6 – Extract Final Observability and Result Construction
 
-- **[ ]** Move observability/metrics into `_record_observability_and_build_result()`.
-- **[ ]** Ensure the return type is `list[FindingV1]` and semantics match the legacy `run_review()`.
-- **[ ]** Confirm log keys and metric labels are unchanged.
-- **[ ]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
+- **[x]** Move observability/metrics into `_record_observability_and_build_result()`.
+- **[x]** Ensure the return type is `list[FindingV1]` and semantics match the legacy `run_review()`.
+- **[x]** Confirm log keys and metric labels are unchanged.
+- **[x]** Run `pytest --ignore=tests/e2e` and ensure all tests pass.
 
 ### Final
 
-- **[ ]** Confirm `run_review()` is now a thin façade over `ReviewOrchestrator.run()` and all tests are green.
+- **[x]** Confirm `run_review()` is now a thin façade over `ReviewOrchestrator.run()` and all tests are green.
 
 ---
 

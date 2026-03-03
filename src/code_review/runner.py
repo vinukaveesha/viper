@@ -597,6 +597,45 @@ class ReviewOrchestrator:
                             )
         return successful_post_count
 
+    def _record_observability_and_build_result(
+        self,
+        trace_id: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        start_time: float,
+        run_handle,
+        paths: list,
+        all_findings: list[FindingV1],
+        successful_post_count: int,
+        to_post: list[tuple[FindingV1, str]],
+    ) -> list[FindingV1]:
+        """
+        Emit run_complete log and observability.finish_run, then return the list of findings posted.
+        """
+        _duration_ms = (time.perf_counter() - start_time) * 1000
+        _log_run_complete(
+            trace_id,
+            owner,
+            repo,
+            pr_number,
+            files_count=len(paths),
+            findings_count=len(all_findings),
+            posts_count=successful_post_count,
+            duration_ms=_duration_ms,
+        )
+        observability.finish_run(
+            run_handle,
+            owner,
+            repo,
+            pr_number,
+            files_count=len(paths),
+            findings_count=len(all_findings),
+            posts_count=successful_post_count,
+            duration_seconds=_duration_ms / 1000.0,
+        )
+        return [f for f, _ in to_post]
+
     def run(self) -> list[FindingV1]:
         """
         Execute the full review flow. Returns list of findings that were posted
@@ -700,28 +739,18 @@ class ReviewOrchestrator:
             existing,
         )
 
-        _duration_ms = (time.perf_counter() - start_time) * 1000
-        _log_run_complete(
+        return self._record_observability_and_build_result(
             trace_id,
             owner,
             repo,
             pr_number,
-            files_count=len(paths),
-            findings_count=len(all_findings),
-            posts_count=successful_post_count,
-            duration_ms=_duration_ms,
-        )
-        observability.finish_run(
+            start_time,
             run_handle,
-            owner,
-            repo,
-            pr_number,
-            files_count=len(paths),
-            findings_count=len(all_findings),
-            posts_count=successful_post_count,
-            duration_seconds=_duration_ms / 1000.0,
+            paths,
+            all_findings,
+            successful_post_count,
+            to_post,
         )
-        return [f for f, _ in to_post]
 
 
 def run_review(
