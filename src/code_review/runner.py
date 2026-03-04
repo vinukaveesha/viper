@@ -818,7 +818,7 @@ class ReviewOrchestrator:
 
         pr_info_for_metadata = provider.get_pr_info(owner, repo, pr_number)
 
-        files, paths, full_diff = self._fetch_pr_files_and_diffs(provider, owner, repo, pr_number)
+        _, paths, full_diff = self._fetch_pr_files_and_diffs(provider, owner, repo, pr_number)
         paths = self._build_ignore_set_and_filter_files(paths)
         if not paths:
             return self._record_observability_and_build_result(

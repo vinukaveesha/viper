@@ -464,7 +464,7 @@ def test_maybe_post_started_review_comment_posts_when_description_missing():
     _maybe_post_started_review_comment(provider, "o", "r", 1, pr_info, paths)
 
     provider.post_pr_summary_comment.assert_called_once()
-    args, kwargs = provider.post_pr_summary_comment.call_args
+    args, _ = provider.post_pr_summary_comment.call_args
     assert args[0:3] == ("o", "r", 1)
     body = args[3]
     assert "Viper has started a review" in body
