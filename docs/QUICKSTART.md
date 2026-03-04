@@ -9,6 +9,8 @@ Get the code review agent running with Docker Compose (or Podman Compose), Gitea
 - **Docker** and **Docker Compose**, **or** **Podman** and **Podman Compose**
 - **LLM API key** (for example `GOOGLE_API_KEY`)
 
+To run **Jenkins without Docker** (no containers on the agent), see [JENKINS-NO-DOCKER.md](JENKINS-NO-DOCKER.md).
+
 ---
 
 ## 1. Start the stack (Docker)
