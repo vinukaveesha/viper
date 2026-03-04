@@ -67,7 +67,20 @@ docker compose up -d --build
 
 ---
 
-## 4. Build the agent image
+## 4. Build or pull the agent image
+
+You can either pull a prebuilt image from Docker Hub or build the image locally from this repository.
+
+**Option A – Pull prebuilt image (recommended for CI):**
+
+```bash
+docker pull e4c5/code-review-agent
+docker tag e4c5/code-review-agent code-review-agent
+```
+
+The second command tags the image as `code-review-agent` so the existing `docker-compose.yml` and Jenkins examples continue to work without changes.
+
+**Option B – Build locally:**
 
 From the repository root:
 

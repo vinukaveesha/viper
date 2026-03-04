@@ -17,7 +17,12 @@ For Jenkins, store secrets in **Manage Jenkins → Credentials** as Secret text 
 
 ## Docker and CI
 
-The agent runs as a **one-shot container** (no long-running service). Build: `docker build -t code-review-agent -f docker/Dockerfile.agent .` Run with `SCM_*` and `LLM_*` env vars; for Compose-based testing and Jenkins pipeline details, see [Quick Start](docs/QUICKSTART.md).
+The agent runs as a **one-shot container** (no long-running service).
+
+- **Prebuilt image (Docker Hub)**: pull `e4c5/code-review-agent` from Docker Hub: `docker pull e4c5/code-review-agent` (see [e4c5/code-review-agent](https://hub.docker.com/r/e4c5/code-review-agent)), then (optionally) retag it locally as `code-review-agent` with `docker tag e4c5/code-review-agent code-review-agent` so the examples in this repo work unchanged.
+- **Build locally**: `docker build -t code-review-agent -f docker/Dockerfile.agent .`.
+
+Run with `SCM_*` and `LLM_*` env vars; for Compose-based testing and Jenkins pipeline details, see [Quick Start](docs/QUICKSTART.md).
 
 The Compose-based Jenkins image preinstalls required plugins and can auto-seed credentials for local testing during first-boot bootstrap (see Quick Start).
 
