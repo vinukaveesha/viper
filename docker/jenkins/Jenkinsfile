@@ -1,6 +1,6 @@
 // Pipeline example: code review on PR. Set SCM_* and LLM_* via parameters or Gitea webhook.
 // Agent runs as one-shot container: <runtime> run --rm code-review-agent review
-//   OR inline (USE_INLINE_AGENT=true): code-review --owner ... --repo ... --pr ... --head-sha ... (avoids rootless Podman uid_map issues).
+//   OR inline (USE_INLINE_AGENT=true): code-review --owner ... --repo ... --pr ... --head-sha ... (no Docker required; see docs/JENKINS-NO-DOCKER.md).
 // Build agent image from repo root: docker build -t code-review-agent -f docker/Dockerfile.agent .
 // Runtime: set CONTAINER_RUNTIME (e.g. podman) to force one; otherwise pipeline auto-detects docker or podman.
 //
@@ -71,6 +71,8 @@ pipeline {
                     }
                     // SCM_TOKEN and GOOGLE_API_KEY are injected via Jenkins credentials (environment {} above).
                     def useInlineAgent = env.USE_INLINE_AGENT == 'true' || env.USE_INLINE_AGENT == '1'
+                    def scmProvider = env.SCM_PROVIDER ?: 'gitea'
+                    def scmUrl = env.SCM_URL ?: 'http://gitea:3000'
                     withEnv([
                         "CONTAINER_RUNTIME=${containerRuntime}",
                         "REVIEW_IMAGE=${image}",
@@ -79,6 +81,8 @@ pipeline {
                         "REVIEW_SCM_REPO=${scmRepo}",
                         "REVIEW_SCM_PR_NUM=${scmPrNum}",
                         "REVIEW_SCM_HEAD_SHA=${scmHeadSha}",
+                        "REVIEW_SCM_PROVIDER=${scmProvider}",
+                        "REVIEW_SCM_URL=${scmUrl}",
                         "REVIEW_LLM_PROVIDER=${llmProvider}",
                         "REVIEW_LLM_MODEL=${llmModel}",
                         "USE_INLINE_AGENT=${useInlineAgent}",
@@ -86,7 +90,7 @@ pipeline {
                         sh '''
                             set -euo pipefail
                             if [ "$USE_INLINE_AGENT" = "true" ] || [ "$USE_INLINE_AGENT" = "1" ]; then
-                                export SCM_PROVIDER=gitea SCM_URL=http://gitea:3000 SCM_TOKEN="$SCM_TOKEN"
+                                export SCM_PROVIDER="$REVIEW_SCM_PROVIDER" SCM_URL="$REVIEW_SCM_URL" SCM_TOKEN="$SCM_TOKEN"
                                 export LLM_PROVIDER="$REVIEW_LLM_PROVIDER" LLM_MODEL="$REVIEW_LLM_MODEL"
                                 code-review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA" --print-findings
                             else

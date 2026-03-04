@@ -61,7 +61,7 @@ jobs:
           context: .
           file: docker/Dockerfile.agent
           push: true
-          tags: >
+          tags: |
             ${{ steps.repo_name.outputs.repo }}:${{ github.event.inputs.image_tag }}
             ${{ github.event.inputs.push_latest == 'true' && format('{0}:latest', steps.repo_name.outputs.repo) || '' }}
 
