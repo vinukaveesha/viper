@@ -65,7 +65,8 @@ docker compose up -d --build
 **How values are provided**
 - `SCM_TOKEN` and `GOOGLE_API_KEY` come from Jenkins **Credentials**.
 - `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, and `SCM_HEAD_SHA` come from the webhook trigger mappings below.
-- `.env` is only used by Docker Compose to substitute values in `docker-compose.yml`.
+- `SCM_PROVIDER` and `SCM_URL` are implied by this Docker stack: the Jenkinsfile defaults to `SCM_PROVIDER=gitea` and `SCM_URL=http://gitea:3000` (the internal hostname from `docker-compose.yml`), so you usually do not need to set them manually here.
+- `.env` is only used by Docker Compose to substitute values in `docker-compose.yml`. If you later run Jenkins outside this stack or against a different SCM (GitHub/GitLab/Bitbucket), follow [Jenkins (existing installation)](JENKINS-EXISTING.md) to set `SCM_PROVIDER` / `SCM_URL` explicitly.
 
 ---
 

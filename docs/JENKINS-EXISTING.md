@@ -2,7 +2,7 @@
 
 This guide is for teams that **already run Jenkins** (on-prem or in the cloud) and want to add the code-review agent. You do **not** need the Docker Compose stack from the [Quick Start](QUICKSTART.md); you only add a pipeline job and credentials to your current Jenkins.
 
-Supported SCMs: **Gitea**, **GitHub**, **GitLab**, **Bitbucket Cloud**, and **Bitbucket Data Center**. Most setups use one SCM. If yours is **Bitbucket Data Center** (or Server), follow [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for credential ID and webhook setup; otherwise use this guide. If you do have multiple SCMs in your team, you can setup multiple pipelines with the same jenkins file but different settings to support them all.
+Supported SCMs: **Gitea**, **GitHub**, **GitLab**, **Bitbucket Cloud**, and **Bitbucket Data Center**. Most setups use one SCM.  If you do have multiple SCMs in your team, you can setup multiple pipelines with the same jenkins file but different settings to support them all. If your SCM is **Bitbucket Data Center** (or Server), follow [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for credential ID and webhook setup; otherwise use this guide.
 
 ---
 
@@ -20,12 +20,20 @@ Supported SCMs: **Gitea**, **GitHub**, **GitLab**, **Bitbucket Cloud**, and **Bi
 
 ## 1. Create the pipeline job
 
-1. In Jenkins: **New Item** → **Pipeline** (e.g. name: `code-review`). If you use **folder-scoped credentials** (Step 2, Option A), create the folder first, then **New Item** from within that folder so the job can use the folder’s credentials.
-2. **Pipeline** section:
+Create a **Pipeline** job for code review (e.g. name: `code-review`). The simplest path is:
+
+1. **New Item** → **Pipeline** (from the dashboard, or inside a folder if you already use folders).
+2. Configure the job as below.
+
+You can later move the job into a folder (open the job → **Move** → pick the folder) if you decide to use folder-scoped credentials.
+
+Then configure the pipeline:
+
+1. **Pipeline** section:
    - Choose **Pipeline script from SCM**.
    - Point **SCM** to this repository (Git URL and branch).
    - Set **Script Path** to `docker/jenkins/Jenkinsfile`.
-3. Do **not** define `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`, or `PR_ACTION` as parameters in the UI when using webhooks—the Jenkinsfile declares them and the Generic Webhook Trigger fills them.
+2. Do **not** define `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`, or `PR_ACTION` as parameters in the UI when using webhooks—the Jenkinsfile declares them and the Generic Webhook Trigger fills them.
 
 If you prefer to paste the script: **Pipeline script** and copy the contents of `docker/jenkins/Jenkinsfile` from this repo.
 
@@ -37,10 +45,10 @@ You can store credentials **globally** (visible to all jobs) or **per folder** (
 
 ### Option A – Pipeline-specific (recommended)
 
-1. Create a **Folder**: **New Item** → **Folder** (e.g. name: `code-review`).
-2. Open the folder → **Credentials** (in the folder’s left menu). If you don’t see it, the **Folders** plugin may need to be installed (**Manage Jenkins → Plugins**).
-3. **Add Credentials** → Kind: **Secret text**. Create the credentials in the table below **in this folder**.
-4. Create your **Pipeline** job **inside this folder** (New Item from within the folder). The job will resolve credentials from the folder.
+1. Create a **Folder** (if you don’t have one yet): **New Item** → **Folder** (e.g. name: `code-review`).
+2. Ensure the **pipeline job lives inside this folder**. If you created it on the main dashboard, **move it**: open the job → **Move** (left sidebar) → select the folder → **Move**.
+3. Open the folder → **Credentials** (in the folder’s left menu). If you don’t see it, install the **Folders** plugin (**Manage Jenkins → Plugins**).
+4. On the **Folder** credentials page, click the **Global** domain row, then use **Add credentials** (typically in the left sidebar or page actions). Choose **Kind: Secret text** and create the credentials in the table below in this folder. Jobs in this folder will use them.
 
 ### Option B – Global
 
@@ -55,9 +63,15 @@ If your SCM is **Bitbucket Data Center**, use the same credential ID `SCM_TOKEN`
 
 ---
 
-## 3. Set SCM and LLM environment variables
+## 3. Configure SCM and LLM environment variables
 
-The job must have access to your SCM URL and (optionally) LLM settings. Set them on the **job** or in **Manage Jenkins → System → Global properties → Environment variables**.
+The Jenkinsfile reads SCM and LLM settings from environment variables. At minimum you should set **`SCM_PROVIDER`** and **`SCM_URL`**; you can optionally override **`LLM_PROVIDER`** and **`LLM_MODEL`**.
+
+The simplest path is to set them **globally**:
+
+- **Manage Jenkins → System → Global properties → Environment variables** → add the variables below.
+
+If you prefer, you can also define them per job (for example via an `environment { ... }` block in your own Jenkinsfile wrapper), but for most setups global variables are enough.
 
 | Variable | Example (Gitea) | Example (GitHub) |
 |----------|-----------------|------------------|
@@ -65,9 +79,10 @@ The job must have access to your SCM URL and (optionally) LLM settings. Set them
 | `SCM_URL` | `https://gitea.example.com` or `http://gitea:3000` | `https://api.github.com` |
 
 For **GitLab**: `SCM_PROVIDER=gitlab`, `SCM_URL=https://gitlab.com` (or your GitLab URL).  
-For **Bitbucket Cloud**: `SCM_PROVIDER=bitbucket`, `SCM_URL=https://api.bitbucket.org`.
+For **Bitbucket Cloud**: `SCM_PROVIDER=bitbucket`, `SCM_URL=https://api.bitbucket.org`.  
+For **Bitbucket Data Center**: see [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for the `SCM_URL` format.
 
-LLM (optional if you rely on job parameters): `LLM_PROVIDER=gemini`, `LLM_MODEL=gemini-2.5-flash`, and ensure the API key is in credentials (e.g. `GOOGLE_API_KEY`).
+LLM (optional): set `LLM_PROVIDER` and `LLM_MODEL` if you want to override the defaults (for example `LLM_PROVIDER=gemini`, `LLM_MODEL=gemini-2.5-flash`) and ensure the API key is in credentials (e.g. `GOOGLE_API_KEY`).
 
 ---
 
@@ -113,5 +128,8 @@ If you don’t set `USE_INLINE_AGENT=true` and the node has no Docker/Podman, th
 - **Existing Jenkins**: Add one Pipeline job (Script Path: `docker/jenkins/Jenkinsfile`), credentials `SCM_TOKEN` and `GOOGLE_API_KEY`, and SCM/LLM env vars.
 - **Webhooks**: Use Generic Webhook Trigger and your SCM’s webhook UI; if your SCM is Bitbucket Data Center, see [Bitbucket Data Center](BITBUCKET-DATACENTER.md).
 - **Execution**: Use the prebuilt image (or build it) on agents with Docker/Podman, or install the CLI and set `USE_INLINE_AGENT=true` as in [Jenkins without Docker](JENKINS-NO-DOCKER.md).
+
+For a full local stack (Gitea + Jenkins via Docker Compose), see [Quick Start](QUICKSTART.md).
+man, or install the CLI and set `USE_INLINE_AGENT=true` as in [Jenkins without Docker](JENKINS-NO-DOCKER.md).
 
 For a full local stack (Gitea + Jenkins via Docker Compose), see [Quick Start](QUICKSTART.md).
