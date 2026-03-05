@@ -1,6 +1,8 @@
 # Quick Start Guide
 
-Get the code review agent running with Docker Compose (or Podman Compose), Gitea, Jenkins, and auto-triggered PR reviews.
+Follow this guide to get up and running with **Gitea and Jenkins** installed via Docker Compose. This is best for a quick try-out or for contributing to the project.
+
+**Already have Jenkins?** Use [Jenkins (existing installation)](JENKINS-EXISTING.md) to add the code-review pipeline to your current Jenkins instead. 
 
 ---
 
