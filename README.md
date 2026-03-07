@@ -23,10 +23,9 @@ Choose the path that matches your setup.
 
 ## Configuration
 
-- **Environment**: Copy `.env.example` to `.env` and set at least:
-  - **SCM**: `SCM_PROVIDER`, `SCM_URL`, `SCM_TOKEN` (and optionally `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`, `SCM_SKIP_LABEL`, `SCM_SKIP_TITLE_PATTERN`).
-  - **LLM**: `LLM_PROVIDER`, `LLM_MODEL`, and the provider API key (e.g. `GOOGLE_API_KEY`).
-- **Jenkins**: Store secrets as Secret text (`SCM_TOKEN`, `GOOGLE_API_KEY`) in **Manage Jenkins → Credentials** (global) or in a **Folder’s Credentials** so only the code-review pipeline can use them. Set `SCM_PROVIDER` and `SCM_URL` in the job or global env. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start](docs/QUICKSTART.md#configuration).
+**For local testing** (running `code-review review` on your machine or running the container locally), the agent needs **SCM** settings (provider, URL, token) and **LLM** settings (provider, model, API key). Copy `.env.example` to `.env` and set the required values; the file lists every option.  
+
+In **CI/Jenkins**, the pipeline supplies these via credentials and job or global env—you do not need a local `.env`. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start](docs/QUICKSTART.md#configuration).
 
 ---
 

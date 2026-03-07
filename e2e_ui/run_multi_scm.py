@@ -29,7 +29,7 @@ def main() -> None:
             ui.add_credential_in_folder("code-review-gitea", cid, secret)
         ui.create_pipeline_job(
             name="code-review",
-            script_path="docker/jenkins/Jenkinsfile.multi-scm-wrapper",
+            script_path="docker/jenkins/Jenkinsfile",
             repo_url=repo_url,
             branch=branch,
             inside_folder="code-review-gitea",
@@ -48,7 +48,7 @@ def main() -> None:
             ui.add_credential_in_folder("code-review-github", cid, secret)
         ui.create_pipeline_job(
             name="code-review",
-            script_path="docker/jenkins/Jenkinsfile.multi-scm-wrapper",
+            script_path="docker/jenkins/Jenkinsfile",
             repo_url=repo_url,
             branch=branch,
             inside_folder="code-review-github",

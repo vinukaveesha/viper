@@ -1,10 +1,9 @@
-// Single-SCM: uses global environment variables (SCM_PROVIDER, SCM_URL).
-// Set them in Manage Jenkins → System → Global properties → Environment variables.
-// For multiple SCMs, use Jenkinsfile.multi-scm-wrapper per job; see docs/JENKINS-MULTIPLE-SCMS.md.
+// Single-SCM: set SCM_PROVIDER and SCM_URL in Manage Jenkins → Global properties → Environment variables.
+// Multi-SCM: use one job per SCM; same Script Path (this file). Set this job's parameter defaults
+//   SCM_PROVIDER and SCM_URL (e.g. gitea / https://gitea.example.com) in job → Configure → Parameters.
 // Credentials: ID "SCM_TOKEN", ID "GOOGLE_API_KEY" (folder or global).
 //
-// Self-contained; no load. You can use "Pipeline script from SCM" (Script Path: docker/jenkins/Jenkinsfile)
-// or paste this entire file into Jenkins "Pipeline script" (inline).
+// Self-contained; no load. Pipeline script from SCM (Script Path: docker/jenkins/Jenkinsfile) or paste inline.
 
 pipeline {
     agent any
@@ -19,6 +18,8 @@ pipeline {
         string(name: 'SCM_PR_NUM', description: 'PR number / id')
         string(name: 'SCM_HEAD_SHA', description: 'Head commit SHA')
         string(name: 'PR_ACTION', description: 'Webhook action or eventKey')
+        string(name: 'SCM_PROVIDER', defaultValue: '', description: 'SCM provider (optional; for multi-SCM set per-job default here)')
+        string(name: 'SCM_URL', defaultValue: '', description: 'SCM API URL (optional; for multi-SCM set per-job default here)')
         string(name: 'LLM_PROVIDER', defaultValue: 'gemini', description: 'LLM provider')
         string(name: 'LLM_MODEL', defaultValue: 'gemini-2.5-flash', description: 'LLM model')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name')
@@ -29,6 +30,10 @@ pipeline {
         stage('Code Review') {
             steps {
                 script {
+                    // Per-job SCM (multi-SCM): if this job has parameter defaults set, use them
+                    if (params.SCM_PROVIDER?.trim()) env.SCM_PROVIDER = params.SCM_PROVIDER.trim()
+                    if (params.SCM_URL?.trim()) env.SCM_URL = params.SCM_URL.trim()
+
                     def image = env.IMAGE_NAME?.trim() ?: params.IMAGE_NAME?.trim() ?: 'code-review-agent'
                     def projectName = env.COMPOSE_PROJECT_NAME ?: params.COMPOSE_PROJECT_NAME
                     def network = "${projectName}_code-review-net"

@@ -71,7 +71,7 @@ The simplest path is to set them **globally**:
 
 - **Manage Jenkins → System → Global properties → Environment variables** → add the variables below.
 
-Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use the wrapper approach in [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md) instead.
+Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use one job per SCM with the same Jenkinsfile and set each job’s parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md).
 
 | Variable | Example (Gitea) | Example (GitHub) |
 |----------|-----------------|------------------|
