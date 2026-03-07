@@ -12,7 +12,7 @@ Standalone Playwright scripts automate Jenkins configuration for **viper** so yo
 
 1. **Jenkins 2.552** running (e.g. via [Quick Start](QUICKSTART.md) Docker Compose, or your own instance).
 2. **.env** in the repo root. Copy from `.env.example` and set at least:
-   - **Credentials** (same names as Jenkins credential IDs): `SCM_TOKEN`, `GOOGLE_API_KEY`; optional: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
+   - **Credentials** (same names as Jenkins credential IDs): **`SCM_TOKEN`** (or equivalent SCM credential) and **at least one LLM provider key**—`GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`—are required for the documented review flow to succeed.
    - **E2E UI variables** listed below (required/optional per script).
 
 ---
@@ -38,7 +38,7 @@ All configuration for the Playwright scripts is via environment variables (or `.
 | `JENKINS_PASSWORD` | Jenkins login password. |
 | `E2E_UI_REPO_URL` | Repo URL for “Pipeline script from SCM”. Set to the repo Jenkins will clone (e.g. your fork). Use HTTPS in production. |
 
-Credentials used by the scripts (and written into Jenkins) come from the same .env; variable names match Jenkins credential IDs: `SCM_TOKEN`, `GOOGLE_API_KEY`, etc. At least one of these must be set.
+Credentials used by the scripts (and written into Jenkins) come from the same .env; variable names match Jenkins credential IDs. **`SCM_TOKEN`** plus **at least one LLM provider key** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY`) are required for the documented review flow to succeed.
 
 ### Required only for `run_single_scm`
 
