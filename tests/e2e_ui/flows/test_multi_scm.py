@@ -35,7 +35,7 @@ def test_multi_scm_flow(
     repo_url = os.environ.get("E2E_UI_REPO_URL", "https://github.com/your-org/code-review.git")
     jenkins_ui.create_pipeline_job(
         name="code-review",
-        script_path="docker/jenkins/Jenkinsfile.wrapper-gitea",
+        script_path="docker/jenkins/Jenkinsfile.multi-scm-wrapper",
         repo_url=repo_url,
         branch="main",
         inside_folder="code-review-gitea",
@@ -54,7 +54,7 @@ def test_multi_scm_flow(
         jenkins_ui.add_credential_in_folder("code-review-github", cid, secret)
     jenkins_ui.create_pipeline_job(
         name="code-review",
-        script_path="docker/jenkins/Jenkinsfile.wrapper-github",
+        script_path="docker/jenkins/Jenkinsfile.multi-scm-wrapper",
         repo_url=repo_url,
         branch="main",
         inside_folder="code-review-github",

@@ -1,16 +1,10 @@
 // Multi-SCM wrapper: set SCM_PROVIDER and SCM_URL for this job, then run the main pipeline.
-// Use one job per SCM; point the job's "Script Path" to this file (or a copy with a different name).
-//
-// Option A – One wrapper per SCM (recommended): copy this file to e.g. Jenkinsfile.wrapper-gitea,
-//   Jenkinsfile.wrapper-github, Jenkinsfile.wrapper-bitbucket and edit the two lines below per copy.
-//   Then set Pipeline "Script Path" to docker/jenkins/Jenkinsfile.wrapper-gitea (etc.).
-//
-// Option B – Parameterized: use this file as-is and add parameters to the pipeline (see below);
-//   each job must then be triggered with the right parameters or use a default parameter list.
+// Use one job per SCM. Point the job's "Script Path" to this file. Edit the two lines below for this SCM.
+// For another SCM, copy this file (e.g. in your branch), edit the two lines, and set Script Path to the copy.
 //
 // Credentials: use folder-scoped credentials so this job has its own SCM_TOKEN and GOOGLE_API_KEY.
 
-// ----- Edit these for this SCM (or use parameters in Option B) -----
+// ----- Edit these for this SCM -----
 env.SCM_PROVIDER = 'gitea'
 env.SCM_URL = 'https://gitea.example.com'
 
