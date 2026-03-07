@@ -1,23 +1,23 @@
 # Running the code-review agent with multiple SCMs
 
-If your team uses **more than one SCM** (e.g. Gitea and GitHub, or GitHub and Bitbucket Data Center), run **one folder and one pipeline job per SCM**. Each job uses a **wrapper** script that sets `SCM_PROVIDER` and `SCM_URL` for that SCM, then runs the same main pipeline. Global environment variables cannot define different values per job, so the wrapper is required for multi-SCM.
+If your team uses **more than one SCM** (e.g. Gitea and GitHub, or GitHub and Bitbucket Data Center), run **one folder and one pipeline job per SCM**. Each job uses a **wrapper** script that sets `SCM_PROVIDER` and `SCM_URL` for that SCM, then runs the same pipeline. Global environment variables cannot define different values per job, so the wrapper is required for multi-SCM.
 
 ---
 
-## Pipeline script source: SCM required (no copy-paste into Jenkins)
+## Pipeline script source
 
-**You cannot use inline “Pipeline script”** (pasting script into the Jenkins UI) for single-SCM or multi-SCM. Both the main `Jenkinsfile` and the multi-SCM wrapper use `load 'docker/jenkins/mainPipeline.groovy'`, which loads the pipeline logic from a file in the repository. That file is only available when Jenkins checks out the repo. So:
+The **Jenkinsfile** and **Jenkinsfile.multi-scm-wrapper** are each **self-contained** (no external load). You can use **Pipeline script from SCM** with the appropriate Script Path, or paste the entire file into **Pipeline script** (inline).
 
-- **Single SCM**: Use **Pipeline script from SCM** with **Script Path** `docker/jenkins/Jenkinsfile`. See [Jenkins (existing installation)](JENKINS-EXISTING.md).
-- **Multiple SCMs**: Use **Pipeline script from SCM** for each job. Each job must point to a **script file that contains that SCM’s** `SCM_PROVIDER` and `SCM_URL`. Because the repo ships only one wrapper file, you need **one copy of the wrapper per SCM in the repo** (e.g. `Jenkinsfile.wrapper-gitea`, `Jenkinsfile.wrapper-github`), with the two env lines edited in each copy. Then set each job’s **Script Path** to the appropriate file. Details below.
+- **Single SCM**: Use **Script Path** `docker/jenkins/Jenkinsfile` (from SCM) or paste the contents of that file. See [Jenkins (existing installation)](JENKINS-EXISTING.md).
+- **Multiple SCMs**: Each job needs a script that sets **that SCM’s** `SCM_PROVIDER` and `SCM_URL`. Use **one copy of the wrapper per SCM** (in the repo or pasted with the two env lines edited). Details below.
 
 ---
 
-## 1. One wrapper file per SCM (in the repo)
+## 1. One wrapper file per SCM
 
-The repo provides a single wrapper that sets SCM env vars and loads the main pipeline:
+The repo provides a single wrapper that sets SCM env vars and runs the full pipeline (self-contained):
 
-- **`docker/jenkins/Jenkinsfile.multi-scm-wrapper`** – sets `env.SCM_PROVIDER` and `env.SCM_URL`, then `load 'docker/jenkins/mainPipeline.groovy'`.
+- **`docker/jenkins/Jenkinsfile.multi-scm-wrapper`** – sets `env.SCM_PROVIDER` and `env.SCM_URL` at the top, then the same pipeline as single-SCM.
 
 **For multiple SCMs you need one script path per SCM.** Two jobs cannot share the same wrapper file and have different `SCM_PROVIDER`/`SCM_URL` values. So:
 
@@ -84,4 +84,4 @@ Same pattern: create a copy of the wrapper (e.g. `docker/jenkins/Jenkinsfile.wra
 ## 5. Summary
 
 - **Single SCM**: Use **Script Path** `docker/jenkins/Jenkinsfile` and set **global** env vars (`SCM_PROVIDER`, `SCM_URL`) in Jenkins. See [Jenkins (existing installation)](JENKINS-EXISTING.md).
-- **Multiple SCMs**: Use **Pipeline script from SCM** only. Create **one copy of** `Jenkinsfile.multi-scm-wrapper` **in the repo per SCM** (e.g. `Jenkinsfile.wrapper-gitea`, `Jenkinsfile.wrapper-github`), edit the two env lines in each copy, commit and push. Point each job’s **Script Path** to the wrapper file for that SCM. Use folder-scoped credentials and one webhook URL per job. Inline “Pipeline script” (paste) is not supported for single- or multi-SCM because the pipeline loads `mainPipeline.groovy` from the repo.
+- **Multiple SCMs**: Create **one copy of** `Jenkinsfile.multi-scm-wrapper` **per SCM** (e.g. in the repo as `Jenkinsfile.wrapper-gitea`, `Jenkinsfile.wrapper-github`, or paste into inline script with the two env lines edited). Point each job’s **Script Path** to that wrapper (or use inline script). Use folder-scoped credentials and one webhook URL per job. Pipelines are self-contained; SCM checkout is optional.

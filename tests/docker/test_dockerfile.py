@@ -36,15 +36,10 @@ def test_jenkinsfile_exists():
 
 
 def test_jenkinsfile_runs_agent():
-    # Main Jenkinsfile loads the pipeline; run/agent logic lives in mainPipeline.groovy
+    # Jenkinsfile is self-contained (no load); contains the full pipeline and runs the agent
     jenkinsfile = REPO_ROOT / "docker" / "jenkins" / "Jenkinsfile"
-    main_pipeline = REPO_ROOT / "docker" / "jenkins" / "mainPipeline.groovy"
     assert jenkinsfile.is_file()
-    assert main_pipeline.is_file()
-    jf_content = jenkinsfile.read_text()
-    mp_content = main_pipeline.read_text()
-    assert "mainPipeline" in jf_content or "load" in jf_content
-    # Pipeline runs agent via container (docker or podman, possibly via runtime auto-detect)
-    assert "review" in mp_content
-    assert " run " in mp_content
-    assert "docker" in mp_content or "podman" in mp_content or "runtime" in mp_content
+    content = jenkinsfile.read_text()
+    assert "pipeline {" in content
+    assert "REVIEW_IMAGE" in content or "code-review" in content
+    assert "docker" in content or "podman" in content or "runtime" in content

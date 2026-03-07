@@ -35,7 +35,7 @@ Then configure the pipeline:
    - Set **Script Path** to `docker/jenkins/Jenkinsfile`.
 2. Do **not** define `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`, or `PR_ACTION` as parameters in the UI when using webhooks—the Jenkinsfile declares them and the Generic Webhook Trigger fills them.
 
-Use **Pipeline script from SCM** (not inline **Pipeline script**): the Jenkinsfile loads `docker/jenkins/mainPipeline.groovy` from the repo, so the pipeline depends on SCM checkout. Pasting only the Jenkinsfile into inline script would fail because the loaded file would not be available.
+The pipeline is **self-contained** in `docker/jenkins/Jenkinsfile` (no external load). Use **Pipeline script from SCM** with **Script Path** `docker/jenkins/Jenkinsfile`, or paste the entire contents of that file into **Pipeline script** (inline) if you prefer not to use SCM for the job.
 
 ---
 
@@ -71,7 +71,7 @@ The simplest path is to set them **globally**:
 
 - **Manage Jenkins → System → Global properties → Environment variables** → add the variables below.
 
-Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The main pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use the wrapper approach in [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md) instead.
+Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use the wrapper approach in [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md) instead.
 
 | Variable | Example (Gitea) | Example (GitHub) |
 |----------|-----------------|------------------|
