@@ -98,7 +98,8 @@ pipeline {
                             "USE_INLINE_AGENT=${useInlineAgent}",
                         ]) {
                             sh '''
-                                set -euo pipefail
+                                set -eu
+                                set -o pipefail 2>/dev/null || true
                                 if [ "$USE_INLINE_AGENT" = "true" ] || [ "$USE_INLINE_AGENT" = "1" ]; then
                                     export SCM_PROVIDER="$REVIEW_SCM_PROVIDER" SCM_URL="$REVIEW_SCM_URL" SCM_TOKEN="$SCM_TOKEN"
                                     export LLM_PROVIDER="$REVIEW_LLM_PROVIDER" LLM_MODEL="$REVIEW_LLM_MODEL"
