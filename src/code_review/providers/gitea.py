@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from code_review.diff.position import get_diff_hunk_for_line
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -112,21 +113,35 @@ class GiteaProvider(ProviderInterface):
         comments: list[InlineComment],
         head_sha: str = "",
     ) -> None:
-        """Post inline review comments. Convert internal InlineComment to Gitea API payload."""
+        """Post inline review comments. Convert internal InlineComment to Gitea API payload.
+
+        Gitea shows comments in the diff (Files changed) when each comment has valid path,
+        new_position (line in new file), and commit_id. We fetch the PR diff and include
+        diff_hunk per comment when possible so the UI can pin the comment to the diff section.
+        """
         if not comments:
             return
-        # Gitea CreatePullReview: body, event (APPROVED/REQUEST_CHANGES/COMMENT), comments.
-        # Each comment: path, body, old_position (old file) / new_position (new file) in the diff.
-        # Our InlineComment.line is the 1-based line in the new file, so we always use new_position.
-        review_comments = [
-            {
-                "path": c.path,
+        diff_text: str | None = None
+        try:
+            diff_text = self.get_pr_diff(owner, repo, pr_number)
+        except Exception:
+            pass
+        review_comments: list[dict[str, Any]] = []
+        for c in comments:
+            path_norm = (c.path or "").lstrip("/")
+            if not path_norm:
+                path_norm = c.path or ""
+            item: dict[str, Any] = {
+                "path": path_norm,
                 "body": c.body,
                 "old_position": 0,
-                "new_position": c.line,
+                "new_position": int(c.line),
             }
-            for c in comments
-        ]
+            if diff_text:
+                hunk = get_diff_hunk_for_line(diff_text, c.path, c.line)
+                if hunk:
+                    item["diff_hunk"] = hunk
+            review_comments.append(item)
         payload: dict[str, Any] = {
             "body": "Code review comments",
             "event": "COMMENT",
