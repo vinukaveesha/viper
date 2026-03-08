@@ -17,13 +17,13 @@ Choose the path that matches your setup.
 | **Your SCM is Bitbucket Data Center** | **[Bitbucket Data Center](docs/BITBUCKET-DATACENTER.md)** — same credential `SCM_TOKEN`, Bitbucket webhook JSONPaths, and env. |
 | **You use multiple SCMs** (e.g. Gitea + GitHub) | **[Jenkins with multiple SCMs](docs/JENKINS-MULTIPLE-SCMS.md)** — one folder and pipeline per SCM, same Jenkinsfile. |
 | **Automate Jenkins setup** (Playwright, Jenkins 2.552) | **[E2E UI: Playwright Jenkins flows](docs/E2E-UI-JENKINS.md)** — run standalone scripts for single-SCM or multi-SCM; secrets from `.env`. |
-| **Develop or test locally** (any SCM) | **[Development testing](docs/DEV_TESTING.md)** — run `code-review review` directly; **[Developer guide](docs/DEVELOPER_GUIDE.md)** — architecture and extension points. |
+| **Develop or test locally** (any SCM) | **[Development testing](docs/DEV_TESTING.md)** — run `code-review` directly; **[Developer guide](docs/DEVELOPER_GUIDE.md)** — architecture and extension points. |
 
 ---
 
 ## Configuration
 
-**For local testing** (running `code-review review` on your machine or running the container locally), the agent needs **SCM** settings (provider, URL, token) and **LLM** settings (provider, model, API key). Copy `.env.example` to `.env` and set the required values; the file lists every option.  
+**For local testing** (running `code-review` on your machine or running the container locally), the agent needs **SCM** settings (provider, URL, token) and **LLM** settings (provider, model, API key). Copy `.env.example` to `.env` and set the required values; the file lists every option.  
 
 In **CI/Jenkins**, the pipeline supplies these via credentials and job or global env—you do not need a local `.env`. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start](docs/QUICKSTART.md#configuration).
 
@@ -37,7 +37,7 @@ In **CI/Jenkins**, the pipeline supplies these via credentials and job or global
   Run with `SCM_*` and `LLM_*` (and `GOOGLE_API_KEY`) set in the environment.
 - **CLI (no container)**  
   Install with `pip install -e .` (or from wheel/PyPI), then:  
-  `code-review review --owner <owner> --repo <repo> --pr <n> --head-sha <sha>`  
+  `code-review --owner <owner> --repo <repo> --pr <n> --head-sha <sha>`  
   Same env vars; see [Jenkins without Docker](docs/JENKINS-NO-DOCKER.md) for Jenkins inline usage.
 
 **Log level**  
@@ -53,12 +53,12 @@ By default the CLI is quiet. To see progress (files fetched, agent run, comments
 
 ```bash
 # Progress messages (e.g. "Fetched diff, 3 files", "Posted 2 comments")
-CODE_REVIEW_LOG_LEVEL=INFO code-review review --owner myorg --repo myrepo --pr 5 --head-sha abc123
+CODE_REVIEW_LOG_LEVEL=INFO code-review --owner myorg --repo myrepo --pr 5 --head-sha abc123
 
 # Or put in .env and source it
 # CODE_REVIEW_LOG_LEVEL=INFO
 source .env
-code-review review --owner myorg --repo myrepo --pr 5 --head-sha abc123
+code-review --owner myorg --repo myrepo --pr 5 --head-sha abc123
 ```
 
 See [Developer guide §6.3 Logging](docs/DEVELOPER_GUIDE.md#63-logging) for details.

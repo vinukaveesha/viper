@@ -23,6 +23,6 @@ RUN adduser --disabled-password --gecos "" --uid 1000 appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-# No long-running process; Jenkins (or other CI) invokes: code-review review
+# No long-running process; Jenkins (or other CI) invokes: code-review
 ENTRYPOINT ["code-review"]
 CMD ["review"]

@@ -40,7 +40,7 @@ Design principles:
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  CLI (__main__.py)                                                       │
-│  code-review review --owner X --repo Y --pr N [--head-sha SHA]           │
+│  code-review --owner X --repo Y --pr N [--head-sha SHA]                   │
 └─────────────────────────────────────┬───────────────────────────────────┘
                                       │
                                       ▼
@@ -87,7 +87,7 @@ Design principles:
 ```
 src/code_review/
 ├── __init__.py
-├── __main__.py              # CLI: Typer app, review command → run_review()
+├── __main__.py              # CLI: Typer app → run_review()
 ├── config.py                 # SCMConfig, LLMConfig (Pydantic Settings); get_scm_config(), get_llm_config()
 ├── models.py                 # get_configured_model(), get_context_window(), get_max_output_tokens()
 ├── runner.py                 # run_review(); orchestration and ADK Runner
@@ -129,7 +129,7 @@ src/code_review/
 
 ### 4.1 CLI to Runner
 
-1. User runs: `code-review review --owner myorg --repo myrepo --pr 42 --head-sha abc123` (or sets `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`).
+1. User runs: `code-review --owner myorg --repo myrepo --pr 42 --head-sha abc123` (or sets `SCM_OWNER`, `SCM_REPO`, `SCM_PR_NUM`, `SCM_HEAD_SHA`).
 2. `__main__.py` resolves owner, repo, pr, head_sha from options or env; validates; calls `run_review(owner, repo, pr_number, head_sha, dry_run=..., print_findings=...)`.
 
 ### 4.2 Runner Steps (summary)
@@ -282,10 +282,10 @@ Log level is controlled by **`CODE_REVIEW_LOG_LEVEL`**. Default is `WARNING` (qu
 
    ```bash
    # Progress messages: files fetched, agent run, findings count, comments posted
-   CODE_REVIEW_LOG_LEVEL=INFO code-review review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
+   CODE_REVIEW_LOG_LEVEL=INFO code-review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
 
    # Verbose (debug)
-   CODE_REVIEW_LOG_LEVEL=DEBUG code-review review --owner <owner> --repo <repo> --pr <n>
+   CODE_REVIEW_LOG_LEVEL=DEBUG code-review --owner <owner> --repo <repo> --pr <n>
    ```
 
 2. **In `.env`** (remember to `source .env` or export before running; the app does not load `.env` automatically):
@@ -311,7 +311,7 @@ When the PR diff is large, the runner splits work by file (file-by-file mode). S
 
 ```bash
 # Use 100% of context window for the diff so file-by-file is not used
-LLM_DIFF_BUDGET_RATIO=1.0 code-review review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
+LLM_DIFF_BUDGET_RATIO=1.0 code-review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
 ```
 
 Compare with and without this env var; if you get findings only with `LLM_DIFF_BUDGET_RATIO=1.0`, the issue is file-by-file behaviour. You can leave it at `1.0` for that run or increase `LLM_CONTEXT_WINDOW` so that 25% of it is larger than your typical diff.
@@ -362,7 +362,7 @@ Compare with and without this env var; if you get findings only with `LLM_DIFF_B
 For high-concurrency or multi-tenant scenarios, you can run this package as a **stateless worker** behind an external orchestration service.
 
 - **Worker contract**:
-  - CLI: `code-review review --owner ... --repo ... --pr ... --head-sha ...`
+  - CLI: `code-review --owner ... --repo ... --pr ... --head-sha ...`
   - Env: `SCM_*` and `LLM_*` as documented above.
   - One invocation of `run_review`:
     - Runs a single review for the given PR/head.

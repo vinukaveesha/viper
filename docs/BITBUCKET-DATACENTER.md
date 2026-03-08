@@ -115,7 +115,7 @@ Ensure your environment has Bitbucket Server settings (e.g. source your `.env` o
 Then run (owner = project key, repo = repo slug):
 
 ```bash
-code-review review --owner AN --repo antikythera-examples --pr 3 --print-findings
+code-review --owner AN --repo antikythera-examples --pr 3 --print-findings
 ```
 
 Use `--dry-run` to avoid posting comments.
