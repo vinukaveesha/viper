@@ -683,10 +683,11 @@ class ReviewOrchestrator:
             for file_path in paths:
                 file_session_id = f"{owner}/{repo}/pr-{pr_number}/file/{uuid.uuid4().hex[:12]}"
                 msg = (
-                    f"Review this PR: owner={owner}, repo={repo}, pr_number={pr_number}."
-                    + (f" head_sha={head_sha}." if head_sha else "")
-                    + " Review only this file: "
-                    f"{file_path}. Use get_pr_diff_for_file to fetch its diff."
+                    f"Review exactly one file from this PR. owner={owner}, repo={repo}, pr_number={pr_number}."
+                    + (f" head_sha={head_sha}." if head_sha else " ")
+                    + f" Call get_pr_diff_for_file(owner, repo, pr_number, \"{file_path}\") to get the diff for this file. "
+                    f"Then output a JSON array of findings for this file only. Use path \"{file_path}\" in every finding. "
+                    "If there are no issues in this file, output exactly []."
                 )
                 content = types.Content(role="user", parts=[types.Part(text=msg)])
                 response_text = _run_agent_and_collect_response(
