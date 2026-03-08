@@ -40,6 +40,29 @@ In **CI/Jenkins**, the pipeline supplies these via credentials and job or global
   `code-review review --owner <owner> --repo <repo> --pr <n> --head-sha <sha>`  
   Same env vars; see [Jenkins without Docker](docs/JENKINS-NO-DOCKER.md) for Jenkins inline usage.
 
+**Log level**  
+By default the CLI is quiet. To see progress (files fetched, agent run, comments posted), set the log level before running:
+
+| Level   | When to use |
+|--------|-------------|
+| `INFO` | See progress messages (recommended when debugging). |
+| `DEBUG`| Verbose output. |
+| `WARNING` | Default; only warnings and errors. |
+
+**Examples:**
+
+```bash
+# Progress messages (e.g. "Fetched diff, 3 files", "Posted 2 comments")
+CODE_REVIEW_LOG_LEVEL=INFO code-review review --owner myorg --repo myrepo --pr 5 --head-sha abc123
+
+# Or put in .env and source it
+# CODE_REVIEW_LOG_LEVEL=INFO
+source .env
+code-review review --owner myorg --repo myrepo --pr 5 --head-sha abc123
+```
+
+See [Developer guide §6.3 Logging](docs/DEVELOPER_GUIDE.md#63-logging) for details.
+
 ---
 
 ## Security (CI)

@@ -4,7 +4,13 @@ import os
 
 import typer
 
+from code_review.logging_config import configure_logging
 from code_review.runner import run_review
+
+
+def _ensure_logging() -> None:
+    """Configure logging from CODE_REVIEW_LOG_LEVEL before running."""
+    configure_logging()
 
 app = typer.Typer()
 
@@ -74,6 +80,7 @@ def review(
         )
         raise typer.Exit(1)
 
+    _ensure_logging()
     findings = run_review(
         owner=owner,
         repo=repo,

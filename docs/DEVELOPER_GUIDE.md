@@ -270,7 +270,40 @@ For Bitbucket Data Center webhooks, `SCM_OWNER` is typically set from `$.pullReq
 
 Provider-specific keys (used by ADK/LiteLLM, not by `config.py`): `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`; for Ollama, `OLLAMA_API_BASE` (default `http://localhost:11434`).
 
-### 6.3 Observability
+### 6.3 Logging
+
+Log level is controlled by **`CODE_REVIEW_LOG_LEVEL`**. Default is `WARNING` (quiet). Valid values (case-insensitive): `DEBUG`, `INFO`, `WARNING`, `ERROR`.
+
+**How to run with different log levels**
+
+1. **Environment variable** (same for CLI or container):
+
+   ```bash
+   # Progress messages: files fetched, agent run, findings count, comments posted
+   CODE_REVIEW_LOG_LEVEL=INFO code-review review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
+
+   # Verbose (debug)
+   CODE_REVIEW_LOG_LEVEL=DEBUG code-review review --owner <owner> --repo <repo> --pr <n>
+   ```
+
+2. **In `.env`** (remember to `source .env` or export before running; the app does not load `.env` automatically):
+
+   ```
+   CODE_REVIEW_LOG_LEVEL=INFO
+   ```
+
+3. **In CI/Jenkins**: Add `CODE_REVIEW_LOG_LEVEL=INFO` (or `DEBUG`) to the job’s environment or the container’s env so runs produce progress logs.
+
+**What you see at each level**
+
+| Level    | Typical output |
+|----------|-----------------|
+| `INFO`   | "Reviewing owner/repo PR N", "Fetched diff, K file(s)", "Running agent...", "Agent returned M finding(s), L to post", "Posted L comment(s)" (or "Dry run: would post L comment(s)"). |
+| `DEBUG`  | Same as INFO plus verbose library and internal messages. |
+| `WARNING`| Only warnings and errors (default). |
+| `ERROR`  | Only errors. |
+
+### 6.4 Observability
 
 - **Prometheus**: `CODE_REVIEW_METRICS=prometheus` or `CODE_REVIEW_PROMETHEUS=1`; optional deps: `pip install -e ".[observability]"`. Use `code_review.observability.get_prometheus_registry()` to expose `/metrics`.
 - **OpenTelemetry**: `CODE_REVIEW_TRACING=otel` or `CODE_REVIEW_OTEL=1`; set `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` for export.

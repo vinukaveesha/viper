@@ -829,6 +829,13 @@ class ReviewOrchestrator:
         run_handle = observability.start_run(trace_id)
 
         cfg, llm_cfg, provider = self._load_config_and_provider()
+        logger.info(
+            "Reviewing %s/%s PR %s (provider=%s)",
+            owner,
+            repo,
+            pr_number,
+            cfg.provider,
+        )
 
         skip_result = self._determine_skip_reason(
             provider, cfg, owner, repo, pr_number, trace_id, start_time, run_handle
@@ -858,13 +865,16 @@ class ReviewOrchestrator:
             run_handle,
         )
         if idempotency_result is not None:
+            logger.info("Skipping run (idempotent: same head/config already reviewed)")
             return idempotency_result
 
         pr_info_for_metadata = provider.get_pr_info(owner, repo, pr_number)
 
         _, paths, full_diff = self._fetch_pr_files_and_diffs(provider, owner, repo, pr_number)
         paths = self._build_ignore_set_and_filter_files(paths)
+        logger.info("Fetched diff, %d file(s) to review", len(paths))
         if not paths:
+            logger.info("No files to review, skipping")
             return self._record_observability_and_build_result(
                 trace_id,
                 owner,
@@ -891,6 +901,10 @@ class ReviewOrchestrator:
 
         diff_budget = int(get_context_window() * DIFF_TOKEN_BUDGET_RATIO)
         use_file_by_file = _estimate_tokens(full_diff) > diff_budget
+        if use_file_by_file:
+            logger.info("Running agent on %d file(s) (file-by-file)", len(paths))
+        else:
+            logger.info("Running agent (single shot)")
 
         all_findings = self._run_agent_and_collect_findings(
             runner,
@@ -914,6 +928,11 @@ class ReviewOrchestrator:
             resolved_body_set,
             resolved_fp_set,
         )
+        logger.info(
+            "Agent returned %d finding(s), %d to post after filtering",
+            len(all_findings),
+            len(to_post),
+        )
 
         if print_findings:
             for f, _ in to_post:
@@ -931,6 +950,10 @@ class ReviewOrchestrator:
             llm_cfg,
             existing,
         )
+        if dry_run:
+            logger.info("Dry run: would post %d comment(s)", len(to_post))
+        else:
+            logger.info("Posted %d comment(s)", successful_post_count)
 
         return self._record_observability_and_build_result(
             trace_id,
