@@ -107,6 +107,22 @@ class BitbucketServerProvider(ProviderInterface):
                 break
         return p.lstrip("/") or file_path or ""
 
+    def _get_pr_diff_refs(self, owner: str, repo: str, pr_number: int) -> tuple[str | None, str | None]:
+        """Get (from_hash, to_hash) for the PR diff. Used for inline comment anchors.
+        Returns (None, None) if the PR cannot be read or hashes are missing."""
+        try:
+            pr_path = self._path(owner, repo, "pull-requests", str(pr_number))
+            data = self._get(pr_path)
+            if not isinstance(data, dict):
+                return (None, None)
+            from_ref = data.get("fromRef") or {}
+            to_ref = data.get("toRef") or {}
+            from_id = (from_ref.get("latestCommit") or {}).get("id") or from_ref.get("id")
+            to_id = (to_ref.get("latestCommit") or {}).get("id") or to_ref.get("id")
+            return (from_id, to_id)
+        except Exception:
+            return (None, None)
+
     def post_review_comments(
         self,
         owner: str,
@@ -115,18 +131,27 @@ class BitbucketServerProvider(ProviderInterface):
         comments: list[InlineComment],
         head_sha: str = "",
     ) -> None:
-        """Post inline comments (Server API: content.raw + anchor path/line).
-        Path is normalized so it matches the diff and comments appear on the file diff view."""
+        """Post inline comments (Server API: text + anchor with path/line/lineType/fileType/refs).
+        Path is normalized; lineType ADDED + fileType TO + fromHash/toHash place comments on the diff."""
+        if not comments:
+            return
         path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
+        from_hash, to_hash = self._get_pr_diff_refs(owner, repo, pr_number)
+        if to_hash is None and head_sha:
+            to_hash = head_sha
         for c in comments:
             anchor_path = self._anchor_path_for_diff(c.path)
-            payload: dict[str, Any] = {
-                "text": c.body,
-                "anchor": {
-                    "path": anchor_path,
-                    "line": c.line,
-                },
+            anchor: dict[str, Any] = {
+                "path": anchor_path,
+                "line": c.line,
+                "lineType": "ADDED",
+                "fileType": "TO",
             }
+            if from_hash and to_hash:
+                anchor["fromHash"] = from_hash
+                anchor["toHash"] = to_hash
+                anchor["diffType"] = "EFFECTIVE"
+            payload = {"text": c.body, "anchor": anchor}
             self._post(path, payload)
 
     def get_existing_review_comments(

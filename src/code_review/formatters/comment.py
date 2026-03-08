@@ -27,6 +27,14 @@ def _strip_leading_tags(text: str) -> str:
     return _LEADING_TAGS_RE.sub("", text).lstrip()
 
 
+def _strip_path_prefixes(text: str) -> str:
+    """Remove dst:// and src:// from path-like text so displayed comments don't show them."""
+    if not text:
+        return text
+    out = text.replace("dst://", "").replace("src://", "")
+    return out
+
+
 def finding_to_comment_body(
     f: FindingV1,
     use_collapsible_prompt: bool = True,
@@ -42,6 +50,7 @@ def finding_to_comment_body(
     label = SEVERITY_LABELS.get(severity_key, f"[{f.severity.title()}]")
 
     body = _strip_leading_tags(f.get_body())
+    body = _strip_path_prefixes(body)
 
     if not body:
         main = label
@@ -50,18 +59,19 @@ def finding_to_comment_body(
 
     # Optionally append block containing an agent fix prompt, when provided.
     if f.agent_fix_prompt:
+        prompt_text = _strip_path_prefixes(f.agent_fix_prompt)
         if use_collapsible_prompt:
             prompt_block = (
                 "\n\n"
                 "<details>\n"
                 "<summary>Prompt for AI Agents</summary>\n\n"
-                f"{f.agent_fix_prompt}\n"
+                f"{prompt_text}\n"
                 "</details>"
             )
         else:
             prompt_block = (
                 "\n\n---\n**Prompt for AI Agents**\n\n"
-                f"{f.agent_fix_prompt}"
+                f"{prompt_text}"
             )
         return main + prompt_block
 
