@@ -78,6 +78,8 @@ Pipeline jobs do not have a “Build Environment” section in the job configura
 | `SCM_PROVIDER` | `gitea` | `github` |
 | `SCM_URL` | `https://gitea.example.com` or `http://gitea:3000` | `https://api.github.com` |
 
+**Note:** The agent rejects `SCM_URL` values that use `localhost` or private IP ranges. Use a hostname (e.g. `http://gitea:3000` when Gitea is the Docker service name) or a public URL.
+
 For **GitLab**: `SCM_PROVIDER=gitlab`, `SCM_URL=https://gitlab.com` (or your GitLab URL).  
 For **Bitbucket Cloud**: `SCM_PROVIDER=bitbucket`, `SCM_URL=https://api.bitbucket.org`.  
 For **Bitbucket Data Center**: see [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for the `SCM_URL` format.
@@ -93,7 +95,7 @@ To run the review when a PR is opened or updated, use the **Generic Webhook Trig
 1. Install **Generic Webhook Trigger** if not already installed: **Manage Jenkins → Plugins**.
 2. In your pipeline job: **Configure → Build Triggers** → enable **Generic Webhook Trigger**.
 3. **Post content parameters**: add the variables and JSONPath expressions for your SCM (see below).
-4. **Optional filter**: Variable `PR_ACTION`, Regexp `^(opened|synchronize)$` (Gitea/GitHub/GitLab) so only open/sync triggers a build.
+4. **Optional filter**: Variable `$PR_ACTION`, Regexp `^(opened|synchronize|synchronized)$` (Gitea/GitHub/GitLab) so only open/sync triggers a build.
 5. Copy the **Webhook URL** from the trigger section and configure it in your SCM (repo **Settings → Webhooks**).
 
 ### Gitea / GitHub / GitLab (similar payloads)

@@ -49,7 +49,7 @@ pipeline {
                     def isBitbucket = (prAction != null && prAction.startsWith('pr:'))
                     def allowedActions = isBitbucket
                         ? ['pr:opened', 'pr:modified', 'pr:from_ref_updated']
-                        : ['opened', 'synchronize']
+                        : ['opened', 'synchronize', 'synchronized']
                     def credId = 'SCM_TOKEN'
                     def scmProvider = isBitbucket ? 'bitbucket' : (env.SCM_PROVIDER ?: 'gitea')
                     def scmUrl = isBitbucket
