@@ -45,14 +45,15 @@ def test_large_pr_file_by_file_no_duplicate_posts(
 
     def capture_run(*, new_message, **kwargs):
         run_calls.append(new_message)
-        # Return one finding for the file mentioned in the message
+        # Return one finding for the file mentioned in the message (runner uses
+        # "Review exactly one file..." and get_pr_diff_for_file(..., "path") / Use path "path")
         text = new_message.parts[0].text if new_message.parts else ""
-        if "Review only this file: a.py" in text:
+        if '"a.py"' in text:
             findings = (
                 '[{"path":"a.py","line":1,"severity":"suggestion","code":"x",'
                 '"message":"Fix a."}]'
             )
-        elif "Review only this file: b.py" in text:
+        elif '"b.py"' in text:
             findings = (
                 '[{"path":"b.py","line":2,"severity":"info","code":"y",'
                 '"message":"Fix b."}]'
