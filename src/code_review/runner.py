@@ -405,6 +405,9 @@ def _parse_findings_json(text: str) -> list[dict]:
 def _findings_from_response(response_text: str) -> list[FindingV1]:
     """Parse response text into validated FindingV1 list. Invalid items skipped."""
     raw = _parse_findings_json(response_text)
+    # Accept single finding as object: model may return {} instead of [{}]
+    if isinstance(raw, dict):
+        raw = [raw]
     findings: list[FindingV1] = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):

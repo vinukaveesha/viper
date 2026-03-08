@@ -303,6 +303,17 @@ Log level is controlled by **`CODE_REVIEW_LOG_LEVEL`**. Default is `WARNING` (qu
 | `WARNING`| Only warnings and errors (default). |
 | `ERROR`  | Only errors. |
 
+**Troubleshooting: "Agent returned 0 finding(s)" in file-by-file mode**
+
+When the PR diff is large, the runner splits work by file (file-by-file mode). Some models return fewer or no findings when given a single file at a time. To force **single-shot** mode (full diff in one request, like a small PR or Gitea run), set a higher diff budget so the full diff fits:
+
+```bash
+# Use 100% of context window for the diff so file-by-file is not used
+LLM_DIFF_BUDGET_RATIO=1.0 code-review review --owner <owner> --repo <repo> --pr <n> [--head-sha <sha>]
+```
+
+Compare with and without this env var; if you get findings only with `LLM_DIFF_BUDGET_RATIO=1.0`, the issue is file-by-file behaviour. You can leave it at `1.0` for that run or increase `LLM_CONTEXT_WINDOW` so that 25% of it is larger than your typical diff.
+
 ### 6.4 Observability
 
 - **Prometheus**: `CODE_REVIEW_METRICS=prometheus` or `CODE_REVIEW_PROMETHEUS=1`; optional deps: `pip install -e ".[observability]"`. Use `code_review.observability.get_prometheus_registry()` to expose `/metrics`.
