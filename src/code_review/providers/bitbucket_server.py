@@ -93,9 +93,13 @@ class BitbucketServerProvider(ProviderInterface):
         seen: set[str] = set()
         result: list[FileInfo] = []
         for hunk in parse_unified_diff(diff_text):
-            if hunk.path and hunk.path not in seen:
-                seen.add(hunk.path)
-                result.append(FileInfo(path=hunk.path, status="modified", additions=0, deletions=0))
+            if not hunk.path:
+                continue
+            path = self._anchor_path_for_diff(hunk.path)
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            result.append(FileInfo(path=path, status="modified", additions=0, deletions=0))
         return result
 
     def _anchor_path_for_diff(self, file_path: str) -> str:
@@ -174,6 +178,25 @@ class BitbucketServerProvider(ProviderInterface):
             resolved=bool(c.get("state") == "RESOLVED"),
         )
 
+    def _comments_from_activities_page(self, data: Any) -> tuple[list[ReviewComment], int | None]:
+        """Parse one activities API page. Returns (comments, next_start or None if no more)."""
+        if not isinstance(data, dict):
+            return [], None
+        values = data.get("values") or []
+        if not isinstance(values, list):
+            return [], None
+        comments = [
+            c
+            for act in values
+            if (c := self._comment_from_activity(act)) is not None
+        ]
+        if data.get("isLastPage", True) or len(values) == 0:
+            return comments, None
+        next_start = data.get("nextPageStart")
+        if next_start is None:
+            return comments, None
+        return comments, next_start
+
     def get_existing_review_comments(
         self, owner: str, repo: str, pr_number: int
     ) -> list[ReviewComment]:
@@ -188,18 +211,8 @@ class BitbucketServerProvider(ProviderInterface):
         max_pages = 500  # safeguard against infinite loop
         for _ in range(max_pages):
             data = self._get(path, params={"start": start, "limit": 100})
-            if not isinstance(data, dict):
-                break
-            values = data.get("values") or []
-            if not isinstance(values, list):
-                break
-            for act in values:
-                comment = self._comment_from_activity(act)
-                if comment is not None:
-                    result.append(comment)
-            if data.get("isLastPage", True) or len(values) == 0:
-                break
-            next_start = data.get("nextPageStart")
+            comments, next_start = self._comments_from_activities_page(data)
+            result.extend(comments)
             if next_start is None or next_start == start:
                 break
             start = next_start

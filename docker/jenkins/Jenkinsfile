@@ -47,15 +47,15 @@ pipeline {
                     def llmModel = params.LLM_MODEL ?: env.LLM_MODEL
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
 
-                    def isBitbucket = (prAction != null && prAction.startsWith('pr:'))
-                    def allowedActions = isBitbucket
-                        ? ['pr:opened', 'pr:modified', 'pr:from_ref_updated']
-                        : ['opened', 'synchronize', 'synchronized']
-                    def credId = 'SCM_TOKEN'
-                    def scmProvider = isBitbucket ? 'bitbucket_server' : (env.SCM_PROVIDER ?: 'gitea')
+                    def scmProvider = env.SCM_PROVIDER ?: 'gitea'
+                    def isBitbucket = (scmProvider == 'bitbucket_server')
                     def scmUrl = isBitbucket
                         ? (env.SCM_URL ?: env.SCM_URL_BITBUCKET ?: '')
                         : (env.SCM_URL ?: 'http://gitea:3000')
+                    def allowedActions = isBitbucket
+                        ? ['pr:opened', 'pr:modified', 'pr:from_ref_updated']
+                        : ['opened', 'reopened', 'synchronize', 'synchronized']
+                    def credId = 'SCM_TOKEN'
                     def unresolvedMarker = isBitbucket ? '$.pullRequest' : '$.pull_request'
 
                     if (prAction && !allowedActions.contains(prAction)) {
