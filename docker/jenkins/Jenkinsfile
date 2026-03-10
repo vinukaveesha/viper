@@ -48,20 +48,26 @@ pipeline {
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
 
                     def scmProvider = env.SCM_PROVIDER ?: 'gitea'
-                    def isBitbucket = (scmProvider == 'bitbucket_server')
+                    // Bitbucket Data Center sends eventKey like pr:opened; infer provider if not set
+                    def isBitbucket = (scmProvider == 'bitbucket_server') || (prAction?.startsWith('pr:'))
+                    if (isBitbucket && scmProvider != 'bitbucket_server') scmProvider = 'bitbucket_server'
                     def scmUrl = isBitbucket
                         ? (env.SCM_URL ?: env.SCM_URL_BITBUCKET ?: '')
                         : (env.SCM_URL ?: 'http://gitea:3000')
+                    // Bitbucket Data Center uses pr:* for all PR eventKeys; allow any pr:* when Bitbucket
                     def allowedActions = isBitbucket
-                        ? ['pr:opened', 'pr:modified', 'pr:from_ref_updated']
+                        ? []  // any pr:* allowed; checked below with startsWith('pr:')
                         : ['opened', 'reopened', 'synchronize', 'synchronized']
                     def credId = 'SCM_TOKEN'
                     def unresolvedMarker = isBitbucket ? '$.pullRequest' : '$.pull_request'
 
-                    if (prAction && !allowedActions.contains(prAction)) {
-                        currentBuild.description = "Skipped PR action: ${prAction}"
-                        echo "Skipping PR action '${prAction}'. Allowed: ${allowedActions.join(', ')}."
-                        return
+                    if (prAction) {
+                        def allowed = isBitbucket ? prAction.startsWith('pr:') : allowedActions.contains(prAction)
+                        if (!allowed) {
+                            currentBuild.description = "Skipped PR action: ${prAction}"
+                            echo "Skipping PR action '${prAction}'. Allowed: ${isBitbucket ? 'any pr:* (Bitbucket)' : allowedActions.join(', ')}."
+                            return
+                        }
                     }
 
                     if (isBitbucket && !scmUrl?.trim()) {
