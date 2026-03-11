@@ -730,12 +730,22 @@ class ReviewOrchestrator:
         Build the findings-only agent, session service, and ADK Runner.
         Returns (session_id, session_service, runner).
 
-        In single-shot mode (use_file_by_file=False) tools are disabled: the full diff
-        is already embedded in the user message, so there is nothing to fetch.  Allowing
-        tools in single-shot mode causes the LLM to make per-file tool calls whose
-        responses accumulate in the session history — every subsequent LLM turn re-bills
-        all prior context, creating triangular token growth that reaches millions of tokens
-        on large PRs with a wide context window.
+        IMPORTANT: this method must be called AFTER determining use_file_by_file,
+        because the mode directly controls tool and instruction configuration:
+
+        - Single-shot mode (use_file_by_file=False): tools are disabled and the
+          SINGLE_SHOT_INSTRUCTION is used.  The full diff is already embedded in
+          the user message — no tools are needed.  Enabling tools here causes the
+          LLM to make per-file tool calls; each call appends to the ADK session
+          history, and every subsequent LLM turn re-bills all prior context
+          (triangular token growth → millions of billed tokens on large PRs).
+          Additionally, FINDINGS_ONLY_INSTRUCTION references tool names that are
+          absent in this mode; Gemini infers it cannot complete the workflow and
+          returns [] (no findings).
+
+        - File-by-file mode (use_file_by_file=True): tools are enabled and
+          FINDINGS_ONLY_INSTRUCTION is used.  The agent calls get_pr_diff_for_file
+          per file, which is the expected workflow.
         """
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService

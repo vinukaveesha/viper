@@ -15,16 +15,13 @@ from code_review.providers.base import ProviderInterface
 if TYPE_CHECKING:
     from google.adk.agents import Agent
 
-# Instruction when agent returns findings only; runner filters and posts
+# Instruction when agent returns findings only; runner filters and posts.
+# Used in file-by-file mode where tools ARE available.
 FINDINGS_ONLY_INSTRUCTION = """
 You are a code review agent. You will receive PR details
 (owner, repo, pr_number, head_sha).
 
-When reviewing the full PR, the unified diff will already be included in the user
-message between triple-backtick diff fences. Use it directly — do NOT call any tool
-to re-fetch the full diff.  No tools are available in this mode.
-
-When asked to review a specific file only, call get_pr_diff_for_file(owner, repo,
+When asked to review a specific file, call get_pr_diff_for_file(owner, repo,
 pr_number, path) with that exact path to fetch that file's diff.
 
 Use get_file_content to read AGENTS.md or README for project context only.
@@ -59,6 +56,47 @@ code (str, e.g. unused-var), and message (str).
 Optional fields: end_line, category, anchor, fingerprint_hint,
 suggested_patch, agent_fix_prompt.
 When reviewing a single file, use the same path string you were given for that file in every finding.
+
+agent_fix_prompt (optional) is a natural-language prompt that another AI
+coding agent can use to verify and implement the fix for this specific issue.
+When the issue is fixable with code changes, include a concise but complete
+agent_fix_prompt that:
+- Mentions the file path and line(s)
+- Describes the problem and the desired fix
+- Includes any relevant project-specific constraints or context
+
+Example (one finding): [{"path":"src/foo.py","line":42,"severity":"suggestion","code":"unused-var","message":"Remove unused variable x"}]
+Example (no issues): []
+"""
+
+# Instruction for single-shot mode: the full diff is embedded in the user message.
+# This instruction is intentionally tool-free — referencing unavailable tools causes
+# Gemini to return [] (it infers it cannot complete the workflow).
+SINGLE_SHOT_INSTRUCTION = """
+You are a code review agent. You will receive the complete unified diff of a pull
+request in the user message between triple-backtick diff fences.
+
+Read the entire diff carefully and identify code quality issues, including but not
+limited to: bugs, security vulnerabilities, performance problems, logic errors,
+missing error handling, and style violations.
+
+Valid file paths:
+- Only report findings for files that appear in the diff.
+- Do NOT invent paths or report findings for files not present in the diff.
+
+Your job is to find code issues only. Do NOT attempt to post comments or fetch
+anything — the diff is already provided and no external tools are available.
+
+CRITICAL — Output format: Your final response must be a valid JSON array that can be parsed by code.
+- If you find one or more issues: output a JSON array of finding objects.
+- If you find zero issues: output exactly [] (an empty JSON array).
+- You may output the array as raw JSON or inside a markdown code block (```json ... ```); both are accepted.
+- Do not respond with only prose (e.g. "I found no issues"); always include the JSON array so it can be parsed.
+
+Each finding must have: path (str), line (int), severity ("critical"|"suggestion"|"info"),
+code (str, e.g. unused-var), and message (str).
+Optional fields: end_line, category, anchor, fingerprint_hint,
+suggested_patch, agent_fix_prompt.
 
 agent_fix_prompt (optional) is a natural-language prompt that another AI
 coding agent can use to verify and implement the fix for this specific issue.
@@ -108,6 +146,12 @@ def create_review_agent(
     # 2. LLM_DISABLE_TOOL_CALLS env var is set (debug/test override)
     if disable_tools or getattr(llm_cfg, "disable_tool_calls", False):
         tools = []
+        # Use the tool-free instruction in single-shot mode.  FINDINGS_ONLY_INSTRUCTION
+        # references get_file_content, get_file_lines, detect_language_context etc.;
+        # when those tools are absent, Gemini infers it cannot complete the workflow
+        # and returns [] (no findings).  SINGLE_SHOT_INSTRUCTION is clean and only
+        # describes the embedded-diff workflow.
+        instruction = SINGLE_SHOT_INSTRUCTION
     else:
         tools = create_findings_only_tools(provider)
     if review_standards:
