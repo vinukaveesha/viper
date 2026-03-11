@@ -20,19 +20,19 @@ OWNER_REPO_PATTERN = r"^[a-zA-Z0-9_.-]+$"
 
 @app.command()
 def review(
-    owner: str = typer.Option(
+    owner: str | None = typer.Option(
         None,
         "--owner",
         "-o",
         help="Repo owner (or set SCM_OWNER)",
     ),
-    repo: str = typer.Option(
+    repo: str | None = typer.Option(
         None,
         "--repo",
         "-r",
         help="Repo name (or set SCM_REPO)",
     ),
-    pr: int = typer.Option(
+    pr: int | None = typer.Option(
         None,
         "--pr",
         "-p",

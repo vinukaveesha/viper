@@ -20,7 +20,7 @@ def test_normalize_anchor():
 def test_content_hash():
     h = content_hash("hello")
     assert len(h) == 16
-    assert h == hashlib.sha256(b"hello").hexdigest()[:16]
+    assert hashlib.sha256(b"hello").hexdigest().startswith(h)
 
 
 def test_surrounding_content_hash():

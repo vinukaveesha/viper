@@ -84,31 +84,46 @@ class BitbucketProvider(ProviderInterface):
         result: list[FileInfo] = []
         while url:
             data = self._get(url)
-            if not isinstance(data, dict):
+            page_files, next_url = self._parse_diffstat_page(data)
+            result.extend(page_files)
+            if not next_url:
                 break
-            values = data.get("values")
-            if isinstance(values, list):
-                for f in values:
-                    if not isinstance(f, dict):
-                        continue
-                    file_path = (
-                        (f.get("new") or {}).get("path") or (f.get("old") or {}).get("path") or ""
-                    )
-                    if not file_path:
-                        continue
-                    raw_status = f.get("status")
-                    if raw_status == "removed":
-                        status = "removed"
-                    elif raw_status == "added":
-                        status = "added"
-                    else:
-                        status = "modified"
-                    result.append(FileInfo(path=file_path, status=status, additions=0, deletions=0))
-            next_url = data.get("next")
-            if not next_url or not isinstance(next_url, str):
-                break
-            url = next_url.strip() or None
+            url = next_url
         return result
+
+    def _parse_diffstat_page(self, data: Any) -> tuple[list[FileInfo], str | None]:
+        """Parse one diffstat page into FileInfo objects and return (files, next_url)."""
+        if not isinstance(data, dict):
+            return [], None
+        values = data.get("values")
+        if not isinstance(values, list):
+            return [], None
+
+        files: list[FileInfo] = []
+        for entry in values:
+            if not isinstance(entry, dict):
+                continue
+            file_path = (
+                (entry.get("new") or {}).get("path")
+                or (entry.get("old") or {}).get("path")
+                or ""
+            )
+            if not file_path:
+                continue
+            raw_status = entry.get("status")
+            if raw_status == "removed":
+                status = "removed"
+            elif raw_status == "added":
+                status = "added"
+            else:
+                status = "modified"
+            files.append(FileInfo(path=file_path, status=status, additions=0, deletions=0))
+
+        next_url = data.get("next")
+        if not next_url or not isinstance(next_url, str):
+            return files, None
+        stripped = next_url.strip()
+        return files, stripped or None
 
     def _anchor_path_for_diff(self, file_path: str) -> str:
         """Normalize path so it matches the PR diff (enables inline comments on the diff view)."""
@@ -156,31 +171,44 @@ class BitbucketProvider(ProviderInterface):
         result: list[ReviewComment] = []
         while url:
             data = self._get(url)
-            if not isinstance(data, dict):
+            page_comments, next_url = self._comments_from_page(data)
+            result.extend(page_comments)
+            if not next_url:
                 break
-            values = data.get("values")
-            if isinstance(values, list):
-                for c in values:
-                    if not isinstance(c, dict):
-                        continue
-                    inline = c.get("inline") or {}
-                    path_str = inline.get("path") or ""
-                    line = int(inline.get("to") or inline.get("from") or 0)
-                    body = (c.get("content") or {}).get("raw") or ""
-                    result.append(
-                        ReviewComment(
-                            id=str(c.get("id", "")),
-                            path=path_str,
-                            line=line,
-                            body=body,
-                            resolved=False,
-                        )
-                    )
-            next_url = data.get("next")
-            if not next_url or not isinstance(next_url, str):
-                break
-            url = next_url.strip() or None
+            url = next_url
         return result
+
+    def _comments_from_page(self, data: Any) -> tuple[list[ReviewComment], str | None]:
+        """Parse one comments page. Returns (comments, next_url)."""
+        if not isinstance(data, dict):
+            return [], None
+        values = data.get("values")
+        if not isinstance(values, list):
+            return [], None
+
+        comments: list[ReviewComment] = []
+        for c in values:
+            if not isinstance(c, dict):
+                continue
+            inline = c.get("inline") or {}
+            path_str = inline.get("path") or ""
+            line = int(inline.get("to") or inline.get("from") or 0)
+            body = (c.get("content") or {}).get("raw") or ""
+            comments.append(
+                ReviewComment(
+                    id=str(c.get("id", "")),
+                    path=path_str,
+                    line=line,
+                    body=body,
+                    resolved=False,
+                )
+            )
+
+        next_url = data.get("next")
+        if not next_url or not isinstance(next_url, str):
+            return comments, None
+        stripped = next_url.strip()
+        return comments, stripped or None
 
     def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post PR-level comment (no inline)."""
