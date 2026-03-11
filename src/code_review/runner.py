@@ -398,6 +398,40 @@ def _post_comments_one_by_one(
     return count
 
 
+def _post_run_marker_comment(
+    provider,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    cfg,
+    llm_cfg,
+    head_sha: str,
+) -> None:
+    """Post a minimal PR-level comment containing the run idempotency marker.
+
+    Called after every non-dry run for providers that do not embed the fingerprint
+    marker in inline comment bodies (omit_fingerprint_marker_in_body=True, e.g.
+    Bitbucket Server).  Without this comment the run_id is never stored anywhere,
+    so _idempotency_key_seen_in_comments can never fire and the runner re-processes
+    the same PR on every CI trigger — even when all inline comments fail with 409.
+
+    A PR-level comment (no anchor) is used so there are no lineType constraints
+    that could cause 409 errors.
+    """
+    run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+    body = format_comment_body_with_marker("", "", AGENT_VERSION, run_id=run_id)
+    try:
+        provider.post_pr_summary_comment(owner, repo, pr_number, body)
+    except Exception as e:
+        logger.warning(
+            "_post_run_marker_comment failed owner=%s repo=%s pr_number=%s: %s",
+            owner,
+            repo,
+            pr_number,
+            e,
+        )
+
+
 def _fingerprint_for_finding(
     f: FindingV1,
     file_lines_by_path: dict[str, list[str]],
@@ -921,23 +955,33 @@ class ReviewOrchestrator:
         full_diff: str = "",
     ) -> int:
         """
-        Auto-resolve stale comments (if supported), then post inline comments and PR summary.
+        Auto-resolve stale comments (if supported), then post inline comments.
         Returns successful_post_count.
         full_diff: used to set line_type (ADDED vs CONTEXT) so Bitbucket Server anchors comments correctly.
         """
         _resolve_stale_comments_if_supported(
             provider, owner, repo, pr_number, existing, to_post, head_sha, dry_run
         )
-        if not dry_run and to_post:
+        if dry_run:
+            return 0
+        count = 0
+        if to_post:
             if not head_sha:
                 raise ValueError(
                     "head_sha is required when posting comments (dry_run=False). "
                     "Provide head_sha or use --dry-run to skip posting."
                 )
-            return _post_inline_comments(
+            count = _post_inline_comments(
                 provider, owner, repo, pr_number, head_sha, to_post, cfg, llm_cfg, full_diff=full_diff
             )
-        return 0
+        # For providers that omit the fingerprint marker from inline comment bodies
+        # (e.g. Bitbucket Server), the run_id is never stored in any posted comment,
+        # so _idempotency_key_seen_in_comments never fires and the runner re-processes
+        # the same PR on every CI trigger.  Post a dedicated PR-level marker comment so
+        # future runs can detect this run and short-circuit before running the agent.
+        if head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
+            _post_run_marker_comment(provider, owner, repo, pr_number, cfg, llm_cfg, head_sha)
+        return count
 
     def _record_observability_and_build_result(
         self,
