@@ -8,7 +8,6 @@ import os
 import re
 import time
 import uuid
-from collections import Counter
 
 from google.genai import types
 
@@ -22,7 +21,7 @@ from code_review.diff.fingerprint import (
     parse_marker_from_comment_body,
     surrounding_content_hash,
 )
-from code_review.diff.parser import iter_new_lines
+from code_review.diff.parser import iter_new_lines, parse_unified_diff
 from code_review.formatters.comment import finding_to_comment_body
 from code_review.models import get_context_window
 from code_review.providers import get_provider
@@ -78,6 +77,26 @@ def _added_lines_in_diff(diff_text: str) -> set[tuple[str, int]]:
     out: set[tuple[str, int]] = set()
     for path, new_ln, _ in iter_new_lines(diff_text):
         out.add((_normalize_path_for_anchor(path), new_ln))
+    return out
+
+
+def _diff_visible_new_lines(diff_text: str) -> set[tuple[str, int]]:
+    """Set of (normalized_path, new_line) for every line visible in the new-file diff.
+
+    Includes both ADDED ('+' prefix) and CONTEXT (' ' prefix) lines — any line
+    shown in the diff's new-file view that an SCM can anchor an inline comment to.
+    Removed ('-' prefix) lines are excluded because they don't appear in the new-file view.
+
+    Used as a guardrail: findings for lines outside this set cannot be placed inline
+    and would appear only as PR-level activity comments on Bitbucket Cloud (and are
+    rejected by GitHub/Gitea position-based APIs).
+    """
+    out: set[tuple[str, int]] = set()
+    for hunk in parse_unified_diff(diff_text):
+        norm_path = _normalize_path_for_anchor(hunk.path)
+        for _content, _old_ln, new_ln in hunk.lines:
+            if new_ln is not None:  # ADDED (old_ln=None) and CONTEXT (old_ln!=None)
+                out.add((norm_path, new_ln))
     return out
 
 
@@ -257,13 +276,6 @@ def _maybe_post_started_review_comment(
         )
 
 
-def _build_pr_summary_body(to_post: list[tuple[FindingV1, str]]) -> str:
-    """Build PR-level summary: counts by severity and link to inline comments (Phase 4.2)."""
-    counts = Counter(f.severity for f, _ in to_post)
-    parts = [f"{count} {str(sev).capitalize()}" for sev, count in sorted(counts.items())]
-    summary = "Code review: " + ", ".join(parts) + "."
-    return summary + "\n\nSee inline comments above."
-
 
 def _resolve_stale_comments_if_supported(
     provider,
@@ -298,7 +310,7 @@ def _resolve_stale_comments_if_supported(
             )
 
 
-def _post_inline_comments_with_fallback(
+def _post_inline_comments(
     provider,
     owner: str,
     repo: str,
@@ -309,7 +321,7 @@ def _post_inline_comments_with_fallback(
     llm_cfg,
     full_diff: str = "",
 ) -> int:
-    """Build inline comments, post batch (or per-comment fallback), then summary. Returns count."""
+    """Build inline comments and post each one individually. Returns successful post count."""
     caps = provider.capabilities()
     run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
     added_set = _added_lines_in_diff(full_diff) if full_diff else set()
@@ -338,36 +350,9 @@ def _post_inline_comments_with_fallback(
                 line_type=line_type,
             )
         )
-    try:
-        provider.post_review_comments(
-            owner, repo, pr_number, comments, head_sha=head_sha
-        )
-        count = len(comments)
-        try:
-            provider.post_pr_summary_comment(
-                owner, repo, pr_number, _build_pr_summary_body(to_post)
-            )
-        except Exception as e:
-            logger.warning(
-                "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
-                owner,
-                repo,
-                pr_number,
-                e,
-            )
-        return count
-    except Exception as e:
-        logger.warning(
-            "post_review_comments (batch) failed owner=%s repo=%s pr_number=%s: %s; "
-            "falling back to per-comment posting",
-            owner,
-            repo,
-            pr_number,
-            e,
-        )
-        return _post_comments_one_by_one(
-            provider, owner, repo, pr_number, head_sha, comments
-        )
+    return _post_comments_one_by_one(
+        provider, owner, repo, pr_number, head_sha, comments
+    )
 
 
 def _post_comments_one_by_one(
@@ -378,26 +363,31 @@ def _post_comments_one_by_one(
     head_sha: str,
     comments: list[InlineComment],
 ) -> int:
-    """Post each comment individually; on failure post as PR summary. Returns count."""
+    """Post each comment individually; skip (warn) on failure. Returns successful count.
+
+    No fallback to PR summary comments: mirrors the tool-based (file-by-file) behaviour
+    where a failed inline comment is simply skipped and the next one is attempted.
+    """
     count = 0
     for c in comments:
         try:
-            provider.post_review_comment(
+            # Use post_review_comments([c]) rather than post_review_comment() so that
+            # provider-specific fields on the InlineComment (e.g. line_type, used by
+            # Bitbucket Server for lineType="ADDED"|"CONTEXT") are preserved.
+            # post_review_comment() in the base class reconstructs InlineComment without
+            # these fields, causing Bitbucket Server to default to lineType="ADDED" for
+            # every line — which results in HTTP 409 for context (unchanged) lines.
+            provider.post_review_comments(
                 owner,
                 repo,
                 pr_number,
-                c.path,
-                c.line,
-                c.body,
-                end_line=c.end_line,
-                suggested_patch=c.suggested_patch,
+                [c],
                 head_sha=head_sha,
             )
             count += 1
         except Exception as e:
             logger.warning(
-                "post_review_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s; "
-                "falling back to PR summary comment",
+                "post_review_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s",
                 owner,
                 repo,
                 pr_number,
@@ -405,25 +395,41 @@ def _post_comments_one_by_one(
                 c.line,
                 e,
             )
-            summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
-            try:
-                provider.post_pr_summary_comment(
-                    owner, repo, pr_number, summary_body
-                )
-                count += 1
-            except Exception as e:
-                logger.error(
-                    "post_pr_summary_comment failed owner=%s repo=%s "
-                    "pr_number=%s path=%s line=%s: %s",
-                    owner,
-                    repo,
-                    pr_number,
-                    c.path,
-                    c.line,
-                    e,
-                    exc_info=True,
-                )
     return count
+
+
+def _post_run_marker_comment(
+    provider,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    cfg,
+    llm_cfg,
+    head_sha: str,
+) -> None:
+    """Post a minimal PR-level comment containing the run idempotency marker.
+
+    Called after every non-dry run for providers that do not embed the fingerprint
+    marker in inline comment bodies (omit_fingerprint_marker_in_body=True, e.g.
+    Bitbucket Server).  Without this comment the run_id is never stored anywhere,
+    so _idempotency_key_seen_in_comments can never fire and the runner re-processes
+    the same PR on every CI trigger — even when all inline comments fail with 409.
+
+    A PR-level comment (no anchor) is used so there are no lineType constraints
+    that could cause 409 errors.
+    """
+    run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+    body = format_comment_body_with_marker("", "", AGENT_VERSION, run_id=run_id)
+    try:
+        provider.post_pr_summary_comment(owner, repo, pr_number, body)
+    except Exception as e:
+        logger.warning(
+            "_post_run_marker_comment failed owner=%s repo=%s pr_number=%s: %s",
+            owner,
+            repo,
+            pr_number,
+            e,
+        )
 
 
 def _fingerprint_for_finding(
@@ -717,16 +723,45 @@ class ReviewOrchestrator:
         return (detected, review_standards)
 
     def _create_agent_and_runner(
-        self, provider, review_standards: str, owner: str, repo: str, pr_number: int
+        self,
+        provider,
+        review_standards: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        use_file_by_file: bool = False,
     ):
         """
         Build the findings-only agent, session service, and ADK Runner.
         Returns (session_id, session_service, runner).
+
+        IMPORTANT: this method must be called AFTER determining use_file_by_file,
+        because the mode directly controls tool and instruction configuration:
+
+        - Single-shot mode (use_file_by_file=False): tools are disabled and the
+          SINGLE_SHOT_INSTRUCTION is used.  The full diff is already embedded in
+          the user message — no tools are needed.  Enabling tools here causes the
+          LLM to make per-file tool calls; each call appends to the ADK session
+          history, and every subsequent LLM turn re-bills all prior context
+          (triangular token growth → millions of billed tokens on large PRs).
+          Additionally, FINDINGS_ONLY_INSTRUCTION references tool names that are
+          absent in this mode; Gemini infers it cannot complete the workflow and
+          returns [] (no findings).
+
+        - File-by-file mode (use_file_by_file=True): tools are enabled and
+          FINDINGS_ONLY_INSTRUCTION is used.  The agent calls get_pr_diff_for_file
+          per file, which is the expected workflow.
         """
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
 
-        agent = create_review_agent(provider, review_standards, findings_only=True)
+        agent = create_review_agent(
+            provider,
+            review_standards,
+            findings_only=True,
+            disable_tools=not use_file_by_file,
+        )
         session_id = f"{owner}/{repo}/pr-{pr_number}/{uuid.uuid4().hex[:12]}"
         session_service = InMemorySessionService()
         runner = Runner(
@@ -920,23 +955,40 @@ class ReviewOrchestrator:
         full_diff: str = "",
     ) -> int:
         """
-        Auto-resolve stale comments (if supported), then post inline comments and PR summary.
+        Auto-resolve stale comments (if supported), then post inline comments.
         Returns successful_post_count.
         full_diff: used to set line_type (ADDED vs CONTEXT) so Bitbucket Server anchors comments correctly.
         """
         _resolve_stale_comments_if_supported(
             provider, owner, repo, pr_number, existing, to_post, head_sha, dry_run
         )
-        if not dry_run and to_post:
+        if dry_run:
+            return 0
+        count = 0
+        if to_post:
             if not head_sha:
                 raise ValueError(
                     "head_sha is required when posting comments (dry_run=False). "
                     "Provide head_sha or use --dry-run to skip posting."
                 )
-            return _post_inline_comments_with_fallback(
+            count = _post_inline_comments(
                 provider, owner, repo, pr_number, head_sha, to_post, cfg, llm_cfg, full_diff=full_diff
             )
-        return 0
+        # For providers that omit the fingerprint marker from inline comment bodies
+        # (e.g. Bitbucket Server), there is no run_id persisted when inline posting
+        # completely fails. In that specific case, post a dedicated PR-level marker
+        # comment so future runs can short-circuit instead of infinite re-processing.
+        #
+        # When at least one inline comment is posted successfully, avoid posting this
+        # marker comment because it appears as a visible, out-of-place activity entry.
+        if (
+            head_sha
+            and to_post
+            and count == 0
+            and provider.capabilities().omit_fingerprint_marker_in_body
+        ):
+            _post_run_marker_comment(provider, owner, repo, pr_number, cfg, llm_cfg, head_sha)
+        return count
 
     def _record_observability_and_build_result(
         self,
@@ -1082,16 +1134,17 @@ class ReviewOrchestrator:
             )
         _, review_standards = self._detect_languages_for_files(paths)
 
-        session_id, session_service, runner = self._create_agent_and_runner(
-            provider, review_standards, owner, repo, pr_number
-        )
-
         diff_budget = int(get_context_window() * DIFF_TOKEN_BUDGET_RATIO)
         use_file_by_file = _estimate_tokens(full_diff) > diff_budget
         if use_file_by_file:
             logger.info("Running agent on %d file(s) (file-by-file)", len(paths))
         else:
             logger.info("Running agent (single shot)")
+
+        session_id, session_service, runner = self._create_agent_and_runner(
+            provider, review_standards, owner, repo, pr_number,
+            use_file_by_file=use_file_by_file
+        )
 
         all_findings = self._run_agent_and_collect_findings(
             runner,
@@ -1127,6 +1180,29 @@ class ReviewOrchestrator:
                         sorted(allowed_normalized),
                     )
             all_findings = filtered_findings
+
+        # Guardrail: only keep findings for lines that are actually visible in the diff.
+        # Comments on lines outside diff hunks cannot be placed inline: Bitbucket Cloud
+        # rejects them (causing fallback to PR-level activity comments) and GitHub/Gitea
+        # reject them via position-based APIs.  In single-shot mode the LLM receives the
+        # full multi-file diff and may report lines that are in the file but outside any
+        # hunk (e.g. unchanged code far from the changed region).  Filtering here ensures
+        # every posted comment appears inline in the diff view.
+        if full_diff:
+            visible_lines = _diff_visible_new_lines(full_diff)
+            if visible_lines:
+                line_filtered: list[FindingV1] = []
+                for f in all_findings:
+                    norm_path = _normalize_path_for_anchor(f.path or "")
+                    if (norm_path, f.line) in visible_lines:
+                        line_filtered.append(f)
+                    else:
+                        logger.debug(
+                            "Dropping finding for line not visible in diff: %s:%d",
+                            f.path,
+                            f.line,
+                        )
+                all_findings = line_filtered
 
         to_post = self._attach_fingerprints_and_filter_findings(
             all_findings,
