@@ -398,7 +398,11 @@ def _post_comments_one_by_one(
     head_sha: str,
     comments: list[InlineComment],
 ) -> int:
-    """Post each comment individually; on failure post as PR summary. Returns count."""
+    """Post each comment individually; skip (warn) on failure. Returns successful count.
+
+    No fallback to PR summary comments: mirrors the tool-based (file-by-file) behaviour
+    where a failed inline comment is simply skipped and the next one is attempted.
+    """
     count = 0
     for c in comments:
         try:
@@ -418,8 +422,7 @@ def _post_comments_one_by_one(
             count += 1
         except Exception as e:
             logger.warning(
-                "post_review_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s; "
-                "falling back to PR summary comment",
+                "post_review_comment failed owner=%s repo=%s pr_number=%s path=%s line=%s: %s",
                 owner,
                 repo,
                 pr_number,
@@ -427,24 +430,6 @@ def _post_comments_one_by_one(
                 c.line,
                 e,
             )
-            summary_body = f"**{c.path}:{c.line}**\n\n{c.body}"
-            try:
-                provider.post_pr_summary_comment(
-                    owner, repo, pr_number, summary_body
-                )
-                count += 1
-            except Exception as e:
-                logger.error(
-                    "post_pr_summary_comment failed owner=%s repo=%s "
-                    "pr_number=%s path=%s line=%s: %s",
-                    owner,
-                    repo,
-                    pr_number,
-                    c.path,
-                    c.line,
-                    e,
-                    exc_info=True,
-                )
     return count
 
 

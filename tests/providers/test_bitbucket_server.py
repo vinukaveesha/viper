@@ -183,3 +183,24 @@ def test_fallback_preserves_line_type_for_bitbucket_server():
     assert first_call_comments[0].line_type == "CONTEXT"
     second_call_comments = calls[1][0][3]
     assert second_call_comments[0].line_type == "ADDED"
+
+
+def test_fallback_no_pr_summary_when_inline_fails():
+    """_post_comments_one_by_one must NOT call post_pr_summary_comment as a fallback.
+
+    When individual inline posting fails, the comment is simply skipped (logged as WARNING).
+    This mirrors the tool-based (file-by-file / multi-shot) behaviour.
+    """
+    from code_review.runner import _post_comments_one_by_one
+
+    provider = MagicMock()
+    provider.post_review_comments.side_effect = RuntimeError("409 Conflict")
+    provider.post_pr_summary_comment = MagicMock()
+
+    comment = InlineComment(path="foo.java", line=8, body="Issue", line_type="CONTEXT")
+    count = _post_comments_one_by_one(provider, "PROJ", "repo", 1, "sha1", [comment])
+
+    # Nothing posted successfully
+    assert count == 0
+    # PR summary fallback must NOT be called
+    provider.post_pr_summary_comment.assert_not_called()

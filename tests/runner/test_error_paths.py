@@ -144,14 +144,14 @@ def test_post_review_comments_batch_fallback_to_per_comment(
 @patch("code_review.runner.get_llm_config")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
-def test_post_review_comment_fallback_to_pr_summary(
+def test_post_review_comment_skipped_not_fallback_to_pr_summary(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """When per-comment posting fails, runner degrades to PR summary comments.
+    """When per-comment inline posting fails, the comment is skipped — no PR summary fallback.
 
-    With the new fallback behaviour, both the batch and the per-comment attempt use
-    post_review_comments([c]).  When both fail, the runner falls back to
-    post_pr_summary_comment.  post_review_comment (base class) is never called.
+    This mirrors the tool-based (file-by-file / multi-shot) behaviour: if a comment cannot
+    be posted inline, a WARNING is logged and the comment is simply dropped.  The runner
+    must NOT call post_pr_summary_comment as a fallback for failed inline comments.
     """
 
     def configure_provider(provider):
@@ -171,16 +171,23 @@ def test_post_review_comment_fallback_to_pr_summary(
         configure_provider,
     )
 
-    # Finding returned; posting falls back to PR summary when inline positions fail.
+    # Finding is returned in the result list (was found by the agent).
     assert len(to_post) == 1
     # post_review_comments is called twice: batch attempt + per-comment fallback.
     assert provider.post_review_comments.call_count == 2
     # post_review_comment (base class) must NOT be called — it would strip line_type.
     provider.post_review_comment.assert_not_called()
-    # There may be an additional "Viper has started a review" comment; assert that
-    # at least one PR-level summary comment was posted and the final one contains
-    # the fallback summary for the failing inline comment.
-    assert provider.post_pr_summary_comment.call_count >= 1
+    # Crucially: no PR summary fallback for the failed inline comment.
+    # (There may still be a "Viper has started a review" summary comment,
+    # but NOT one for the failing inline comment.)
+    for call_args in provider.post_pr_summary_comment.call_args_list:
+        # post_pr_summary_comment(owner, repo, pr_number, body) — body is [3]
+        pos_args = call_args[0] if call_args[0] else ()
+        body = pos_args[3] if len(pos_args) >= 4 else call_args[1].get("body", "")
+        assert "foo.py:2" not in str(body), (
+            "PR summary fallback for inline comment failure must be removed; "
+            f"found unexpected summary body: {body!r}"
+        )
 
 
 @patch("code_review.runner.get_context_window")
