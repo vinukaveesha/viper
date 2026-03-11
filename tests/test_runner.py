@@ -106,15 +106,6 @@ def test_run_review_ignore_list_and_posts_net_new(
     assert "code-review-agent:" in body and "fingerprint=" in body
     assert call_args[1]["head_sha"] == "abc123"
 
-    # Phase 4.2: PR summary comment posted after successful inline post.
-    # The runner may also post an initial "Viper has started a review" comment; assert
-    # that at least one summary comment was made and that the final one contains the
-    # aggregated summary text.
-    assert provider.post_pr_summary_comment.call_count >= 1
-    summary_body = provider.post_pr_summary_comment.call_args_list[-1][0][3]
-    assert "1 Suggestion" in summary_body
-    assert "See inline comments above" in summary_body
-
 
 @patch("code_review.runner.get_context_window")
 @patch("code_review.runner.get_provider")

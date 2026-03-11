@@ -105,23 +105,23 @@ def _exercise_file_by_file_skip(
 @patch("code_review.runner.get_llm_config")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
-def test_post_review_comments_batch_fallback_to_per_comment(
+def test_post_review_comments_always_one_by_one(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """When batch post_review_comments fails, runner falls back to per-comment posting.
+    """Runner always posts comments one-by-one; there is no batch post_review_comments call.
 
-    The fallback calls post_review_comments([c]) (not post_review_comment) so that
-    provider-specific fields like line_type are preserved.  The mock is set up to fail
-    on the first (batch) call and succeed on the second (per-comment) call.
+    Each finding results in exactly one post_review_comments([c]) call so that
+    provider-specific fields like line_type are preserved and one failing comment
+    does not prevent the others from being posted.
     """
 
     def configure_provider(provider):
-        # First call (batch) fails; second call (per-comment fallback) succeeds.
-        provider.post_review_comments.side_effect = [RuntimeError("batch failure"), None]
+        provider.post_review_comments = MagicMock()
         provider.post_pr_summary_comment = MagicMock()
 
     findings_json = (
-        '[{"path":"foo.py","line":1,"severity":"suggestion","code":"x","message":"Fix."}]'
+        '[{"path":"foo.py","line":1,"severity":"suggestion","code":"x","message":"Fix."},'
+        '{"path":"foo.py","line":2,"severity":"critical","code":"y","message":"Bug."}]'
     )
     to_post, provider = _exercise_error_path(
         mock_get_scm_config,
@@ -132,10 +132,14 @@ def test_post_review_comments_batch_fallback_to_per_comment(
         configure_provider,
     )
 
-    # Finding still returned, and posted via the per-comment fallback.
-    assert len(to_post) == 1
-    # post_review_comments is called twice: once for the batch, once for the fallback.
+    # Both findings returned
+    assert len(to_post) == 2
+    # post_review_comments called once per finding (no batch call)
     assert provider.post_review_comments.call_count == 2
+    # Each call posts exactly one comment
+    for call in provider.post_review_comments.call_args_list:
+        comments_arg = call[0][3]
+        assert len(comments_arg) == 1, "each call should post exactly one comment"
     # post_review_comment (base class) must NOT be called — it would strip line_type.
     provider.post_review_comment.assert_not_called()
 
@@ -155,7 +159,7 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
     """
 
     def configure_provider(provider):
-        # All post_review_comments calls fail (batch and per-comment fallback).
+        # All post_review_comments calls fail.
         provider.post_review_comments.side_effect = RuntimeError("inline failure")
         provider.post_pr_summary_comment = MagicMock()
 
@@ -173,8 +177,8 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
 
     # Finding is returned in the result list (was found by the agent).
     assert len(to_post) == 1
-    # post_review_comments is called twice: batch attempt + per-comment fallback.
-    assert provider.post_review_comments.call_count == 2
+    # post_review_comments called once (one comment, one attempt — no batch)
+    assert provider.post_review_comments.call_count == 1
     # post_review_comment (base class) must NOT be called — it would strip line_type.
     provider.post_review_comment.assert_not_called()
     # Crucially: no PR summary fallback for the failed inline comment.

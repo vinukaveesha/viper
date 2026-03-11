@@ -8,7 +8,6 @@ import os
 import re
 import time
 import uuid
-from collections import Counter
 
 from google.genai import types
 
@@ -277,13 +276,6 @@ def _maybe_post_started_review_comment(
         )
 
 
-def _build_pr_summary_body(to_post: list[tuple[FindingV1, str]]) -> str:
-    """Build PR-level summary: counts by severity and link to inline comments (Phase 4.2)."""
-    counts = Counter(f.severity for f, _ in to_post)
-    parts = [f"{count} {str(sev).capitalize()}" for sev, count in sorted(counts.items())]
-    summary = "Code review: " + ", ".join(parts) + "."
-    return summary + "\n\nSee inline comments above."
-
 
 def _resolve_stale_comments_if_supported(
     provider,
@@ -318,7 +310,7 @@ def _resolve_stale_comments_if_supported(
             )
 
 
-def _post_inline_comments_with_fallback(
+def _post_inline_comments(
     provider,
     owner: str,
     repo: str,
@@ -329,7 +321,7 @@ def _post_inline_comments_with_fallback(
     llm_cfg,
     full_diff: str = "",
 ) -> int:
-    """Build inline comments, post batch (or per-comment fallback), then summary. Returns count."""
+    """Build inline comments and post each one individually. Returns successful post count."""
     caps = provider.capabilities()
     run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
     added_set = _added_lines_in_diff(full_diff) if full_diff else set()
@@ -358,36 +350,9 @@ def _post_inline_comments_with_fallback(
                 line_type=line_type,
             )
         )
-    try:
-        provider.post_review_comments(
-            owner, repo, pr_number, comments, head_sha=head_sha
-        )
-        count = len(comments)
-        try:
-            provider.post_pr_summary_comment(
-                owner, repo, pr_number, _build_pr_summary_body(to_post)
-            )
-        except Exception as e:
-            logger.warning(
-                "post_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
-                owner,
-                repo,
-                pr_number,
-                e,
-            )
-        return count
-    except Exception as e:
-        logger.warning(
-            "post_review_comments (batch) failed owner=%s repo=%s pr_number=%s: %s; "
-            "falling back to per-comment posting",
-            owner,
-            repo,
-            pr_number,
-            e,
-        )
-        return _post_comments_one_by_one(
-            provider, owner, repo, pr_number, head_sha, comments
-        )
+    return _post_comments_one_by_one(
+        provider, owner, repo, pr_number, head_sha, comments
+    )
 
 
 def _post_comments_one_by_one(
@@ -969,7 +934,7 @@ class ReviewOrchestrator:
                     "head_sha is required when posting comments (dry_run=False). "
                     "Provide head_sha or use --dry-run to skip posting."
                 )
-            return _post_inline_comments_with_fallback(
+            return _post_inline_comments(
                 provider, owner, repo, pr_number, head_sha, to_post, cfg, llm_cfg, full_diff=full_diff
             )
         return 0

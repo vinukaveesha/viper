@@ -74,12 +74,13 @@ def test_large_pr_file_by_file_no_duplicate_posts(
 
     # File-by-file: two agent runs (one per file)
     assert len(run_calls) == 2
-    provider.post_review_comments.assert_called_once()
-    comments = provider.post_review_comments.call_args[0][3]
-    assert len(comments) == 2
-    path_lines = [(c.path, c.line) for c in comments]
+    # One comment per finding (no batch call)
+    assert provider.post_review_comments.call_count == 2
+    all_comments = [call[0][3][0] for call in provider.post_review_comments.call_args_list]
+    assert len(all_comments) == 2
+    path_lines = [(c.path, c.line) for c in all_comments]
     assert len(path_lines) == len(set(path_lines)), "expected no duplicate (path, line)"
-    paths = {c.path for c in comments}
+    paths = {c.path for c in all_comments}
     assert paths == {"a.py", "b.py"}
 
 
