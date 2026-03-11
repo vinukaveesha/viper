@@ -1,5 +1,6 @@
 """GitLab API provider (merge requests = MR, project id = owner/repo URL-encoded)."""
 
+import logging
 from typing import Any
 from urllib.parse import quote
 
@@ -12,11 +13,13 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    _log_pr_info_warning,
     pr_info_from_api_dict,
 )
 from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
+logger = logging.getLogger(__name__)
 
 
 def _project_id(owner: str, repo: str) -> str:
@@ -249,7 +252,8 @@ class GitLabProvider(ProviderInterface):
             path = self._path(owner, repo, "merge_requests", str(pr_number))
             data = self._get(path)
             return pr_info_from_api_dict(data, "description") if isinstance(data, dict) else None
-        except Exception:
+        except Exception as e:
+            _log_pr_info_warning(logger, owner, repo, pr_number, e)
             return None
 
     def update_pr_description(

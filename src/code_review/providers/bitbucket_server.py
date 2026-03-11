@@ -13,6 +13,7 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    _log_pr_info_warning,
     pr_info_from_api_dict,
 )
 from code_review.providers.safety import truncate_repo_content
@@ -21,6 +22,22 @@ logger = logging.getLogger("code_review")
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 CONTENT_TYPE_JSON = "application/json"
+
+
+def _extract_commit_id(ref: dict) -> str | None:
+    """Extract the commit hash from a Bitbucket Server ref object.
+
+    The Bitbucket Server REST API returns ``latestCommit`` as a plain string
+    hash (e.g. ``"abc123def456..."``) rather than a nested dict.  Earlier code
+    assumed it was a dict with an ``id`` key, which caused:
+    ``'str' object has no attribute 'get'``.
+    """
+    latest = ref.get("latestCommit")
+    if isinstance(latest, str) and latest:
+        return latest
+    if isinstance(latest, dict):
+        return latest.get("id") or None
+    return ref.get("id") or None
 
 
 class BitbucketServerProvider(ProviderInterface):
@@ -148,10 +165,14 @@ class BitbucketServerProvider(ProviderInterface):
                 return (None, None)
             from_ref = data.get("fromRef") or {}
             to_ref = data.get("toRef") or {}
-            from_id = (from_ref.get("latestCommit") or {}).get("id") or from_ref.get("id")
-            to_id = (to_ref.get("latestCommit") or {}).get("id") or to_ref.get("id")
+            from_id = _extract_commit_id(from_ref)
+            to_id = _extract_commit_id(to_ref)
             return (from_id, to_id)
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "_get_pr_diff_refs failed owner=%s repo=%s pr_number=%s: %s",
+                owner, repo, pr_number, e,
+            )
             return (None, None)
 
     def post_review_comments(
@@ -259,7 +280,8 @@ class BitbucketServerProvider(ProviderInterface):
             title = data.get("title", "") or ""
             description = data.get("description", "") or ""
             return PRInfo(title=title, labels=[], description=description)
-        except Exception:
+        except Exception as e:
+            _log_pr_info_warning(logger, owner, repo, pr_number, e)
             return None
 
     def update_pr_description(
