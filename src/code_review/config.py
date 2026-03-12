@@ -102,6 +102,18 @@ class LLMConfig(BaseSettings):
         ),
     )
 
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _normalize_api_key(cls, v: str | SecretStr | None) -> SecretStr | None:
+        """Treat blank API keys as unset and trim accidental surrounding spaces."""
+        if v is None:
+            return None
+        raw = v.get_secret_value() if isinstance(v, SecretStr) else str(v)
+        normalized = raw.strip()
+        if not normalized:
+            return None
+        return SecretStr(normalized)
+
 
 def get_scm_config() -> SCMConfig:
     """Return cached SCM config instance."""

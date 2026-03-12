@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from litellm import AuthenticationError
 
-from tests.conftest import runner_run_async_returning
 from code_review.providers.base import FileInfo, ProviderCapabilities, RateLimitError
+from tests.conftest import runner_run_async_returning
 
 
 def _exercise_error_path(
@@ -308,6 +308,7 @@ def test_file_by_file_authentication_error_is_fatal(
             mock_get_context_window,
             run_async_side_effect,
         )
+    assert call_count[0] == 1
 
 
 @patch("code_review.runner.get_context_window")

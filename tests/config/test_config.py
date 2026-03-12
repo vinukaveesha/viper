@@ -69,6 +69,13 @@ def test_get_llm_config_caches():
     reset_config_cache()
 
 
+def test_llm_config_blank_api_key_normalized_to_none():
+    """Blank LLM_API_KEY should be treated as unset, not as an empty secret."""
+    with patch.dict(os.environ, {"LLM_API_KEY": "   "}, clear=False):
+        cfg = LLMConfig()
+        assert cfg.api_key is None
+
+
 def test_reset_config_cache_clears_both():
     """reset_config_cache() clears SCM and LLM caches so next get_* creates new instances."""
     reset_config_cache()

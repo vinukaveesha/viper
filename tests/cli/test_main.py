@@ -108,8 +108,10 @@ def test_cli_app_invokable_as_main():
     # Typer app with --help exits 0; we just ensure it doesn't raise
     try:
         app(["--help"])
-    except (ClickExit, SystemExit) as e:
-        assert getattr(e, "exit_code", 0) == 0
+    except ClickExit as e:
+        assert e.exit_code == 0
+    except SystemExit as e:
+        assert e.code == 0
 
 
 def test_cli_main_module_entry_point():
@@ -118,7 +120,7 @@ def test_cli_main_module_entry_point():
     import sys
 
     result = subprocess.run(
-        [sys.executable, "-m", "code_review.__main__", "--help"],
+        [sys.executable, "-m", "code_review", "--help"],
         capture_output=True,
         text=True,
         timeout=5,
