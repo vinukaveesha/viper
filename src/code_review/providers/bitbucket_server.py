@@ -25,6 +25,74 @@ MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 CONTENT_TYPE_JSON = "application/json"
 
 
+def _bitbucket_json_diff_to_unified(data: dict) -> str:
+    """Convert a Bitbucket Server JSON diff response to unified diff format.
+
+    Bitbucket Server GET /diff returns a structured JSON object with a ``diffs``
+    array instead of a standard unified diff text.  The JSON has the shape::
+
+        {
+            "diffs": [
+                {
+                    "source":      {"toString": "old/path.java", ...},
+                    "destination": {"toString": "new/path.java", ...},
+                    "hunks": [
+                        {
+                            "sourceLine": 1, "sourceSpan": 3,
+                            "destinationLine": 1, "destinationSpan": 4,
+                            "segments": [
+                                {"type": "CONTEXT", "lines": [{"line": "...", ...}]},
+                                {"type": "ADDED",   "lines": [{"line": "...", ...}]},
+                                {"type": "REMOVED", "lines": [{"line": "...", ...}]},
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+
+    This function converts that structure to the unified diff format expected by
+    :func:`~code_review.diff.parser.parse_unified_diff`.
+    """
+    output: list[str] = []
+    for file_diff in data.get("diffs") or []:
+        source = file_diff.get("source") or {}
+        destination = file_diff.get("destination") or {}
+        src_path = source.get("toString") or "/dev/null"
+        dst_path = destination.get("toString") or "/dev/null"
+
+        # Use the standard a/b prefix convention so parse_unified_diff extracts paths correctly.
+        src_header = "/dev/null" if src_path == "/dev/null" else f"a/{src_path}"
+        dst_header = "/dev/null" if dst_path == "/dev/null" else f"b/{dst_path}"
+
+        # The diff --git header is required by parse_unified_diff to flush the previous
+        # file's hunk before starting a new file.  The path used for the b/ side is
+        # what the parser records as the file path.  For deleted files (no destination)
+        # we use the source path so it is still attributed correctly.
+        effective_path = dst_path if dst_path != "/dev/null" else src_path
+        output.append(f"diff --git a/{effective_path} b/{effective_path}")
+        output.append(f"--- {src_header}")
+        output.append(f"+++ {dst_header}")
+
+        for hunk in file_diff.get("hunks") or []:
+            src_start = hunk.get("sourceLine", 0)
+            src_span = hunk.get("sourceSpan", 0)
+            dst_start = hunk.get("destinationLine", 0)
+            dst_span = hunk.get("destinationSpan", 0)
+            output.append(f"@@ -{src_start},{src_span} +{dst_start},{dst_span} @@")
+            for segment in hunk.get("segments") or []:
+                seg_type = segment.get("type", "CONTEXT")
+                for line_entry in segment.get("lines") or []:
+                    content = line_entry.get("line", "")
+                    if seg_type == "ADDED":
+                        output.append(f"+{content}")
+                    elif seg_type == "REMOVED":
+                        output.append(f"-{content}")
+                    else:  # CONTEXT
+                        output.append(f" {content}")
+    return "\n".join(output)
+
+
 def _extract_commit_id(ref: dict) -> str | None:
     """Extract the commit hash from a Bitbucket Server ref object.
 
@@ -100,10 +168,21 @@ class BitbucketServerProvider(ProviderInterface):
             return r.json() if r.content else None
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
-        """Return unified diff for the PR (.diff endpoint)."""
+        """Return unified diff for the PR (.diff endpoint).
+
+        Bitbucket Server returns a JSON diff object from this endpoint rather
+        than unified diff text.  When a JSON response is detected the structured
+        diff is converted to unified diff format via
+        :func:`_bitbucket_json_diff_to_unified` so the rest of the codebase can
+        parse it normally.
+        """
         path = self._path(owner, repo, "pull-requests", str(pr_number), "diff")
         out = self._get(path)
-        return out if isinstance(out, str) else ""
+        if isinstance(out, str):
+            return out
+        if isinstance(out, dict) and "diffs" in out:
+            return _bitbucket_json_diff_to_unified(out)
+        return ""
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref (raw endpoint with at=ref)."""
