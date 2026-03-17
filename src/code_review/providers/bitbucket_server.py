@@ -101,7 +101,7 @@ class BitbucketServerProvider(ProviderInterface):
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR (.diff endpoint)."""
-        path = self._path(owner, repo, "pull-requests", str(pr_number)) + ".diff"
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "diff")
         out = self._get(path)
         return out if isinstance(out, str) else ""
 
@@ -141,6 +141,8 @@ class BitbucketServerProvider(ProviderInterface):
                 continue
             path = self._anchor_path_for_diff(hunk.path)
             if not path or path in seen:
+                continue
+            if "node_modules" in path:
                 continue
             seen.add(path)
             result.append(FileInfo(path=path, status="modified", additions=0, deletions=0))
