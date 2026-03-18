@@ -35,7 +35,8 @@ def _suppress_third_party_loggers() -> None:
 
     # Suppress google-genai's non-text parts warnings
     genai_logger = logging.getLogger("google_genai.types")
-    genai_logger.addFilter(_filter_non_text_parts_warning)
+    if _filter_non_text_parts_warning not in genai_logger.filters:
+        genai_logger.addFilter(_filter_non_text_parts_warning)
 
 
 def configure_logging(level: str | None = None) -> None:
