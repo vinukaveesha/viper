@@ -6,16 +6,18 @@ from code_review.schemas.findings import FindingV1
 
 # Canonical severity labels for comment body prefix (Phase 4.1)
 SEVERITY_LABELS: dict[str, str] = {
-    "critical": "[Critical]",
-    "suggestion": "[Suggestion]",
-    "info": "[Info]",
+    "high": "[High]",
+    "medium": "[Medium]",
+    "low": "[Low]",
+    "nit": "[Nit]",
 }
 
 # Emoji markers by severity for quick visual scanning in SCM UIs.
 SEVERITY_EMOJIS: dict[str, str] = {
-    "critical": "🛑",
-    "suggestion": "💡",
-    "info": "ℹ️",
+    "high": "🛑",
+    "medium": "⚠️",
+    "low": "💡",
+    "nit": "ℹ️",
 }
 
 # Strip any leading "[Something]" tags the agent may have already added to the body
@@ -50,7 +52,7 @@ def finding_to_comment_body(
     use_collapsible_prompt: bool = True,
 ) -> str:
     """
-    Format a finding as inline comment body with a [Critical]/[Suggestion]/[Info] prefix.
+    Format a finding as inline comment body with a [High]/[Medium]/[Low]/[Nit] prefix.
     Location (path, line, optional end_line) is carried by the runner when posting;
     this returns only the body text.
     When use_collapsible_prompt is False (e.g. Bitbucket), the agent prompt is

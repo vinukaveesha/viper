@@ -63,7 +63,7 @@ CRITICAL — Output format: Your final response must be a valid JSON array that 
 - You may output the array as raw JSON or inside a markdown code block (```json ... ```); both are accepted.
 - Do not respond with only prose (e.g. "I found no issues"); always include the JSON array so it can be parsed.
 
-Each finding must have: path (str), line (int), severity ("critical"|"suggestion"|"info"),
+Each finding must have: path (str), line (int), severity ("high"|"medium"|"low"|"nit"),
 code (str, e.g. unused-var), and message (str).
 Optional fields: end_line, category (e.g. "Correctness", "Security", "Performance",
 "Maintainability", "Tests", "Style"), anchor, fingerprint_hint,
@@ -91,7 +91,7 @@ Example (one finding): [
   {
     "path": "src/foo.py",
     "line": 42,
-    "severity": "suggestion",
+    "severity": "medium",
     "code": "rename-variable",
     "category": "Maintainability",
     "message": "Rename variable foo to user_id for clarity.",
@@ -136,7 +136,7 @@ CRITICAL — Output format: Your final response must be a valid JSON array that 
 - You may output the array as raw JSON or inside a markdown code block (```json ... ```); both are accepted.
 - Do not respond with only prose (e.g. "I found no issues"); always include the JSON array so it can be parsed.
 
-Each finding must have: path (str), line (int), severity ("critical"|"suggestion"|"info"),
+Each finding must have: path (str), line (int), severity ("high"|"medium"|"low"|"nit"),
 code (str, e.g. unused-var), and message (str).
 Optional fields: end_line, category (e.g. "Correctness", "Security", "Performance",
 "Maintainability", "Tests", "Style"), anchor, fingerprint_hint,
@@ -163,7 +163,7 @@ Example (one finding): [
   {
     "path": "src/foo.py",
     "line": 42,
-    "severity": "suggestion",
+    "severity": "medium",
     "code": "rename-variable",
     "category": "Maintainability",
     "message": "Rename variable foo to user_id for clarity.",
