@@ -40,9 +40,9 @@ IMPORTANT — Line numbers:
   hunk headers to determine which absolute line numbers are visible.
 - Only report findings for lines with '+' prefix (added lines) or ' ' prefix
   (context/unchanged lines shown in the diff hunk).
-- Do NOT report findings for lines that are not shown in the diff, even if you
-  can infer their content from surrounding context. Such lines cannot be placed
-  inline in the diff review view.
+- Do NOT report findings for lines that are not shown in the diff. If the exact line
+  containing the issue is outside the visible diff hunk, DO NOT artificially map the
+  issue to a nearby visible line. You must drop the finding entirely.
 
 Valid file paths:
 - Only report findings for files that are actually part of the current PR diff.
@@ -70,7 +70,8 @@ Optional fields: end_line, category (e.g. "Correctness", "Security", "Performanc
 suggested_patch, agent_fix_prompt.
 
 CRITICAL - Placement of suggestions:
-- The `line` MUST be the exact line where the issue occurs, NOT a blank line above it.
+- The `line` MUST be the exact line where the issue occurs, NOT a blank line above it or a nearby line.
+- If the true line for the issue or replacement is not available in the diff, you MUST completely omit the finding. Do NOT shift the `line` to the closest visible line.
 - If you use `suggested_patch`, the `line` (and `end_line` if applicable) MUST exactly cover the lines that your patch replaces. If you omit `end_line`, your `suggested_patch` will replace ONLY the single `line`.
 - Never attach a finding to a blank line or a preceding line if the `suggested_patch` is meant to replace the code below it. Doing so will insert duplicate code.
 - Keep `suggested_patch` focused on the smallest safe, self-contained change. Do not include surrounding unchanged context.
@@ -119,9 +120,9 @@ IMPORTANT — Line numbers:
   hunk headers to determine which absolute line numbers are visible.
 - Only report findings for lines with '+' prefix (added lines) or ' ' prefix
   (context/unchanged lines shown in the diff hunk).
-- Do NOT report findings for lines that are not shown in the diff, even if you can
-  infer their content from surrounding context. Such lines cannot be placed inline
-  in the diff review view.
+- Do NOT report findings for lines that are not shown in the diff. If the exact line
+  containing the issue is outside the visible diff hunk, DO NOT artificially map the
+  issue to a nearby visible line. You must drop the finding entirely.
 
 Valid file paths:
 - Only report findings for files that appear in the diff.
@@ -143,7 +144,8 @@ Optional fields: end_line, category (e.g. "Correctness", "Security", "Performanc
 suggested_patch, agent_fix_prompt.
 
 CRITICAL - Placement of suggestions:
-- The `line` MUST be the exact line where the issue occurs, NOT a blank line above it.
+- The `line` MUST be the exact line where the issue occurs, NOT a blank line above it or a nearby line.
+- If the true line for the issue or replacement is not available in the diff, you MUST completely omit the finding. Do NOT shift the `line` to the closest visible line.
 - If you use `suggested_patch`, the `line` (and `end_line` if applicable) MUST exactly cover the lines that your patch replaces. If you omit `end_line`, your `suggested_patch` will replace ONLY the single `line`.
 - Never attach a finding to a blank line or a preceding line if the `suggested_patch` is meant to replace the code below it. Doing so will insert duplicate code.
 - Keep `suggested_patch` focused on the smallest safe, self-contained change. Do not include surrounding unchanged context.

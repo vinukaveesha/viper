@@ -1044,8 +1044,19 @@ class ReviewOrchestrator:
         if not print_findings:
             return
         if to_post:
+            print("\n" + "=" * 60)
+            print(f"Code Review Findings ({len(to_post)} total)")
+            print("=" * 60)
             for f, _ in to_post:
-                print(f"{f.path}:{f.line} [{f.severity}] {f.get_body()}")
+                line_info = f"{f.line}" if not f.end_line or f.end_line == f.line else f"{f.line}-{f.end_line}"
+                print(f"[{f.severity.upper()}] {f.path}:{line_info}")
+                print(f"Message: {f.get_body()}")
+                if f.suggested_patch:
+                    print("-" * 40)
+                    print("Suggested Patch:")
+                    print(f.suggested_patch)
+                print("=" * 60)
+            print()
         else:
             print("No findings to post.")
 
