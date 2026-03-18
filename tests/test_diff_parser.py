@@ -1,6 +1,10 @@
 """Tests for diff parser."""
 
-from code_review.diff import annotate_diff_with_line_numbers, iter_new_lines, parse_unified_diff
+from code_review.diff import (
+    annotate_diff_with_line_numbers,
+    iter_new_lines,
+    parse_unified_diff,
+)
 
 
 def test_parse_simple_diff():

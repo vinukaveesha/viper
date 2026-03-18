@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-# Compiled once at module level to avoid recompilation on every call.
+# Module-level constant avoids the regex pattern lookup cost on every call.
 _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 

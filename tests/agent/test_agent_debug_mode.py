@@ -236,3 +236,53 @@ def test_instructions_consistent_category_guidance():
             f"SINGLE_SHOT_INSTRUCTION missing category example: {category}"
         )
 
+
+# --- Shared fragment consistency tests ---
+
+
+def test_shared_line_number_rules_appear_in_both_instructions():
+    """Both instructions must contain the shared <L{n}> line-number rule bullets.
+
+    These bullets are extracted into ``_SHARED_LINE_NUMBER_RULES`` to avoid
+    duplication.  Verifying both instructions contain the shared text ensures
+    the composition is correct and a change to the shared fragment propagates
+    to both modes automatically.
+    """
+    from code_review.agent.agent import _SHARED_LINE_NUMBER_RULES
+
+    assert _SHARED_LINE_NUMBER_RULES in FINDINGS_ONLY_INSTRUCTION, (
+        "FINDINGS_ONLY_INSTRUCTION must contain the shared line-number rules fragment"
+    )
+    assert _SHARED_LINE_NUMBER_RULES in SINGLE_SHOT_INSTRUCTION, (
+        "SINGLE_SHOT_INSTRUCTION must contain the shared line-number rules fragment"
+    )
+
+
+def test_shared_format_and_placement_appear_in_both_instructions():
+    """Both instructions must contain the shared output-format and placement rules.
+
+    ``_SHARED_FORMAT_AND_PLACEMENT`` covers output format, finding schema,
+    anchor guidance, and placement rules — all identical in both modes.
+    """
+    from code_review.agent.agent import _SHARED_FORMAT_AND_PLACEMENT
+
+    assert _SHARED_FORMAT_AND_PLACEMENT in FINDINGS_ONLY_INSTRUCTION, (
+        "FINDINGS_ONLY_INSTRUCTION must contain the shared format/placement fragment"
+    )
+    assert _SHARED_FORMAT_AND_PLACEMENT in SINGLE_SHOT_INSTRUCTION, (
+        "SINGLE_SHOT_INSTRUCTION must contain the shared format/placement fragment"
+    )
+
+
+def test_shared_agent_fix_and_examples_appear_in_both_instructions():
+    """Both instructions must contain the shared agent_fix_prompt guidance and examples."""
+    from code_review.agent.agent import _SHARED_AGENT_FIX_AND_EXAMPLES
+
+    assert _SHARED_AGENT_FIX_AND_EXAMPLES in FINDINGS_ONLY_INSTRUCTION, (
+        "FINDINGS_ONLY_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
+    )
+    assert _SHARED_AGENT_FIX_AND_EXAMPLES in SINGLE_SHOT_INSTRUCTION, (
+        "SINGLE_SHOT_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
+    )
+
+
