@@ -77,7 +77,7 @@ def test_extract_skips_fenced_code():
 
 
 def _clear_context_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for key in list(os.environ.keys()):
+    for key in tuple(os.environ):
         if key.startswith("CONTEXT_") or key.startswith("CONTEXT_AWARE"):
             monkeypatch.delenv(key, raising=False)
 

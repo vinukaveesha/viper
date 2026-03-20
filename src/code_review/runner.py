@@ -1434,6 +1434,67 @@ class ReviewOrchestrator:
         # wrong code.  Stripping it degrades gracefully to a plain inline comment.
         return _validate_suggested_patches(line_filtered, full_diff)
 
+    @staticmethod
+    def _build_pr_url(cfg, owner: str, repo: str, pr_number: int) -> str:
+        base_url = cfg.url.rstrip("/")
+        if cfg.provider == "github":
+            return f"{base_url}/{owner}/{repo}/pull/{pr_number}"
+        if cfg.provider == "gitlab":
+            return f"{base_url}/{owner}/{repo}/-/merge_requests/{pr_number}"
+        if cfg.provider == "bitbucket":
+            return f"https://bitbucket.org/{owner}/{repo}/pull-requests/{pr_number}"
+        if cfg.provider == "bitbucket_server":
+            return f"{base_url}/projects/{owner}/repos/{repo}/pull-requests/{pr_number}"
+        return f"{base_url}/{owner}/{repo}/pulls/{pr_number}"
+
+    @staticmethod
+    def _load_commit_messages(provider, owner: str, repo: str, pr_number: int, need_commits: bool) -> list[str]:
+        raw = provider.get_pr_commit_messages(owner, repo, pr_number) if need_commits else []
+        return raw if isinstance(raw, list) else []
+
+    def _build_prompt_suffix(
+        self,
+        provider,
+        cfg,
+        ctx_cfg,
+        app_cfg,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        pr_info_for_metadata,
+        full_diff: str,
+    ) -> tuple[list[object], str | None, str]:
+        need_commits = app_cfg.include_commit_messages_in_prompt or ctx_cfg.enabled
+        commit_messages = self._load_commit_messages(provider, owner, repo, pr_number, need_commits)
+        pr_title = (pr_info_for_metadata.title if pr_info_for_metadata else "") or ""
+        pr_desc = (pr_info_for_metadata.description if pr_info_for_metadata else "") or ""
+        refs = (
+            extract_context_references(
+                cfg.provider,
+                owner,
+                repo,
+                [pr_title, pr_desc, *commit_messages],
+                extract_github=ctx_cfg.github_issues_enabled,
+                extract_jira=ctx_cfg.jira_enabled,
+                extract_confluence=ctx_cfg.confluence_enabled,
+            )
+            if ctx_cfg.enabled
+            else []
+        )
+        context_brief: str | None = None
+        if ctx_cfg.enabled and refs:
+            try:
+                context_brief = build_context_brief_for_pr(ctx_cfg, cfg, refs, full_diff)
+            except ContextAwareFatalError:
+                logger.exception("Context-aware fetch or distillation failed")
+                raise
+        prompt_suffix = _format_review_prompt_supplement(
+            context_brief=context_brief,
+            commit_messages=commit_messages,
+            include_commit_messages=app_cfg.include_commit_messages_in_prompt,
+        )
+        return refs, context_brief, prompt_suffix
+
     def run(self) -> list[FindingV1]:
         """
         Execute the full review flow. Returns list of findings that were posted
@@ -1452,19 +1513,8 @@ class ReviewOrchestrator:
         run_handle = observability.start_run(trace_id)
 
         cfg, llm_cfg, provider = self._load_config_and_provider()
-        
-        base_url = cfg.url.rstrip("/")
-        if cfg.provider == "github":
-            pr_url = f"{base_url}/{owner}/{repo}/pull/{pr_number}"
-        elif cfg.provider == "gitlab":
-            pr_url = f"{base_url}/{owner}/{repo}/-/merge_requests/{pr_number}"
-        elif cfg.provider == "bitbucket":
-            pr_url = f"https://bitbucket.org/{owner}/{repo}/pull-requests/{pr_number}"
-        elif cfg.provider == "bitbucket_server":
-            pr_url = f"{base_url}/projects/{owner}/repos/{repo}/pull-requests/{pr_number}"
-        else:
-            pr_url = f"{base_url}/{owner}/{repo}/pulls/{pr_number}"
-            
+        pr_url = self._build_pr_url(cfg, owner, repo, pr_number)
+
         logger.info(
             "Reviewing %s/%s PR %s (provider=%s) URL: %s",
             owner,
@@ -1542,38 +1592,16 @@ class ReviewOrchestrator:
             )
         _, review_standards = self._detect_languages_for_files(paths)
 
-        need_commits = app_cfg.include_commit_messages_in_prompt or ctx_cfg.enabled
-        _raw_commits = (
-            provider.get_pr_commit_messages(owner, repo, pr_number) if need_commits else []
-        )
-        # Tests and stubs may return a non-list (e.g. MagicMock); coerce defensively.
-        commit_messages = _raw_commits if isinstance(_raw_commits, list) else []
-        pr_title = (pr_info_for_metadata.title if pr_info_for_metadata else "") or ""
-        pr_desc = (pr_info_for_metadata.description if pr_info_for_metadata else "") or ""
-        refs = (
-            extract_context_references(
-                cfg.provider,
-                owner,
-                repo,
-                [pr_title, pr_desc, *commit_messages],
-                extract_github=ctx_cfg.github_issues_enabled,
-                extract_jira=ctx_cfg.jira_enabled,
-                extract_confluence=ctx_cfg.confluence_enabled,
-            )
-            if ctx_cfg.enabled
-            else []
-        )
-        context_brief: str | None = None
-        if ctx_cfg.enabled and refs:
-            try:
-                context_brief = build_context_brief_for_pr(ctx_cfg, cfg, refs, full_diff)
-            except ContextAwareFatalError:
-                logger.exception("Context-aware fetch or distillation failed")
-                raise
-        prompt_suffix = _format_review_prompt_supplement(
-            context_brief=context_brief,
-            commit_messages=commit_messages,
-            include_commit_messages=app_cfg.include_commit_messages_in_prompt,
+        refs, context_brief, prompt_suffix = self._build_prompt_suffix(
+            provider,
+            cfg,
+            ctx_cfg,
+            app_cfg,
+            owner,
+            repo,
+            pr_number,
+            pr_info_for_metadata,
+            full_diff,
         )
         if refs:
             logger.info("context_aware: extracted %d reference(s) from PR text", len(refs))
