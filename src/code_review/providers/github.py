@@ -13,7 +13,9 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    _log_pr_commit_messages_warning,
     _log_pr_info_warning,
+    commit_messages_from_commit_list,
     file_infos_from_pull_file_list,
     pr_info_from_api_dict,
 )
@@ -159,26 +161,9 @@ class GitHubProvider(ProviderInterface):
         try:
             data = self._get(path, params={"per_page": 100})
         except Exception as e:
-            logger.warning(
-                "get_pr_commit_messages failed owner=%s repo=%s pr_number=%s: %s",
-                owner,
-                repo,
-                pr_number,
-                e,
-            )
+            _log_pr_commit_messages_warning(logger, owner, repo, pr_number, e)
             return []
-        if not isinstance(data, list):
-            return []
-        out: list[str] = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            c = item.get("commit")
-            msg = (c.get("message") if isinstance(c, dict) else None) or item.get("message") or ""
-            msg = str(msg).strip()
-            if msg:
-                out.append(msg)
-        return out
+        return commit_messages_from_commit_list(data)
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
         """Return PR title, labels, and description for skip-review and metadata."""
