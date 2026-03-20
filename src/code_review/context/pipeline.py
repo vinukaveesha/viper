@@ -165,7 +165,9 @@ def _build_retrieved_context_text(
             except Exception as e:
                 raise ContextAwareFatalError(f"Context embedding (chunks) failed: {e}") from e
             payload = [
-                (i, ch, embs[i], {"document": label}) for i, ch in enumerate(chunks) if i < len(embs)
+                (i, ch, embs[i], {"document": label})
+                for i, ch in enumerate(chunks)
+                if i < len(embs)
             ]
             store.replace_chunks(conn, did, payload)
         retrieved = store.search_chunks(conn, q_emb, limit=16)
