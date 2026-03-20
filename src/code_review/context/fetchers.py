@@ -17,6 +17,7 @@ from code_review.context.types import ContextReference, ReferenceType
 logger = logging.getLogger(__name__)
 
 _TAG_RE = re.compile(r"<[^>]+>")
+BODY_LABEL = "Body:"
 
 
 def _strip_html_to_text(raw: str) -> str:
@@ -37,6 +38,30 @@ class FetchedDocument:
     metadata: dict[str, Any]
     version: str | None
     external_updated_at: str | None  # ISO8601 from API when available
+
+
+@dataclass(frozen=True)
+class FetchReferenceConfig:
+    github_api_base: str
+    github_token: str
+    gitlab_api_base: str
+    gitlab_token: str
+    jira_base: str
+    jira_email: str
+    jira_token: str
+    confluence_base: str
+    confluence_email: str
+    confluence_token: str
+    ctx_github_enabled: bool
+    ctx_gitlab_enabled: bool
+    ctx_jira_enabled: bool
+    ctx_confluence_enabled: bool
+
+
+def _append_body(lines: list[str], body: str, label: str = BODY_LABEL) -> None:
+    if body:
+        lines.append(label)
+        lines.append(body)
 
 
 def _raise_auth(method: str, url: str, status: int, body: str) -> None:
@@ -82,9 +107,7 @@ def fetch_github_issue(
     body_raw = (data.get("body") or "").strip()
     updated = data.get("updated_at")
     lines = [f"Title: {title}", f"State: {meta.get('state')}", f"Labels: {', '.join(labels)}"]
-    if body_raw:
-        lines.append("Body:")
-        lines.append(body_raw)
+    _append_body(lines, body_raw)
     return FetchedDocument(
         external_id=f"{owner}/{repo}#{issue_number}",
         title=title,
@@ -142,9 +165,7 @@ def fetch_gitlab_issue(
     state = (data.get("state") or "").strip()
     updated = data.get("updated_at")
     lines = [f"Title: {title}", f"State: {state}", f"Labels: {', '.join(labels)}"]
-    if body_raw:
-        lines.append("Body:")
-        lines.append(body_raw)
+    _append_body(lines, body_raw)
     return FetchedDocument(
         external_id=f"{project_path}#{issue_iid}",
         title=title,
@@ -254,7 +275,8 @@ def fetch_confluence_page(
     version_num = str(ver.get("number", "")) if isinstance(ver, dict) else ""
     hist = data.get("history") or {}
     last_up = (hist.get("lastUpdated") or {}).get("when") if isinstance(hist, dict) else None
-    lines = [f"Title: {title}", "Body:", plain]
+    lines = [f"Title: {title}"]
+    _append_body(lines, plain)
     meta = {"type": data.get("type"), "status": data.get("status")}
     return FetchedDocument(
         external_id=page_id,
@@ -269,34 +291,21 @@ def fetch_confluence_page(
 def fetch_reference(
     ref: ContextReference,
     *,
-    github_api_base: str,
-    github_token: str,
-    gitlab_api_base: str,
-    gitlab_token: str,
-    jira_base: str,
-    jira_email: str,
-    jira_token: str,
-    confluence_base: str,
-    confluence_email: str,
-    confluence_token: str,
-    ctx_github_enabled: bool,
-    ctx_gitlab_enabled: bool,
-    ctx_jira_enabled: bool,
-    ctx_confluence_enabled: bool,
+    cfg: FetchReferenceConfig,
 ) -> FetchedDocument | None:
     """Fetch a single reference; returns None if that source is disabled."""
     try:
-        if ref.ref_type == ReferenceType.GITHUB_ISSUE and ctx_github_enabled:
+        if ref.ref_type == ReferenceType.GITHUB_ISSUE and cfg.ctx_github_enabled:
             o, r, n = _parse_github_issue_ref(ref)
-            return fetch_github_issue(github_api_base, github_token, o, r, n)
-        if ref.ref_type == ReferenceType.GITLAB_ISSUE and ctx_gitlab_enabled:
+            return fetch_github_issue(cfg.github_api_base, cfg.github_token, o, r, n)
+        if ref.ref_type == ReferenceType.GITLAB_ISSUE and cfg.ctx_gitlab_enabled:
             proj, iid = _parse_gitlab_issue_ref(ref)
-            return fetch_gitlab_issue(gitlab_api_base, gitlab_token, proj, iid)
-        if ref.ref_type == ReferenceType.JIRA and ctx_jira_enabled:
-            return fetch_jira_issue(jira_base, jira_email, jira_token, ref.external_id)
-        if ref.ref_type == ReferenceType.CONFLUENCE and ctx_confluence_enabled:
+            return fetch_gitlab_issue(cfg.gitlab_api_base, cfg.gitlab_token, proj, iid)
+        if ref.ref_type == ReferenceType.JIRA and cfg.ctx_jira_enabled:
+            return fetch_jira_issue(cfg.jira_base, cfg.jira_email, cfg.jira_token, ref.external_id)
+        if ref.ref_type == ReferenceType.CONFLUENCE and cfg.ctx_confluence_enabled:
             return fetch_confluence_page(
-                confluence_base, confluence_email, confluence_token, ref.external_id
+                cfg.confluence_base, cfg.confluence_email, cfg.confluence_token, ref.external_id
             )
     except ContextAwareAuthError:
         # Auth/credential failures (401/403) are always fatal – re-raise so the runner

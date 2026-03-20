@@ -13,6 +13,24 @@ from code_review.models import get_configured_model
 logger = logging.getLogger(__name__)
 
 
+def _choice_message_text(choice: object) -> str:
+    msg = choice["message"] if isinstance(choice, dict) else getattr(choice, "message", None)
+    content = msg["content"] if isinstance(msg, dict) else getattr(msg, "content", None)
+    if isinstance(content, list):
+        content = " ".join(
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return content.strip() if isinstance(content, str) and content.strip() else ""
+
+
+def _heuristic_query_from_diff(snippet: str) -> str:
+    paths = set(re.findall(r"^[+-]{3} [ab]/(.+)$", snippet, re.MULTILINE))
+    hint = ", ".join(sorted(paths)[:8])
+    return f"Code changes in: {hint}" if hint else "pull request code changes"
+
+
 def build_semantic_query_from_diff(diff_text: str, max_diff_chars: int = 14_000) -> str:
     """Lightweight LLM pass: intent + entities for similarity search."""
     snippet = (diff_text or "")[:max_diff_chars]
@@ -38,17 +56,12 @@ def build_semantic_query_from_diff(diff_text: str, max_diff_chars: int = 14_000)
         )
         choices = (resp["choices"] if isinstance(resp, dict) else getattr(resp, "choices", None)) or []
         if choices:
-            msg = choices[0]["message"] if isinstance(choices[0], dict) else getattr(choices[0], "message", None)
-            text = (msg["content"] if isinstance(msg, dict) else getattr(msg, "content", None))
-            if isinstance(text, list):
-                text = " ".join(b["text"] for b in text if isinstance(b, dict) and b.get("type") == "text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
+            text = _choice_message_text(choices[0])
+            if text:
+                return text
     except Exception as e:
         logger.warning("Semantic query LLM pass failed, falling back to heuristics: %s", e)
-    paths = set(re.findall(r"^[+-]{3} [ab]/(.+)$", snippet, re.MULTILINE))
-    hint = ", ".join(sorted(paths)[:8])
-    return f"Code changes in: {hint}" if hint else "pull request code changes"
+    return _heuristic_query_from_diff(snippet)
 
 
 def chunk_plain_text(text: str, max_chunk_chars: int = 1800, overlap: int = 200) -> list[str]:

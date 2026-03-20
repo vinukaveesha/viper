@@ -7,7 +7,7 @@ import logging
 from code_review.config import ContextAwareReviewConfig, SCMConfig
 from code_review.context.distiller import distill_context_text
 from code_review.context.errors import ContextAwareFatalError
-from code_review.context.fetchers import fetch_reference
+from code_review.context.fetchers import FetchReferenceConfig, fetch_reference
 from code_review.context.rag import (
     build_semantic_query_from_diff,
     chunk_plain_text,
@@ -93,6 +93,22 @@ def _load_context_documents(
 ) -> tuple[list[tuple[str, str]], list[tuple[str, object]]]:
     docs_for_distill: list[tuple[str, str]] = []
     doc_ids_for_rag: list[tuple[str, object]] = []
+    fetch_cfg = FetchReferenceConfig(
+        github_api_base=gh_api,
+        github_token=gh_tok,
+        gitlab_api_base=gl_api,
+        gitlab_token=gl_tok,
+        jira_base=ctx.jira_url,
+        jira_email=jira_email,
+        jira_token=jira_tok,
+        confluence_base=ctx.confluence_url,
+        confluence_email=conf_email,
+        confluence_token=conf_tok,
+        ctx_github_enabled=ctx.github_issues_enabled,
+        ctx_gitlab_enabled=ctx.gitlab_issues_enabled,
+        ctx_jira_enabled=ctx.jira_enabled,
+        ctx_confluence_enabled=ctx.confluence_enabled,
+    )
     conn = store.connect()
     try:
         store.ensure_schema(conn)
@@ -109,20 +125,7 @@ def _load_context_documents(
             else:
                 fetched = fetch_reference(
                     ref,
-                    github_api_base=gh_api,
-                    github_token=gh_tok,
-                    gitlab_api_base=gl_api,
-                    gitlab_token=gl_tok,
-                    jira_base=ctx.jira_url,
-                    jira_email=jira_email,
-                    jira_token=jira_tok,
-                    confluence_base=ctx.confluence_url,
-                    confluence_email=conf_email,
-                    confluence_token=conf_tok,
-                    ctx_github_enabled=ctx.github_issues_enabled,
-                    ctx_gitlab_enabled=ctx.gitlab_issues_enabled,
-                    ctx_jira_enabled=ctx.jira_enabled,
-                    ctx_confluence_enabled=ctx.confluence_enabled,
+                    cfg=fetch_cfg,
                 )
                 if fetched is None:
                     continue
