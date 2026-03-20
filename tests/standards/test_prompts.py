@@ -13,6 +13,13 @@ def test_base_review_prompt_contains_severity_labels():
     assert "[Low]" in BASE_REVIEW_PROMPT
 
 
+def test_base_review_prompt_discourages_speculative_log_level_downgrades():
+    """Base prompt discourages speculative log-level downgrades without evidence."""
+    text = BASE_REVIEW_PROMPT
+    assert "Avoid speculative logging-level suggestions" in text
+    assert "unless there is clear evidence" in text
+
+
 def test_base_review_prompt_not_empty():
     """Base prompt is non-empty and has substantial content."""
     text = BASE_REVIEW_PROMPT.strip()
