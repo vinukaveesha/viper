@@ -173,7 +173,8 @@ def _build_retrieved_context_text(
                 if i < len(embs)
             ]
             store.replace_chunks(conn, did, payload)
-        retrieved = store.search_chunks(conn, q_emb, limit=16)
+        doc_ids = [did for _, did in doc_ids_for_rag]
+        retrieved = store.search_chunks(conn, q_emb, limit=16, document_ids=doc_ids)
         if not retrieved:
             return combined[: ctx.max_bytes] + "\n…(truncated)"
         return "\n\n".join(retrieved)

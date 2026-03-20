@@ -1,0 +1,272 @@
+"""Unit tests for pipeline.py — mocked store, fetchers, and distiller."""
+
+import uuid
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from code_review.context.errors import ContextAwareFatalError
+from code_review.context.pipeline import build_context_brief_for_pr
+from code_review.context.types import ContextReference, ReferenceType
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_GITHUB_REF = ContextReference(
+    ref_type=ReferenceType.GITHUB_ISSUE,
+    external_id="org/repo#1",
+    display="org/repo#1",
+)
+_JIRA_REF = ContextReference(
+    ref_type=ReferenceType.JIRA,
+    external_id="PROJ-42",
+    display="PROJ-42",
+)
+
+
+def _make_ctx(
+    enabled=True,
+    github_issues_enabled=True,
+    jira_enabled=False,
+    gitlab_issues_enabled=False,
+    confluence_enabled=False,
+    db_url="postgresql://u:p@host/db",
+    max_bytes=20000,
+    distilled_max_tokens=4000,
+    embedding_model="text-embedding-3-small",
+    embedding_dimensions=1536,
+):
+    ctx = MagicMock()
+    ctx.enabled = enabled
+    ctx.github_issues_enabled = github_issues_enabled
+    ctx.jira_enabled = jira_enabled
+    ctx.gitlab_issues_enabled = gitlab_issues_enabled
+    ctx.confluence_enabled = confluence_enabled
+    ctx.db_url = db_url
+    ctx.max_bytes = max_bytes
+    ctx.distilled_max_tokens = distilled_max_tokens
+    ctx.embedding_model = embedding_model
+    ctx.embedding_dimensions = embedding_dimensions
+    ctx.github_token = None
+    ctx.gitlab_token = None
+    ctx.jira_url = ""
+    ctx.jira_email = ""
+    ctx.jira_token = None
+    ctx.confluence_url = ""
+    ctx.confluence_email = ""
+    ctx.confluence_token = None
+    ctx.github_api_url = None
+    ctx.gitlab_api_url = None
+    return ctx
+
+
+def _make_scm(provider="github", url="https://api.github.com", token="tok"):
+    scm = MagicMock()
+    scm.provider = provider
+    scm.url = url
+    tok = MagicMock()
+    tok.get_secret_value.return_value = token
+    scm.token = tok
+    return scm
+
+
+def _make_fetched_doc(external_id="org/repo#1", body="Issue body text", title="Issue title"):
+    from code_review.context.fetchers import FetchedDocument
+
+    return FetchedDocument(
+        external_id=external_id,
+        title=title,
+        body=body,
+        metadata={},
+        version="1",
+        external_updated_at=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Disabled / no refs
+# ---------------------------------------------------------------------------
+
+
+def test_returns_none_when_context_disabled():
+    ctx = _make_ctx(enabled=False)
+    result = build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff")
+    assert result is None
+
+
+def test_returns_none_when_no_refs():
+    ctx = _make_ctx(enabled=True)
+    result = build_context_brief_for_pr(ctx, _make_scm(), [], "diff")
+    assert result is None
+
+
+def test_returns_none_when_no_applicable_refs():
+    # GitHub issues enabled=False, so the GitHub ref is not applicable.
+    ctx = _make_ctx(enabled=True, github_issues_enabled=False)
+    result = build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Under-budget direct distillation path
+# ---------------------------------------------------------------------------
+
+
+def _patch_store_and_fetcher(fetched_doc, fresh=False):
+    """Return a pair of context managers that mock ContextStore and fetch_reference."""
+    store_instance = MagicMock()
+    store_instance.connect.return_value = MagicMock()
+    store_instance.ensure_schema.return_value = None
+    doc_id = uuid.uuid4()
+    store_instance.get_or_create_source.return_value = uuid.uuid4()
+    # load_document returns (id, content, metadata, fresh)
+    store_instance.load_document.return_value = (
+        doc_id,
+        fetched_doc.body,
+        {},
+        fresh,
+    )
+    store_instance.upsert_document.return_value = doc_id
+
+    patch_store = patch(
+        "code_review.context.pipeline.ContextStore",
+        return_value=store_instance,
+    )
+    patch_fetch = patch(
+        "code_review.context.pipeline.fetch_reference",
+        return_value=fetched_doc,
+    )
+    return patch_store, patch_fetch, store_instance
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Distilled brief.")
+def test_under_budget_returns_context_tag(mock_distill):
+    doc = _make_fetched_doc(body="x" * 100)  # well under 20 KB
+    patch_store, patch_fetch, store_mock = _patch_store_and_fetcher(doc, fresh=False)
+    ctx = _make_ctx()
+    scm = _make_scm()
+
+    with patch_store, patch_fetch:
+        result = build_context_brief_for_pr(ctx, scm, [_GITHUB_REF], "diff text")
+
+    assert result is not None
+    assert result.startswith("<context>")
+    assert "Distilled brief." in result
+    assert result.strip().endswith("</context>")
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="")
+def test_empty_distillation_returns_none(mock_distill):
+    doc = _make_fetched_doc(body="content")
+    patch_store, patch_fetch, _ = _patch_store_and_fetcher(doc, fresh=False)
+    ctx = _make_ctx()
+
+    with patch_store, patch_fetch:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff")
+
+    assert result is None
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Brief.")
+def test_cache_hit_skips_fetch(mock_distill):
+    doc = _make_fetched_doc()
+    patch_store, patch_fetch, _ = _patch_store_and_fetcher(doc, fresh=True)
+    ctx = _make_ctx()
+
+    with patch_store, patch_fetch as mock_fetch:
+        build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff")
+
+    # fetch_reference should NOT have been called — the cache was fresh.
+    mock_fetch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Fetch failure / None result
+# ---------------------------------------------------------------------------
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Brief.")
+def test_fetch_returns_none_skips_ref(mock_distill):
+    store_instance = MagicMock()
+    store_instance.connect.return_value = MagicMock()
+    store_instance.get_or_create_source.return_value = uuid.uuid4()
+    store_instance.load_document.return_value = None  # cache miss
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=store_instance):
+        with patch("code_review.context.pipeline.fetch_reference", return_value=None):
+            result = build_context_brief_for_pr(
+                _make_ctx(), _make_scm(), [_GITHUB_REF], "diff"
+            )
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Over-budget RAG path
+# ---------------------------------------------------------------------------
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="RAG brief.")
+@patch("code_review.context.pipeline.embed_query_text", return_value=[0.1] * 1536)
+@patch("code_review.context.pipeline.embed_texts", return_value=[[0.1] * 1536])
+@patch("code_review.context.pipeline.build_semantic_query_from_diff", return_value="query")
+@patch("code_review.context.pipeline.chunk_plain_text", return_value=["chunk1"])
+def test_over_budget_uses_rag_path(
+    mock_chunk, mock_query, mock_embed_texts, mock_embed_query, mock_distill
+):
+    large_body = "y" * 25000  # exceeds default max_bytes=20000
+    doc = _make_fetched_doc(body=large_body)
+
+    store_instance = MagicMock()
+    store_instance.connect.return_value = MagicMock()
+    doc_id = uuid.uuid4()
+    store_instance.get_or_create_source.return_value = uuid.uuid4()
+    store_instance.load_document.return_value = (doc_id, large_body, {}, False)
+    store_instance.upsert_document.return_value = doc_id
+    store_instance.count_chunks_for_document.return_value = 0
+    store_instance.search_chunks.return_value = ["relevant chunk text"]
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=store_instance):
+        with patch("code_review.context.pipeline.fetch_reference", return_value=doc):
+            result = build_context_brief_for_pr(
+                _make_ctx(max_bytes=20000), _make_scm(), [_GITHUB_REF], "diff"
+            )
+
+    assert result is not None
+    assert "RAG brief." in result
+    store_instance.search_chunks.assert_called_once()
+    # Verify document_ids filter is passed through.
+    call_kwargs = store_instance.search_chunks.call_args
+    assert call_kwargs is not None
+
+
+# ---------------------------------------------------------------------------
+# Fatal error propagation
+# ---------------------------------------------------------------------------
+
+
+def test_fatal_error_from_embedding_propagates():
+    large_body = "z" * 25000
+
+    store_instance = MagicMock()
+    store_instance.connect.return_value = MagicMock()
+    doc_id = uuid.uuid4()
+    store_instance.get_or_create_source.return_value = uuid.uuid4()
+    store_instance.load_document.return_value = (doc_id, large_body, {}, False)
+    store_instance.upsert_document.return_value = doc_id
+    store_instance.count_chunks_for_document.return_value = 0
+
+    doc = _make_fetched_doc(body=large_body)
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=store_instance):
+        with patch("code_review.context.pipeline.fetch_reference", return_value=doc):
+            with patch(
+                "code_review.context.pipeline.embed_query_text",
+                side_effect=Exception("embed fail"),
+            ):
+                with pytest.raises(ContextAwareFatalError, match="embedding"):
+                    build_context_brief_for_pr(
+                        _make_ctx(max_bytes=20000), _make_scm(), [_GITHUB_REF], "diff"
+                    )
