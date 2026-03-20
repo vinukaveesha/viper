@@ -1475,6 +1475,7 @@ class ReviewOrchestrator:
                 repo,
                 [pr_title, pr_desc, *commit_messages],
                 extract_github=ctx_cfg.github_issues_enabled,
+                extract_gitlab=ctx_cfg.gitlab_issues_enabled,
                 extract_jira=ctx_cfg.jira_enabled,
                 extract_confluence=ctx_cfg.confluence_enabled,
             )

@@ -6,6 +6,7 @@ from enum import Enum
 
 class ReferenceType(str, Enum):
     GITHUB_ISSUE = "github_issue"
+    GITLAB_ISSUE = "gitlab_issue"
     JIRA = "jira"
     CONFLUENCE = "confluence"
 

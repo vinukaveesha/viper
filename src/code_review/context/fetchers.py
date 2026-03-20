@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -102,6 +103,54 @@ def _parse_github_issue_ref(ref: ContextReference) -> tuple[str, str, str]:
     repo_part, num = parts
     owner, repo = repo_part.split("/", 1)
     return owner, repo, num
+
+
+def _parse_gitlab_issue_ref(ref: ContextReference) -> tuple[str, str]:
+    if ref.ref_type != ReferenceType.GITLAB_ISSUE:
+        raise ValueError("not a gitlab issue ref")
+    parts = ref.external_id.split("#", 1)
+    if len(parts) != 2:
+        raise ValueError(f"bad gitlab ref {ref.external_id!r}")
+    project_path, issue_iid = parts
+    return project_path, issue_iid
+
+
+def fetch_gitlab_issue(
+    api_base: str,
+    token: str,
+    project_path: str,
+    issue_iid: str,
+    timeout: float = 30.0,
+) -> FetchedDocument:
+    root = api_base.rstrip("/")
+    proj = quote(project_path, safe="")
+    path = f"{root}/projects/{proj}/issues/{issue_iid}"
+    headers = {"PRIVATE-TOKEN": token} if token else {}
+    with httpx.Client(timeout=timeout) as client:
+        r = client.get(path, headers=headers)
+        if r.status_code == 404:
+            raise ContextAwareFatalError(f"GitLab issue not found: {project_path}#{issue_iid}")
+        if r.status_code != 200:
+            _raise_auth("GET", path, r.status_code, r.text)
+            raise ContextAwareFatalError(f"GitLab issue fetch failed ({r.status_code}): {path}")
+        data = r.json()
+    labels = [str(lb) for lb in (data.get("labels") or [])]
+    title = (data.get("title") or "").strip()
+    body_raw = (data.get("description") or "").strip()
+    state = (data.get("state") or "").strip()
+    updated = data.get("updated_at")
+    lines = [f"Title: {title}", f"State: {state}", f"Labels: {', '.join(labels)}"]
+    if body_raw:
+        lines.append("Body:")
+        lines.append(body_raw)
+    return FetchedDocument(
+        external_id=f"{project_path}#{issue_iid}",
+        title=title,
+        body="\n".join(lines),
+        metadata={"state": state, "labels": labels, "web_url": data.get("web_url")},
+        version=str(data.get("id", "")),
+        external_updated_at=updated if isinstance(updated, str) else None,
+    )
 
 
 def fetch_jira_issue(
@@ -218,6 +267,8 @@ def fetch_reference(
     *,
     github_api_base: str,
     github_token: str,
+    gitlab_api_base: str,
+    gitlab_token: str,
     jira_base: str,
     jira_email: str,
     jira_token: str,
@@ -225,6 +276,7 @@ def fetch_reference(
     confluence_email: str,
     confluence_token: str,
     ctx_github_enabled: bool,
+    ctx_gitlab_enabled: bool,
     ctx_jira_enabled: bool,
     ctx_confluence_enabled: bool,
 ) -> FetchedDocument | None:
@@ -233,6 +285,9 @@ def fetch_reference(
         if ref.ref_type == ReferenceType.GITHUB_ISSUE and ctx_github_enabled:
             o, r, n = _parse_github_issue_ref(ref)
             return fetch_github_issue(github_api_base, github_token, o, r, n)
+        if ref.ref_type == ReferenceType.GITLAB_ISSUE and ctx_gitlab_enabled:
+            proj, iid = _parse_gitlab_issue_ref(ref)
+            return fetch_gitlab_issue(gitlab_api_base, gitlab_token, proj, iid)
         if ref.ref_type == ReferenceType.JIRA and ctx_jira_enabled:
             return fetch_jira_issue(jira_base, jira_email, jira_token, ref.external_id)
         if ref.ref_type == ReferenceType.CONFLUENCE and ctx_confluence_enabled:

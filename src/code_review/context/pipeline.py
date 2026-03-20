@@ -30,9 +30,21 @@ def _github_api_and_token(scm: SCMConfig, ctx: ContextAwareReviewConfig) -> tupl
     return base, tok
 
 
+def _gitlab_api_and_token(scm: SCMConfig, ctx: ContextAwareReviewConfig) -> tuple[str, str]:
+    if scm.provider == "gitlab":
+        tok = scm.token
+        token = tok.get_secret_value() if hasattr(tok, "get_secret_value") else str(tok)
+        return scm.url.rstrip("/"), token
+    tok = ctx.gitlab_token.get_secret_value() if ctx.gitlab_token else ""
+    base = (ctx.gitlab_api_url or "").rstrip("/")
+    return base, tok
+
+
 def _ref_applicable(ref: ContextReference, ctx: ContextAwareReviewConfig) -> bool:
     if ref.ref_type == ReferenceType.GITHUB_ISSUE:
         return ctx.github_issues_enabled
+    if ref.ref_type == ReferenceType.GITLAB_ISSUE:
+        return ctx.gitlab_issues_enabled
     if ref.ref_type == ReferenceType.JIRA:
         return ctx.jira_enabled
     if ref.ref_type == ReferenceType.CONFLUENCE:
@@ -48,6 +60,9 @@ def _source_name_and_base(
     if ref.ref_type == ReferenceType.GITHUB_ISSUE:
         api, _ = _github_api_and_token(scm, ctx)
         return ("github", api)
+    if ref.ref_type == ReferenceType.GITLAB_ISSUE:
+        api, _ = _gitlab_api_and_token(scm, ctx)
+        return ("gitlab", api)
     if ref.ref_type == ReferenceType.JIRA:
         return ("jira", ctx.jira_url)
     if ref.ref_type == ReferenceType.CONFLUENCE:
@@ -69,6 +84,8 @@ def _load_context_documents(
     applicable: list[ContextReference],
     gh_api: str,
     gh_tok: str,
+    gl_api: str,
+    gl_tok: str,
     jira_email: str,
     jira_tok: str,
     conf_email: str,
@@ -94,6 +111,8 @@ def _load_context_documents(
                     ref,
                     github_api_base=gh_api,
                     github_token=gh_tok,
+                    gitlab_api_base=gl_api,
+                    gitlab_token=gl_tok,
                     jira_base=ctx.jira_url,
                     jira_email=jira_email,
                     jira_token=jira_tok,
@@ -177,6 +196,7 @@ def build_context_brief_for_pr(
         return None
 
     gh_api, gh_tok = _github_api_and_token(scm, ctx)
+    gl_api, gl_tok = _gitlab_api_and_token(scm, ctx)
     jira_email, jira_tok, conf_email, conf_tok = _get_source_tokens(ctx)
 
     store = ContextStore(ctx.db_url or "", ctx.embedding_dimensions)
@@ -187,6 +207,8 @@ def build_context_brief_for_pr(
         applicable=applicable,
         gh_api=gh_api,
         gh_tok=gh_tok,
+        gl_api=gl_api,
+        gl_tok=gl_tok,
         jira_email=jira_email,
         jira_tok=jira_tok,
         conf_email=conf_email,

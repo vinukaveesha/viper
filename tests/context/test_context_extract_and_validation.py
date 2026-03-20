@@ -25,6 +25,33 @@ def test_extract_github_issue_url_only():
     assert refs[0].external_id == "other/r#99"
 
 
+def test_extract_does_not_treat_gitlab_issue_url_as_github():
+    refs = extract_context_references(
+        "github",
+        "myorg",
+        "myrepo",
+        ["See https://gitlab.com/other/r/issues/99"],
+        extract_jira=False,
+        extract_confluence=False,
+    )
+    assert not any(r.ref_type == ReferenceType.GITHUB_ISSUE for r in refs)
+
+
+def test_extract_gitlab_issue_url():
+    refs = extract_context_references(
+        "gitlab",
+        "myorg",
+        "myrepo",
+        ["See https://gitlab.com/group/sub/repo/-/issues/55"],
+        extract_github=False,
+        extract_jira=False,
+        extract_confluence=False,
+    )
+    assert len(refs) == 1
+    assert refs[0].ref_type == ReferenceType.GITLAB_ISSUE
+    assert refs[0].external_id == "group/sub/repo#55"
+
+
 def test_extract_hash_issue_github_same_repo():
     refs = extract_context_references(
         "github",
@@ -102,6 +129,20 @@ def test_validate_github_issues_non_github_without_token(monkeypatch):
     ctx = get_context_aware_config()
     scm = SCMConfig(url="https://gitea/x", token="t")
     with pytest.raises(ContextAwareFatalError, match="CONTEXT_GITHUB_TOKEN"):
+        validate_context_aware_sources(ctx, scm)
+
+
+def test_validate_gitlab_issues_non_gitlab_without_token(monkeypatch):
+    _clear_context_env(monkeypatch)
+    monkeypatch.setenv("CONTEXT_AWARE_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CONTEXT_AWARE_REVIEW_DB_URL", "postgresql://u:a@h/db")
+    monkeypatch.setenv("CONTEXT_GITHUB_ISSUES_ENABLED", "false")
+    monkeypatch.setenv("CONTEXT_GITLAB_ISSUES_ENABLED", "true")
+    monkeypatch.delenv("CONTEXT_GITLAB_TOKEN", raising=False)
+    reset_config_cache()
+    ctx = get_context_aware_config()
+    scm = SCMConfig(url="https://gitea/x", token="t")
+    with pytest.raises(ContextAwareFatalError, match="CONTEXT_GITLAB_TOKEN"):
         validate_context_aware_sources(ctx, scm)
 
 

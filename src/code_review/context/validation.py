@@ -35,6 +35,19 @@ def _validate_enabled_jira_source(ctx: ContextAwareReviewConfig) -> None:
     )
 
 
+def _validate_enabled_gitlab_source(ctx: ContextAwareReviewConfig, scm: SCMConfig) -> None:
+    if not ctx.gitlab_issues_enabled:
+        return
+    has_gl_token = bool(ctx.gitlab_token and ctx.gitlab_token.get_secret_value())
+    _require(
+        scm.provider == "gitlab" or has_gl_token,
+        (
+            "CONTEXT_GITLAB_ISSUES_ENABLED requires SCM_PROVIDER=gitlab with SCM_TOKEN, or "
+            "CONTEXT_GITLAB_TOKEN (and CONTEXT_GITLAB_API_URL if not using SCM_URL)."
+        ),
+    )
+
+
 def _validate_enabled_confluence_source(ctx: ContextAwareReviewConfig) -> None:
     if not ctx.confluence_enabled:
         return
@@ -67,5 +80,6 @@ def validate_context_aware_sources(
         "CONTEXT_AWARE_REVIEW_ENABLED is true but CONTEXT_AWARE_REVIEW_DB_URL is missing.",
     )
     _validate_enabled_github_source(ctx, scm)
+    _validate_enabled_gitlab_source(ctx, scm)
     _validate_enabled_jira_source(ctx)
     _validate_enabled_confluence_source(ctx)

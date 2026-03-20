@@ -13,7 +13,11 @@ _JIRA_KEY = re.compile(r"\b([A-Z][A-Z0-9]{1,10}-\d+)\b")
 
 # GitHub issue URLs (github.com or enterprise hosts)
 _GH_ISSUE_URL = re.compile(
-    r"https?://[^/\s]+/([^/\s]+)/([^/\s]+)/issues/(\d+)\b",
+    r"https?://([^/\s]+)/([^/\s]+)/([^/\s]+)/issues/(\d+)\b",
+    re.IGNORECASE,
+)
+_GL_ISSUE_URL = re.compile(
+    r"https?://([^/\s]+)/([^\s?#]+?)/(?:-/)?issues/(\d+)\b",
     re.IGNORECASE,
 )
 
@@ -60,7 +64,9 @@ def _append_github_refs(
     allow_hash_issue: bool,
 ) -> None:
     for m in _GH_ISSUE_URL.finditer(scanned):
-        org, rname, num = m.group(1), m.group(2), m.group(3)
+        host, org, rname, num = m.group(1), m.group(2), m.group(3), m.group(4)
+        if "github" not in host.lower():
+            continue
         ref = f"{org}/{rname}#{num}"
         add_ref(ReferenceType.GITHUB_ISSUE, ref, ref)
     for m in _GH_PREFIX.finditer(scanned):
@@ -84,6 +90,19 @@ def _append_jira_refs(add_ref, scanned: str) -> None:
         add_ref(ReferenceType.JIRA, key, key)
 
 
+def _append_gitlab_refs(add_ref, scanned: str, *, scm_provider: str) -> None:
+    for m in _GL_ISSUE_URL.finditer(scanned):
+        host, project_path, issue_num = m.group(1), m.group(2), m.group(3)
+        # Conservative: allow obvious GitLab hosts; also allow any host when reviewing on GitLab.
+        if scm_provider != "gitlab" and "gitlab" not in host.lower():
+            continue
+        project = project_path.strip("/")
+        if not project:
+            continue
+        ref = f"{project}#{issue_num}"
+        add_ref(ReferenceType.GITLAB_ISSUE, ref, ref)
+
+
 def _append_confluence_refs(add_ref, scanned: str) -> None:
     for m in _CONFLUENCE_PAGE_URL.finditer(scanned):
         pid = m.group(1)
@@ -98,6 +117,7 @@ def extract_context_references(
     *,
     github_issue_same_repo: bool = True,
     extract_jira: bool = True,
+    extract_gitlab: bool = True,
     extract_confluence: bool = True,
     extract_github: bool = True,
 ) -> list[ContextReference]:
@@ -132,6 +152,8 @@ def extract_context_references(
         )
     if extract_jira:
         _append_jira_refs(add, scanned)
+    if extract_gitlab:
+        _append_gitlab_refs(add, scanned, scm_provider=scm_provider)
     if extract_confluence:
         _append_confluence_refs(add, scanned)
 

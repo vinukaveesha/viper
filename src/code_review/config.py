@@ -130,6 +130,9 @@ class ContextAwareReviewConfig(BaseSettings):
     github_issues_enabled: bool = Field(
         default=True, validation_alias="CONTEXT_GITHUB_ISSUES_ENABLED"
     )
+    gitlab_issues_enabled: bool = Field(
+        default=False, validation_alias="CONTEXT_GITLAB_ISSUES_ENABLED"
+    )
     jira_enabled: bool = Field(default=False, validation_alias="CONTEXT_JIRA_ENABLED")
     jira_url: str = Field(default="", validation_alias="CONTEXT_JIRA_URL")
     jira_email: str = Field(default="", validation_alias="CONTEXT_JIRA_EMAIL")
@@ -164,8 +167,24 @@ class ContextAwareReviewConfig(BaseSettings):
         validation_alias="CONTEXT_GITHUB_TOKEN",
         description="Token for GitHub Issues API when SCM_PROVIDER is not github.",
     )
+    gitlab_api_url: str = Field(
+        default="",
+        validation_alias="CONTEXT_GITLAB_API_URL",
+        description="Override GitLab API base when SCM is not gitlab.",
+    )
+    gitlab_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="CONTEXT_GITLAB_TOKEN",
+        description="Token for GitLab Issues API when SCM_PROVIDER is not gitlab.",
+    )
 
-    @field_validator("jira_token", "confluence_token", "github_token", mode="before")
+    @field_validator(
+        "jira_token",
+        "confluence_token",
+        "github_token",
+        "gitlab_token",
+        mode="before",
+    )
     @classmethod
     def _normalize_optional_secrets(cls, v: str | SecretStr | None) -> SecretStr | None:
         if v is None:
@@ -176,7 +195,7 @@ class ContextAwareReviewConfig(BaseSettings):
             return None
         return SecretStr(normalized)
 
-    @field_validator("jira_url", "confluence_url", mode="after")
+    @field_validator("jira_url", "confluence_url", "gitlab_api_url", mode="after")
     @classmethod
     def _strip_urls(cls, v: str) -> str:
         return (v or "").strip().rstrip("/")
