@@ -28,7 +28,7 @@ _CONFLUENCE_PAGE_URL = re.compile(
 )
 # Confluence Server/DC older action URL: .../pages/viewpage.action?pageId=<id>
 _CONFLUENCE_ACTION_URL = re.compile(
-    r"https?://[^/\s]+/pages/viewpage\.action[^/\s]*[?&]pageId=(\d+)\b",
+    r"https?://[^/\s]+/(?:wiki/)?pages/viewpage\.action[^/\s]*[?&]pageId=(\d+)\b",
     re.IGNORECASE,
 )
 

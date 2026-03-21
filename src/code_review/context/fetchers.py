@@ -219,6 +219,11 @@ def fetch_jira_issue(
     fields_param = ",".join(["summary", "description", "issuetype", "status", "updated"] + extra)
     with httpx.Client(timeout=timeout) as client:
         r = client.get(path, params={"fields": fields_param}, auth=(email, api_token))
+        if r.status_code == 400 and extra:
+            logger.warning("Invalid Jira extra fields for %s; retrying with base fields only", key)
+            extra = []
+            base_param = ",".join(["summary", "description", "issuetype", "status", "updated"])
+            r = client.get(path, params={"fields": base_param}, auth=(email, api_token))
         if r.status_code == 404:
             logger.warning("Jira issue not found: %s", key)
             return None

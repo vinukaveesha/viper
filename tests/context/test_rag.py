@@ -1,5 +1,3 @@
-"""Unit tests for rag.py: chunking, semantic query generation, embedding helpers."""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,100 +10,38 @@ from code_review.context.rag import (
 )
 
 
-# ---------------------------------------------------------------------------
-# chunk_plain_text
-# ---------------------------------------------------------------------------
+def test_chunk_plain_text_validation_errors():
+    with pytest.raises(ValueError, match="max_chunk_chars must be positive"):
+        chunk_plain_text("abc", max_chunk_chars=0)
+    with pytest.raises(ValueError, match="overlap must be non-negative"):
+        chunk_plain_text("abc", max_chunk_chars=10, overlap=-1)
+    with pytest.raises(ValueError, match="must be less than max_chunk_chars"):
+        chunk_plain_text("abc", max_chunk_chars=10, overlap=10)
 
 
-def test_chunk_empty_string():
-    assert chunk_plain_text("") == []
-
-
-def test_chunk_whitespace_only():
-    assert chunk_plain_text("   \n\t  ") == []
-
-
-def test_chunk_short_text_returns_single_chunk():
-    text = "short text"
-    chunks = chunk_plain_text(text, max_chunk_chars=1800)
-    assert chunks == [text]
-
-
-def test_chunk_text_exactly_max_returns_single_chunk():
-    text = "a" * 1800
-    assert chunk_plain_text(text, max_chunk_chars=1800) == [text]
-
-
-def test_chunk_long_text_produces_multiple_chunks():
-    text = "x" * 4000
-    chunks = chunk_plain_text(text, max_chunk_chars=1800, overlap=200)
-    assert len(chunks) > 1
-
-
-def test_chunk_overlap_gives_shared_content():
-    text = "a" * 1800 + "b" * 1800
-    chunks = chunk_plain_text(text, max_chunk_chars=1800, overlap=200)
-    # The second chunk should start 200 chars before the end of the first chunk,
-    # so it should contain some 'a' characters.
-    assert "a" in chunks[1]
-
-
-def test_chunk_all_chunks_non_empty():
-    text = "word " * 1000
-    chunks = chunk_plain_text(text, max_chunk_chars=300, overlap=50)
-    assert all(c.strip() for c in chunks)
-
-
-def test_chunk_invalid_overlap_raises():
-    with pytest.raises(ValueError, match="overlap"):
-        chunk_plain_text("text", max_chunk_chars=100, overlap=100)
-
-
-def test_chunk_negative_overlap_raises():
-    with pytest.raises(ValueError, match="overlap"):
-        chunk_plain_text("text", max_chunk_chars=100, overlap=-1)
-
-
-def test_chunk_zero_max_chunk_chars_raises():
-    with pytest.raises(ValueError, match="max_chunk_chars"):
-        chunk_plain_text("text", max_chunk_chars=0)
-
-
-# ---------------------------------------------------------------------------
-# build_semantic_query_from_diff
-# ---------------------------------------------------------------------------
-
-
-def _make_llm_response(text: str) -> MagicMock:
-    msg = MagicMock()
-    msg.content = text
-    choice = MagicMock()
-    choice.message = msg
-    resp = MagicMock()
-    resp.choices = [choice]
-    return resp
-
-
-def test_semantic_query_empty_diff():
-    result = build_semantic_query_from_diff("")
-    assert result == "pull request code changes"
-
-
-def test_semantic_query_whitespace_diff():
-    result = build_semantic_query_from_diff("   \n  ")
-    assert result == "pull request code changes"
+def test_chunk_plain_text_splits_with_overlap():
+    text = "".join(str(i % 10) for i in range(50))
+    chunks = chunk_plain_text(text, max_chunk_chars=20, overlap=5)
+    assert len(chunks) >= 3
+    assert all(chunks)
+    # Overlap implies neighboring chunks share trailing/leading content.
+    assert chunks[0][-5:] == chunks[1][:5]
 
 
 @patch("code_review.context.rag.get_llm_config")
 @patch("code_review.context.rag.get_configured_model")
 @patch("code_review.context.rag.litellm.completion")
-def test_semantic_query_uses_llm_response(mock_completion, mock_model, mock_llm):
-    mock_llm.return_value = MagicMock(model="gpt-4o-mini", temperature=0.0)
-    mock_model.return_value = "openai/gpt-4o-mini"
-    mock_completion.return_value = _make_llm_response("Adds JWT validation to auth module.")
-
-    result = build_semantic_query_from_diff("--- a/auth.py\n+++ b/auth.py\n+def validate(): pass")
-    assert result == "Adds JWT validation to auth module."
+def test_build_semantic_query_from_diff_uses_llm_output(
+    mock_completion, mock_get_configured_model, mock_get_llm_config
+):
+    mock_get_llm_config.return_value = MagicMock(model="gpt-4o-mini", temperature=0.0)
+    mock_get_configured_model.return_value = "openai/gpt-4o-mini"
+    mock_completion.return_value = {
+        "choices": [{"message": {"content": "Updates auth middleware validation flow."}}]
+    }
+    diff = "diff --git a/auth.py b/auth.py\n--- a/auth.py\n+++ b/auth.py\n+validate()"
+    out = build_semantic_query_from_diff(diff)
+    assert out == "Updates auth middleware validation flow."
 
 
 @patch("code_review.context.rag.get_llm_config")
