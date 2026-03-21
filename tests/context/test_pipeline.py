@@ -280,3 +280,80 @@ def test_fatal_error_from_embedding_propagates():
                     build_context_brief_for_pr(
                         _make_ctx(max_bytes=20000), _make_scm(), [_GITHUB_REF], "diff"
                     )
+
+
+# ---------------------------------------------------------------------------
+# Alternative ref types (GitLab, Jira, Confluence)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _simple_store():
+    store = MagicMock()
+    store.connect.return_value = MagicMock()
+    doc_id = uuid.uuid4()
+    store.get_or_create_source.return_value = uuid.uuid4()
+    store.load_document.return_value = (doc_id, "doc body", {}, False)
+    store.upsert_document.return_value = doc_id
+    return store
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Brief.")
+def test_jira_ref_resolved(_mock_distill, _simple_store):
+    jira_ref = ContextReference(
+        ref_type=ReferenceType.JIRA, external_id="PROJ-42", display="PROJ-42"
+    )
+    ctx = _make_ctx(jira_enabled=True)
+    ctx.jira_url = "https://jira.example.com"
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=_simple_store):
+        with patch(
+            "code_review.context.pipeline.fetch_reference",
+            return_value=_make_fetched_doc(external_id="PROJ-42"),
+        ):
+            result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
+
+    assert result is not None
+    assert "Brief." in result
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Brief.")
+def test_gitlab_ref_resolved(_mock_distill, _simple_store):
+    gitlab_ref = ContextReference(
+        ref_type=ReferenceType.GITLAB_ISSUE,
+        external_id="group/repo#5",
+        display="group/repo#5",
+    )
+    ctx = _make_ctx(gitlab_issues_enabled=True)
+    scm = _make_scm(provider="gitlab", url="https://gitlab.com/api/v4")
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=_simple_store):
+        with patch(
+            "code_review.context.pipeline.fetch_reference",
+            return_value=_make_fetched_doc(external_id="group/repo#5"),
+        ):
+            result = build_context_brief_for_pr(ctx, scm, [gitlab_ref], "diff")
+
+    assert result is not None
+    assert "Brief." in result
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Brief.")
+def test_confluence_ref_resolved(_mock_distill, _simple_store):
+    conf_ref = ContextReference(
+        ref_type=ReferenceType.CONFLUENCE,
+        external_id="99999",
+        display="99999",
+    )
+    ctx = _make_ctx(confluence_enabled=True)
+    ctx.confluence_url = "https://wiki.example.com"
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=_simple_store):
+        with patch(
+            "code_review.context.pipeline.fetch_reference",
+            return_value=_make_fetched_doc(external_id="99999"),
+        ):
+            result = build_context_brief_for_pr(ctx, _make_scm(), [conf_ref], "diff")
+
+    assert result is not None
+    assert "Brief." in result

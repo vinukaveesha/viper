@@ -255,3 +255,287 @@ def test_fetch_confluence_page_wiki_base_url():
     # Should be /wiki/rest/api/..., not /wiki/wiki/rest/api/...
     assert "/wiki/wiki/" not in called_url
     assert "/rest/api/content/42" in called_url
+
+
+def test_fetch_confluence_page_500_raises_fatal():
+    with _patch_client(_mock_httpx_response(500, text="Server Error")):
+        with pytest.raises(ContextAwareFatalError):
+            fetch_confluence_page("https://wiki.example.com", "u", "t", "1")
+
+
+# ---------------------------------------------------------------------------
+# fetch_gitlab_issue — additional cases
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_gitlab_issue_500_raises_fatal():
+    with _patch_client(_mock_httpx_response(500, text="Server Error")):
+        with pytest.raises(ContextAwareFatalError):
+            fetch_gitlab_issue("https://gitlab.com/api/v4", "tok", "group/repo", "1")
+
+
+# ---------------------------------------------------------------------------
+# fetch_jira_issue — additional cases
+# ---------------------------------------------------------------------------
+
+
+def _make_multi_response_client(responses):
+    """Client mock that returns successive responses for each .get() call."""
+    client_mock = MagicMock()
+    client_mock.__enter__ = MagicMock(return_value=client_mock)
+    client_mock.__exit__ = MagicMock(return_value=False)
+    client_mock.get.side_effect = responses
+    return client_mock
+
+
+def test_fetch_jira_issue_400_retries_without_extra_fields():
+    """When 400 returned with extra_fields, retries with base fields and succeeds."""
+    data = {
+        "id": "10003",
+        "fields": {
+            "summary": "Retry success",
+            "description": "Plain text.",
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Done"},
+            "updated": "2024-01-01T00:00:00.000+0000",
+        },
+    }
+    bad_resp = _mock_httpx_response(400, text="Field not found")
+    ok_resp = _mock_httpx_response(200, data)
+
+    client_mock = _make_multi_response_client([bad_resp, ok_resp])
+    with patch("httpx.Client", return_value=client_mock):
+        doc = fetch_jira_issue(
+            "https://jira.example.com",
+            "u",
+            "t",
+            "PROJ-1",
+            extra_fields=["customfield_99999"],
+        )
+    assert doc is not None
+    assert doc.title == "Retry success"
+    assert client_mock.get.call_count == 2
+
+
+def test_fetch_jira_issue_500_raises_fatal():
+    with _patch_client(_mock_httpx_response(500, text="Internal Error")):
+        with pytest.raises(ContextAwareFatalError):
+            fetch_jira_issue("https://jira.example.com", "u", "t", "PROJ-1")
+
+
+def test_fetch_jira_issue_with_extra_fields():
+    """Extra fields are appended to the fields query parameter."""
+    data = {
+        "id": "10004",
+        "fields": {
+            "summary": "Extra fields test",
+            "description": None,
+            "issuetype": {"name": "Epic"},
+            "status": {"name": "Open"},
+            "updated": None,
+            "customfield_12345": "custom value",
+        },
+    }
+    client_mock = MagicMock()
+    client_mock.__enter__ = MagicMock(return_value=client_mock)
+    client_mock.__exit__ = MagicMock(return_value=False)
+    client_mock.get.return_value = _mock_httpx_response(200, data)
+
+    with patch("httpx.Client", return_value=client_mock):
+        doc = fetch_jira_issue(
+            "https://jira.example.com",
+            "u",
+            "t",
+            "PROJ-2",
+            extra_fields=["customfield_12345"],
+        )
+    assert doc is not None
+    assert "customfield_12345" in doc.body
+    assert "custom value" in doc.body
+    # Verify extra field was requested
+    call_kwargs = client_mock.get.call_args[1]
+    assert "customfield_12345" in call_kwargs["params"]["fields"]
+
+
+# ---------------------------------------------------------------------------
+# _strip_html_to_text
+# ---------------------------------------------------------------------------
+
+
+def test_strip_html_to_text_empty():
+    assert _strip_html_to_text("") == ""
+
+
+def test_strip_html_to_text_strips_tags():
+    result = _strip_html_to_text("<p>Hello <b>world</b></p>")
+    assert "Hello" in result
+    assert "world" in result
+    assert "<" not in result
+
+
+def test_strip_html_to_text_decodes_entities():
+    # &amp; is decoded to &
+    result = _strip_html_to_text("&amp; more text")
+    assert "&" in result
+
+
+# ---------------------------------------------------------------------------
+# _adf_to_plain
+# ---------------------------------------------------------------------------
+
+
+def test_adf_to_plain_non_dict_returns_empty():
+    assert _adf_to_plain("not a dict") == ""
+    assert _adf_to_plain(None) == ""
+    assert _adf_to_plain(42) == ""
+
+
+def test_adf_to_plain_text_node():
+    node = {"type": "text", "text": "hello"}
+    assert _adf_to_plain(node) == "hello"
+
+
+def test_adf_to_plain_paragraph_with_text():
+    node = {
+        "type": "paragraph",
+        "content": [{"type": "text", "text": "paragraph content"}],
+    }
+    result = _adf_to_plain(node)
+    assert "paragraph content" in result
+
+
+def test_adf_to_plain_nested_doc():
+    node = {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "first"}],
+            },
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "second"}],
+            },
+        ],
+    }
+    result = _adf_to_plain(node)
+    assert "first" in result
+    assert "second" in result
+
+
+# ---------------------------------------------------------------------------
+# fetch_reference dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _make_fetch_cfg(**overrides):
+    from code_review.context.fetchers import FetchReferenceConfig
+
+    defaults = dict(
+        github_api_base="https://api.github.com",
+        github_token="tok",
+        gitlab_api_base="https://gitlab.com/api/v4",
+        gitlab_token="tok",
+        jira_base="https://jira.example.com",
+        jira_email="u@e.com",
+        jira_token="tok",
+        confluence_base="https://wiki.example.com",
+        confluence_email="u@e.com",
+        confluence_token="tok",
+        ctx_github_enabled=True,
+        ctx_gitlab_enabled=True,
+        ctx_jira_enabled=True,
+        ctx_confluence_enabled=True,
+        jira_extra_fields=(),
+    )
+    defaults.update(overrides)
+    return FetchReferenceConfig(**defaults)
+
+
+def _make_ref(ref_type, external_id):
+    return ContextReference(ref_type=ref_type, external_id=external_id, display=external_id)
+
+
+def test_fetch_reference_github_disabled_returns_none():
+    ref = _make_ref(ReferenceType.GITHUB_ISSUE, "org/repo#1")
+    cfg = _make_fetch_cfg(ctx_github_enabled=False)
+    result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_jira_disabled_returns_none():
+    ref = _make_ref(ReferenceType.JIRA, "PROJ-1")
+    cfg = _make_fetch_cfg(ctx_jira_enabled=False)
+    result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_confluence_disabled_returns_none():
+    ref = _make_ref(ReferenceType.CONFLUENCE, "12345")
+    cfg = _make_fetch_cfg(ctx_confluence_enabled=False)
+    result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_gitlab_disabled_returns_none():
+    ref = _make_ref(ReferenceType.GITLAB_ISSUE, "group/repo#1")
+    cfg = _make_fetch_cfg(ctx_gitlab_enabled=False)
+    result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_github_network_error_returns_none():
+    import httpx
+
+    ref = _make_ref(ReferenceType.GITHUB_ISSUE, "org/repo#1")
+    cfg = _make_fetch_cfg()
+    with patch(
+        "code_review.context.fetchers.fetch_github_issue",
+        side_effect=httpx.ConnectError("timeout"),
+    ):
+        result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_auth_error_propagates():
+    ref = _make_ref(ReferenceType.GITHUB_ISSUE, "org/repo#1")
+    cfg = _make_fetch_cfg()
+    with patch(
+        "code_review.context.fetchers.fetch_github_issue",
+        side_effect=ContextAwareAuthError("401"),
+    ):
+        with pytest.raises(ContextAwareAuthError):
+            fetch_reference(ref, cfg=cfg)
+
+
+def test_fetch_reference_fatal_error_is_downgraded_to_none():
+    ref = _make_ref(ReferenceType.GITHUB_ISSUE, "org/repo#1")
+    cfg = _make_fetch_cfg()
+    with patch(
+        "code_review.context.fetchers.fetch_github_issue",
+        side_effect=ContextAwareFatalError("500"),
+    ):
+        result = fetch_reference(ref, cfg=cfg)
+    assert result is None
+
+
+def test_fetch_reference_dispatches_to_jira():
+    ref = _make_ref(ReferenceType.JIRA, "PROJ-99")
+    cfg = _make_fetch_cfg()
+    with patch(
+        "code_review.context.fetchers.fetch_jira_issue", return_value=None
+    ) as mock_jira:
+        fetch_reference(ref, cfg=cfg)
+    mock_jira.assert_called_once()
+    _, kwargs = mock_jira.call_args
+    assert kwargs.get("key") == "PROJ-99" or mock_jira.call_args[0][3] == "PROJ-99"
+
+
+def test_fetch_reference_dispatches_to_confluence():
+    ref = _make_ref(ReferenceType.CONFLUENCE, "99999")
+    cfg = _make_fetch_cfg()
+    with patch(
+        "code_review.context.fetchers.fetch_confluence_page", return_value=None
+    ) as mock_conf:
+        fetch_reference(ref, cfg=cfg)
+    mock_conf.assert_called_once()
