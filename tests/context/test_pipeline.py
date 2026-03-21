@@ -247,8 +247,8 @@ def test_over_budget_uses_rag_path(
     assert "RAG brief." in result
     store_instance.search_chunks.assert_called_once()
     # Verify document_ids filter is passed through.
-    call_kwargs = store_instance.search_chunks.call_args
-    assert call_kwargs is not None
+    _, kwargs = store_instance.search_chunks.call_args
+    assert kwargs["document_ids"] == [doc_id]
 
 
 # ---------------------------------------------------------------------------
