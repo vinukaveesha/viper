@@ -31,6 +31,7 @@ from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.github.com"
+JSON_MEDIA_TYPE = "application/json"
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +56,7 @@ class GitHubProvider(ProviderInterface):
         with httpx.Client(timeout=self._timeout) as client:
             r = client.get(url, headers=self._headers(), params=params or {})
             r.raise_for_status()
-            if r.headers.get("content-type", "").startswith("application/json"):
+            if r.headers.get("content-type", "").startswith(JSON_MEDIA_TYPE):
                 return r.json()
             return r.text
 
@@ -93,7 +94,7 @@ class GitHubProvider(ProviderInterface):
         return f"{u}/api/graphql"
 
     def _graphql_headers(self) -> dict[str, str]:
-        h = {"Content-Type": "application/json", "Accept": "application/json"}
+        h = {"Content-Type": JSON_MEDIA_TYPE, "Accept": JSON_MEDIA_TYPE}
         if self._token:
             h["Authorization"] = f"Bearer {self._token}"
         return h
@@ -137,6 +138,81 @@ class GitHubProvider(ProviderInterface):
     }
     """
 
+    @staticmethod
+    def _github_graphql_review_threads_container(data: dict[str, Any]) -> dict[str, Any] | None:
+        repo_d = data.get("repository")
+        if not isinstance(repo_d, dict):
+            return None
+        pr_d = repo_d.get("pullRequest")
+        if not isinstance(pr_d, dict):
+            return None
+        rt = pr_d.get("reviewThreads")
+        return rt if isinstance(rt, dict) else None
+
+    @staticmethod
+    def _github_thread_node_to_unresolved_item(node: dict[str, Any]) -> UnresolvedReviewItem | None:
+        if node.get("isResolved") or node.get("isOutdated"):
+            return None
+        comments_wrap = node.get("comments") or {}
+        cnodes = comments_wrap.get("nodes") if isinstance(comments_wrap, dict) else None
+        if not isinstance(cnodes, list) or not cnodes:
+            return None
+        best_sev: Literal["high", "medium", "low", "nit", "unknown"] = "unknown"
+        body_text = ""
+        path_str = ""
+        line_no = 0
+        for c in cnodes:
+            if not isinstance(c, dict):
+                continue
+            raw_body = (c.get("body") or "").strip()
+            if not raw_body:
+                continue
+            sev = infer_severity_from_comment_body(raw_body)
+            best_sev = max_inferred_severity(best_sev, sev)
+            if not body_text:
+                body_text = c.get("body") or ""
+                path_str = str(c.get("path") or "")
+                line_no = int(c.get("line") or 0)
+        if not body_text:
+            return None
+        tid = str(node.get("id") or "")
+        return UnresolvedReviewItem(
+            stable_id=f"github:thread:{tid}",
+            thread_id=tid,
+            kind="discussion_thread",
+            path=path_str,
+            line=line_no,
+            body=body_text,
+            inferred_severity=best_sev,
+        )
+
+    @staticmethod
+    def _github_review_threads_advance_cursor(
+        rt: dict[str, Any],
+        seen_end_cursors: set[str],
+        owner: str,
+        repo: str,
+        pr_number: int,
+    ) -> str | None:
+        """Return next GraphQL ``after`` cursor, or None when pagination should stop."""
+        page = rt.get("pageInfo") or {}
+        if not isinstance(page, dict) or not page.get("hasNextPage"):
+            return None
+        next_cursor = page.get("endCursor")
+        if not isinstance(next_cursor, str) or not next_cursor:
+            return None
+        if next_cursor in seen_end_cursors:
+            logger.warning(
+                "GitHub GraphQL reviewThreads pagination loop detected (repeated endCursor) "
+                "owner=%s repo=%s pr=%s",
+                owner,
+                repo,
+                pr_number,
+            )
+            return None
+        seen_end_cursors.add(next_cursor)
+        return next_cursor
+
     def _unresolved_review_threads_graphql(
         self, owner: str, repo: str, pr_number: int
     ) -> list[UnresolvedReviewItem]:
@@ -153,72 +229,20 @@ class GitHubProvider(ProviderInterface):
                 "cursor": cursor,
             }
             data = self._graphql(self._REVIEW_THREADS_GQL, variables)
-            repo_d = data.get("repository")
-            if not isinstance(repo_d, dict):
+            rt = self._github_graphql_review_threads_container(data)
+            if rt is None:
                 break
-            pr_d = repo_d.get("pullRequest")
-            if not isinstance(pr_d, dict):
-                break
-            rt = pr_d.get("reviewThreads")
-            if not isinstance(rt, dict):
-                break
-            nodes = rt.get("nodes") or []
-            for node in nodes:
+            for node in rt.get("nodes") or []:
                 if not isinstance(node, dict):
                     continue
-                if node.get("isResolved") or node.get("isOutdated"):
-                    continue
-                comments_wrap = node.get("comments") or {}
-                cnodes = comments_wrap.get("nodes") if isinstance(comments_wrap, dict) else None
-                if not isinstance(cnodes, list) or not cnodes:
-                    continue
-                best_sev: Literal["high", "medium", "low", "nit", "unknown"] = "unknown"
-                body_text = ""
-                path_str = ""
-                line_no = 0
-                for c in cnodes:
-                    if not isinstance(c, dict):
-                        continue
-                    raw_body = (c.get("body") or "").strip()
-                    if not raw_body:
-                        continue
-                    sev = infer_severity_from_comment_body(raw_body)
-                    best_sev = max_inferred_severity(best_sev, sev)
-                    if not body_text:
-                        body_text = c.get("body") or ""
-                        path_str = str(c.get("path") or "")
-                        line_no = int(c.get("line") or 0)
-                if not body_text:
-                    continue
-                tid = str(node.get("id") or "")
-                out.append(
-                    UnresolvedReviewItem(
-                        stable_id=f"github:thread:{tid}",
-                        thread_id=tid,
-                        kind="discussion_thread",
-                        path=path_str,
-                        line=line_no,
-                        body=body_text,
-                        inferred_severity=best_sev,
-                    )
-                )
-            page = rt.get("pageInfo") or {}
-            if not isinstance(page, dict) or not page.get("hasNextPage"):
+                item = self._github_thread_node_to_unresolved_item(node)
+                if item is not None:
+                    out.append(item)
+            cursor = self._github_review_threads_advance_cursor(
+                rt, seen_end_cursors, owner, repo, pr_number
+            )
+            if cursor is None:
                 break
-            next_cursor = page.get("endCursor")
-            if not isinstance(next_cursor, str) or not next_cursor:
-                break
-            if next_cursor in seen_end_cursors:
-                logger.warning(
-                    "GitHub GraphQL reviewThreads pagination loop detected (repeated endCursor) "
-                    "owner=%s repo=%s pr=%s",
-                    owner,
-                    repo,
-                    pr_number,
-                )
-                break
-            seen_end_cursors.add(next_cursor)
-            cursor = next_cursor
         else:
             logger.warning(
                 "GitHub GraphQL reviewThreads pagination exceeded max_pages=%s owner=%s repo=%s pr=%s",
@@ -376,7 +400,7 @@ class GitHubProvider(ProviderInterface):
     def capabilities(self) -> ProviderCapabilities:
         """GitHub supports suggestion blocks; resolved is per-conversation, not per-comment."""
         return ProviderCapabilities(
-            resolvable_comments=False, 
+            resolvable_comments=False,
             supports_suggestions=True,
             supports_multiline_suggestions=True,
             supports_review_decisions=True,

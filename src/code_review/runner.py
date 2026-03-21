@@ -850,14 +850,26 @@ def _maybe_submit_review_decision(
         logger.info("Dry run: would submit PR review decision=%s", decision)
         return
 
-    provider.submit_review_decision(
-        owner,
-        repo,
-        pr_number,
-        decision,
-        body=reason,
-        head_sha=head_sha,
-    )
+    try:
+        provider.submit_review_decision(
+            owner,
+            repo,
+            pr_number,
+            decision,
+            body=reason,
+            head_sha=head_sha,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to submit PR review decision=%s owner=%s repo=%s pr=%s: %s",
+            decision,
+            owner,
+            repo,
+            pr_number,
+            e,
+            exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
+        return
     logger.info("Submitted PR review decision=%s", decision)
 
 

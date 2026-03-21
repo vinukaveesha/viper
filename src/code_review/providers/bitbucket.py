@@ -24,6 +24,8 @@ MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.bitbucket.org/2.0"
 logger = logging.getLogger(__name__)
 
+_BB_PAGINATION_LOOP_MSG = "Bitbucket pagination loop detected (same next URL returned twice): %s"
+
 
 class BitbucketProvider(ProviderInterface):
     """Bitbucket Cloud API client for PR diff, file content, and comments."""
@@ -40,6 +42,14 @@ class BitbucketProvider(ProviderInterface):
 
     def _path(self, owner: str, repo: str, *parts: str) -> str:
         return f"{self._base_url}/repositories/{owner}/{repo}/" + "/".join(parts)
+
+    def _bitbucket_enter_next_link_page(self, url: str, visited: set[str]) -> bool:
+        """Mark ``url`` visited for next-link pagination; log and return False on repeat URL."""
+        if url in visited:
+            logger.warning(_BB_PAGINATION_LOOP_MSG, url)
+            return False
+        visited.add(url)
+        return True
 
     def _get(self, path: str) -> Any:
         with httpx.Client(timeout=self._timeout) as client:
@@ -86,12 +96,8 @@ class BitbucketProvider(ProviderInterface):
         result: list[FileInfo] = []
         visited: set[str] = set()
         while url:
-            if url in visited:
-                logger.warning(
-                    "Bitbucket pagination loop detected (same next URL returned twice): %s", url
-                )
+            if not self._bitbucket_enter_next_link_page(url, visited):
                 break
-            visited.add(url)
             data = self._get(url)
             page_files, next_url = self._parse_diffstat_page(data)
             result.extend(page_files)
@@ -182,12 +188,8 @@ class BitbucketProvider(ProviderInterface):
         result: list[ReviewComment] = []
         visited: set[str] = set()
         while url:
-            if url in visited:
-                logger.warning(
-                    "Bitbucket pagination loop detected (same next URL returned twice): %s", url
-                )
+            if not self._bitbucket_enter_next_link_page(url, visited):
                 break
-            visited.add(url)
             data = self._get(url)
             page_comments, next_url = self._comments_from_page(data)
             result.extend(page_comments)
@@ -228,6 +230,33 @@ class BitbucketProvider(ProviderInterface):
         stripped = next_url.strip()
         return comments, stripped or None
 
+    @staticmethod
+    def _bbcloud_append_open_tasks_from_page(
+        values: list[Any], out: list[UnresolvedReviewItem]
+    ) -> None:
+        for t in values:
+            if not isinstance(t, dict):
+                continue
+            state = (str(t.get("state") or "")).strip().upper()
+            if state in ("RESOLVED", "DECLINED", "CLOSED", "FULFILLED"):
+                continue
+            raw = (t.get("content") or {}).get("raw") if isinstance(t.get("content"), dict) else ""
+            raw = str(raw or "").strip()
+            if not raw:
+                continue
+            tid = str(t.get("id", "") or "")
+            out.append(
+                UnresolvedReviewItem(
+                    stable_id=f"bbcloud:task:{tid}" if tid else f"bbcloud:task:{len(out)}",
+                    thread_id=tid or None,
+                    kind="task",
+                    path="",
+                    line=0,
+                    body=raw,
+                    inferred_severity=infer_severity_from_comment_body(raw),
+                )
+            )
+
     def get_unresolved_review_items_for_quality_gate(
         self, owner: str, repo: str, pr_number: int
     ) -> list[UnresolvedReviewItem]:
@@ -236,12 +265,8 @@ class BitbucketProvider(ProviderInterface):
         out: list[UnresolvedReviewItem] = []
         visited: set[str] = set()
         while url:
-            if url in visited:
-                logger.warning(
-                    "Bitbucket pagination loop detected (same next URL returned twice): %s", url
-                )
+            if not self._bitbucket_enter_next_link_page(url, visited):
                 break
-            visited.add(url)
             try:
                 data = self._get(url)
             except Exception as e:
@@ -258,28 +283,7 @@ class BitbucketProvider(ProviderInterface):
             values = data.get("values")
             if not isinstance(values, list):
                 break
-            for t in values:
-                if not isinstance(t, dict):
-                    continue
-                state = (str(t.get("state") or "")).strip().upper()
-                if state in ("RESOLVED", "DECLINED", "CLOSED", "FULFILLED"):
-                    continue
-                raw = (t.get("content") or {}).get("raw") if isinstance(t.get("content"), dict) else ""
-                raw = str(raw or "").strip()
-                if not raw:
-                    continue
-                tid = str(t.get("id", "") or "")
-                out.append(
-                    UnresolvedReviewItem(
-                        stable_id=f"bbcloud:task:{tid}" if tid else f"bbcloud:task:{len(out)}",
-                        thread_id=tid or None,
-                        kind="task",
-                        path="",
-                        line=0,
-                        body=raw,
-                        inferred_severity=infer_severity_from_comment_body(raw),
-                    )
-                )
+            self._bbcloud_append_open_tasks_from_page(values, out)
             nxt = data.get("next")
             url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
         return out
@@ -295,12 +299,8 @@ class BitbucketProvider(ProviderInterface):
         out: list[str] = []
         visited: set[str] = set()
         while url:
-            if url in visited:
-                logger.warning(
-                    "Bitbucket pagination loop detected (same next URL returned twice): %s", url
-                )
+            if not self._bitbucket_enter_next_link_page(url, visited):
                 break
-            visited.add(url)
             data = self._safe_get_commit_page(url, owner, repo, pr_number)
             if data is None:
                 return out

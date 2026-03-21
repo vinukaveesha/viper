@@ -232,6 +232,45 @@ class GitLabProvider(ProviderInterface):
                 )
         return result
 
+    @staticmethod
+    def _gitlab_diff_notes_from_discussion(notes: Any) -> list[dict[str, Any]]:
+        if not isinstance(notes, list):
+            return []
+        return [n for n in notes if isinstance(n, dict) and n.get("type") == "DiffNote"]
+
+    @staticmethod
+    def _gitlab_unresolved_item_from_diff_notes(
+        did: str,
+        diff_notes: list[dict[str, Any]],
+        out_len: int,
+    ) -> UnresolvedReviewItem | None:
+        best_sev: Literal["high", "medium", "low", "nit", "unknown"] = "unknown"
+        body_text = ""
+        path_str = ""
+        line_no = 0
+        for n in diff_notes:
+            raw = (n.get("body") or "").strip()
+            if not raw:
+                continue
+            sev = infer_severity_from_comment_body(n.get("body") or "")
+            best_sev = max_inferred_severity(best_sev, sev)
+            if not body_text:
+                body_text = n.get("body") or ""
+                pos = n.get("position") or {}
+                path_str = str(pos.get("new_path") or pos.get("old_path") or "")
+                line_no = int(pos.get("new_line") or pos.get("old_line") or 0)
+        if not body_text:
+            return None
+        return UnresolvedReviewItem(
+            stable_id=f"gitlab:discussion:{did}" if did else f"gitlab:discussion:{out_len}",
+            thread_id=did or None,
+            kind="discussion_thread",
+            path=path_str,
+            line=line_no,
+            body=body_text,
+            inferred_severity=best_sev,
+        )
+
     def get_unresolved_review_items_for_quality_gate(
         self, owner: str, repo: str, pr_number: int
     ) -> list[UnresolvedReviewItem]:
@@ -242,47 +281,15 @@ class GitLabProvider(ProviderInterface):
             return []
         out: list[UnresolvedReviewItem] = []
         for disc in data:
-            if not isinstance(disc, dict):
-                continue
-            if disc.get("resolved"):
+            if not isinstance(disc, dict) or disc.get("resolved"):
                 continue
             did = str(disc.get("id", "") or "")
-            notes = disc.get("notes") or []
-            if not isinstance(notes, list):
-                continue
-            diff_notes = [
-                n for n in notes if isinstance(n, dict) and n.get("type") == "DiffNote"
-            ]
+            diff_notes = self._gitlab_diff_notes_from_discussion(disc.get("notes"))
             if not diff_notes:
                 continue
-            best_sev: Literal["high", "medium", "low", "nit", "unknown"] = "unknown"
-            body_text = ""
-            path_str = ""
-            line_no = 0
-            for n in diff_notes:
-                raw = (n.get("body") or "").strip()
-                if not raw:
-                    continue
-                sev = infer_severity_from_comment_body(n.get("body") or "")
-                best_sev = max_inferred_severity(best_sev, sev)
-                if not body_text:
-                    body_text = n.get("body") or ""
-                    pos = n.get("position") or {}
-                    path_str = str(pos.get("new_path") or pos.get("old_path") or "")
-                    line_no = int(pos.get("new_line") or pos.get("old_line") or 0)
-            if not body_text:
-                continue
-            out.append(
-                UnresolvedReviewItem(
-                    stable_id=f"gitlab:discussion:{did}" if did else f"gitlab:discussion:{len(out)}",
-                    thread_id=did or None,
-                    kind="discussion_thread",
-                    path=path_str,
-                    line=line_no,
-                    body=body_text,
-                    inferred_severity=best_sev,
-                )
-            )
+            item = self._gitlab_unresolved_item_from_diff_notes(did, diff_notes, len(out))
+            if item is not None:
+                out.append(item)
         return out
 
     def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:
@@ -361,7 +368,7 @@ class GitLabProvider(ProviderInterface):
         resolvable_comments=False to avoid silent failures.
         """
         return ProviderCapabilities(
-            resolvable_comments=False, 
+            resolvable_comments=False,
             supports_suggestions=True,
             supports_multiline_suggestions=True,
         )

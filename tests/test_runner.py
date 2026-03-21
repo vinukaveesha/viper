@@ -378,6 +378,38 @@ def test_run_review_submits_request_changes_when_threshold_met(
 @patch("code_review.runner.get_context_window")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
+def test_run_review_continues_when_submit_review_decision_raises(
+    mock_get_scm_config, mock_get_provider, mock_get_context_window
+):
+    """Transient SCM errors on review decision must not fail the run after posting."""
+    from code_review.runner import run_review
+
+    provider = _provider_with_review_decisions()
+    provider.submit_review_decision.side_effect = RuntimeError("API unavailable")
+    _wire_standard_runner_mocks(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_context_window,
+        scm=_review_decision_scm_config(),
+        provider=provider,
+    )
+
+    findings_json = (
+        '[{"path":"foo.py","line":1,"severity":"high","code":"x",'
+        '"message":"Must fix."}]'
+    )
+
+    with _patch_adk_runner(_adk_runner_single_event(findings_json)):
+        posted = run_review("o", "r", 1, head_sha="abc123", dry_run=False)
+
+    assert len(posted) == 1
+    provider.post_review_comments.assert_called_once()
+    provider.submit_review_decision.assert_called_once()
+
+
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
 def test_run_review_submits_approve_when_only_low_nit_open(
     mock_get_scm_config, mock_get_provider, mock_get_context_window
 ):
