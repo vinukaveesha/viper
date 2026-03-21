@@ -1,6 +1,7 @@
 """Format findings as inline comment bodies with severity prefix and location consistency."""
 
 import re
+from typing import Literal
 
 from code_review.schemas.findings import FindingV1
 
@@ -100,3 +101,30 @@ def finding_to_comment_body(
         return main + prompt_block
 
     return main
+
+
+def infer_severity_from_comment_body(body: str) -> Literal["high", "medium", "low", "nit", "unknown"]:
+    """Infer Viper-style severity from a review comment body ([High]/[Medium]/…).
+
+    Strips HTML comment blocks (e.g. fingerprint markers) first, then looks for
+    canonical ``SEVERITY_LABELS`` near the start of the visible text.
+    """
+    if not body or not body.strip():
+        return "unknown"
+    cleaned = body.strip()
+    while True:
+        start = cleaned.find("<!--")
+        if start == -1:
+            break
+        end = cleaned.find("-->", start)
+        if end == -1:
+            cleaned = cleaned[:start].strip()
+            break
+        cleaned = (cleaned[:start] + cleaned[end + 3 :]).strip()
+    head = cleaned[:500]
+    for sev in ("high", "medium", "low", "nit"):
+        label = SEVERITY_LABELS[sev]
+        pos = head.find(label)
+        if pos != -1 and pos < 160:
+            return sev
+    return "unknown"

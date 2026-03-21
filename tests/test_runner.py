@@ -6,7 +6,7 @@ import pytest
 
 from tests.conftest import runner_run_async_returning
 from code_review.agent import create_review_agent
-from code_review.providers.base import FileInfo, PRInfo, ProviderCapabilities
+from code_review.providers.base import FileInfo, PRInfo, ProviderCapabilities, UnresolvedReviewItem
 
 
 class MockProvider:
@@ -356,6 +356,7 @@ def test_run_review_submits_request_changes_when_threshold_met(
         supports_suggestions=False,
         supports_review_decisions=True,
     )
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(return_value=[])
     mock_get_provider.return_value = provider
     mock_get_context_window.return_value = 1_000_000
 
@@ -408,6 +409,7 @@ def test_run_review_submits_approve_when_only_low_nit_open(
         supports_suggestions=False,
         supports_review_decisions=True,
     )
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(return_value=[])
     mock_get_provider.return_value = provider
     mock_get_context_window.return_value = 1_000_000
 
@@ -459,6 +461,7 @@ def test_run_review_dry_run_does_not_submit_review_decision(
         supports_suggestions=False,
         supports_review_decisions=True,
     )
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(return_value=[])
     mock_get_provider.return_value = provider
     mock_get_context_window.return_value = 1_000_000
 
@@ -477,3 +480,65 @@ def test_run_review_dry_run_does_not_submit_review_decision(
         run_review("o", "r", 1, head_sha="abc123", dry_run=True)
 
     provider.submit_review_decision.assert_not_called()
+
+
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
+def test_run_review_request_changes_from_pre_existing_unresolved_high_comment(
+    mock_get_scm_config, mock_get_provider, mock_get_context_window
+):
+    """Quality gate counts unresolved items from provider even when agent posts no new findings."""
+    from code_review.runner import run_review
+
+    mock_get_scm_config.return_value = MagicMock(
+        provider="github",
+        url="https://api.github.com",
+        token="x",
+        skip_label="",
+        skip_title_pattern="",
+        review_decision_enabled=True,
+        review_decision_high_threshold=1,
+        review_decision_medium_threshold=3,
+    )
+    provider = MagicMock()
+    provider.get_pr_files.return_value = [FileInfo(path="foo.py", status="modified")]
+    provider.get_pr_diff.return_value = "diff"
+    provider.get_file_content.return_value = "content"
+    provider.get_existing_review_comments.return_value = []
+    provider.post_review_comments = MagicMock()
+    provider.submit_review_decision = MagicMock()
+    provider.post_pr_summary_comment = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        resolvable_comments=False,
+        supports_suggestions=False,
+        supports_review_decisions=True,
+    )
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(
+        return_value=[
+            UnresolvedReviewItem(
+                stable_id="thread:1",
+                thread_id="t1",
+                kind="discussion_thread",
+                path="foo.py",
+                line=1,
+                body="[High] Prior review",
+                inferred_severity="high",
+            )
+        ]
+    )
+    mock_get_provider.return_value = provider
+    mock_get_context_window.return_value = 1_000_000
+
+    mock_event = MagicMock()
+    mock_event.is_final_response.return_value = True
+    mock_event.content = MagicMock()
+    mock_event.content.parts = [MagicMock(text="[]")]
+    mock_runner_instance = MagicMock()
+    mock_runner_instance.run_async = runner_run_async_returning([mock_event])
+
+    with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
+        run_review("o", "r", 1, head_sha="abc123", dry_run=False)
+
+    provider.submit_review_decision.assert_called_once()
+    assert provider.submit_review_decision.call_args.args[3] == "REQUEST_CHANGES"

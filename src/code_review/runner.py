@@ -41,7 +41,11 @@ from code_review.diff.parser import (
 from code_review.formatters.comment import finding_to_comment_body
 from code_review.models import get_context_window
 from code_review.providers import get_provider
-from code_review.providers.base import InlineComment, RateLimitError
+from code_review.providers.base import (
+    InlineComment,
+    RateLimitError,
+    UnresolvedReviewItem,
+)
 from code_review.schemas.findings import FindingV1
 from code_review.standards import detect_from_paths, get_review_standards
 
@@ -719,15 +723,84 @@ def _post_run_marker_comment(
         )
 
 
-def _compute_review_decision(
+def _quality_gate_dedupe_key_for_item(item: UnresolvedReviewItem) -> str:
+    """Stable key so the same issue is not double-counted (marker fingerprint preferred)."""
+    parsed = parse_marker_from_comment_body(item.body)
+    fp = parsed.get("fingerprint")
+    if fp:
+        return f"fp:{fp}"
+    if item.thread_id:
+        return f"thread:{item.thread_id}"
+    return f"id:{item.stable_id}"
+
+
+def _quality_gate_dedupe_key_for_new_finding(finding: FindingV1, fp: str) -> str:
+    if fp:
+        return f"fp:{fp}"
+    return f"new:{finding.path}:{finding.line}:{finding.code}"
+
+
+def _quality_gate_high_medium_counts(
+    provider,
+    owner: str,
+    repo: str,
+    pr_number: int,
     to_post: list[tuple[FindingV1, str]],
+) -> tuple[int, int]:
+    """Count distinct open high/medium signals: existing unresolved items plus net-new findings."""
+    try:
+        items = provider.get_unresolved_review_items_for_quality_gate(owner, repo, pr_number)
+    except Exception as e:
+        logger.warning(
+            "get_unresolved_review_items_for_quality_gate failed owner=%s repo=%s pr_number=%s: %s",
+            owner,
+            repo,
+            pr_number,
+            e,
+        )
+        items = []
+    if not isinstance(items, list):
+        items = []
+
+    seen_keys: set[str] = set()
+    high_count = 0
+    medium_count = 0
+
+    def _bump(key: str, severity: str) -> None:
+        nonlocal high_count, medium_count
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        if severity == "high":
+            high_count += 1
+        elif severity == "medium":
+            medium_count += 1
+
+    for raw in items:
+        if not isinstance(raw, UnresolvedReviewItem):
+            continue
+        sev = raw.inferred_severity
+        if sev not in ("high", "medium"):
+            continue
+        _bump(_quality_gate_dedupe_key_for_item(raw), sev)
+
+    for finding, fp in to_post:
+        sev = finding.severity
+        if sev not in ("high", "medium"):
+            continue
+        _bump(_quality_gate_dedupe_key_for_new_finding(finding, fp), sev)
+
+    return high_count, medium_count
+
+
+def _compute_review_decision_from_counts(
+    high_count: int,
+    medium_count: int,
     *,
     high_threshold: int,
     medium_threshold: int,
 ) -> str:
-    """Return REQUEST_CHANGES or APPROVE from open finding severities."""
-    high_count = sum(1 for finding, _ in to_post if finding.severity == "high")
-    medium_count = sum(1 for finding, _ in to_post if finding.severity == "medium")
+    """Return REQUEST_CHANGES or APPROVE from aggregated open high/medium counts."""
     if high_count >= high_threshold or medium_count >= medium_threshold:
         return "REQUEST_CHANGES"
     return "APPROVE"
@@ -749,14 +822,19 @@ def _maybe_submit_review_decision(
 
     high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
     medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
-    decision = _compute_review_decision(
-        to_post,
+    high_count, medium_count = _quality_gate_high_medium_counts(
+        provider, owner, repo, pr_number, to_post
+    )
+    decision = _compute_review_decision_from_counts(
+        high_count,
+        medium_count,
         high_threshold=high_threshold,
         medium_threshold=medium_threshold,
     )
     reason = (
-        f"Auto decision by Viper: open high>= {high_threshold} or open medium>= "
-        f"{medium_threshold} => REQUEST_CHANGES; otherwise APPROVE."
+        f"Auto decision by Viper: aggregated open high={high_count} (threshold {high_threshold}), "
+        f"open medium={medium_count} (threshold {medium_threshold}) "
+        f"=> {decision}."
     )
 
     caps = provider.capabilities()

@@ -182,6 +182,54 @@ class ReviewComment(BaseModel):
     resolved: bool = False
 
 
+ReviewItemKind = Literal["inline_comment", "discussion_thread", "task"]
+
+
+class UnresolvedReviewItem(BaseModel):
+    """Normalized unresolved review signal for PR quality-gate decisioning.
+
+    Providers map SCM-specific threads, tasks, or inline comments into this shape.
+    ``inferred_severity`` is parsed from comment text when possible (e.g. ``[High]``).
+    """
+
+    stable_id: str = Field(..., description="Unique id for this item within one provider response")
+    thread_id: str | None = None
+    kind: ReviewItemKind = "inline_comment"
+    path: str = ""
+    line: int = 0
+    body: str = ""
+    inferred_severity: Literal["high", "medium", "low", "nit", "unknown"] = "unknown"
+
+
+def default_unresolved_review_items_from_comments(
+    comments: list[ReviewComment],
+) -> list[UnresolvedReviewItem]:
+    """Build unresolved items from inline comments with resolved=False (shared default)."""
+    from code_review.formatters.comment import infer_severity_from_comment_body
+
+    out: list[UnresolvedReviewItem] = []
+    for c in comments:
+        if c.resolved:
+            continue
+        body = (c.body or "").strip()
+        if not body:
+            continue
+        cid = (c.id or "").strip()
+        stable = f"comment:{cid}" if cid else f"path:{c.path}:{c.line}"
+        out.append(
+            UnresolvedReviewItem(
+                stable_id=stable,
+                thread_id=None,
+                kind="inline_comment",
+                path=c.path or "",
+                line=int(c.line or 0),
+                body=body,
+                inferred_severity=infer_severity_from_comment_body(body),
+            )
+        )
+    return out
+
+
 class InlineComment(BaseModel):
     """
     Provider-neutral inline review comment. Runner builds these from findings;
@@ -351,6 +399,18 @@ class ProviderInterface(ABC):
     ) -> list[ReviewComment]:
         """Return existing review comments (include resolved status for ignore list)."""
         ...
+
+    def get_unresolved_review_items_for_quality_gate(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[UnresolvedReviewItem]:
+        """Return unresolved review threads/tasks/comments for approve/request-changes gating.
+
+        Default uses ``get_existing_review_comments`` and treats ``resolved=False`` as open.
+        Providers with thread- or task-level resolution should override.
+        """
+        return default_unresolved_review_items_from_comments(
+            self.get_existing_review_comments(owner, repo, pr_number)
+        )
 
     def resolve_comment(self, owner: str, repo: str, comment_id: str) -> None:  # noqa: B027
         """Mark a comment as resolved. Default no-op if provider lacks support."""
