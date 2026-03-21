@@ -227,6 +227,8 @@ The agent (inside ADK) uses `get_configured_model()` for the model and calls too
 
 Configuration is read via **Pydantic Settings** in `config.py`; no `.env` file is loaded by default (env vars must be set in the process or loaded by the caller).
 
+For a **single consolidated table** of every environment variable (including context-aware, observability, runner-only flags, and E2E helpers), see **[CONFIGURATION-REFERENCE.md](CONFIGURATION-REFERENCE.md)**.
+
 ### 6.1 SCM (`SCM_` prefix)
 
 | Variable | Required | Description |
@@ -464,6 +466,7 @@ repos:
 ## 10. References
 
 - **README.md**: Quick start, configuration summary, Docker/CI, observability.
+- **CONFIGURATION-REFERENCE.md**: All environment variables in one place.
 - **.env.example**: Example SCM and LLM env vars.
 - **AGENTS.md**: Project summary, where things live, ADK usage, conventions; optional context for the review agent.
 - **Google ADK**: [Agent Development Kit](https://google.github.io/adk-docs/) — LlmAgent, Runner, SessionService, function tools.

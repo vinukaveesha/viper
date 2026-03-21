@@ -26,6 +26,8 @@ Choose the path that matches your setup.
 
 **For local testing** (running `code-review` on your machine or running the container locally), the agent needs **SCM** settings (provider, URL, token) and **LLM** settings (provider, model, API key). Copy `.env.example` to `.env` and set the required values; the file lists every option.  
 
+**Full variable list:** [Configuration reference](docs/CONFIGURATION-REFERENCE.md) (all `SCM_*`, `LLM_*`, `CONTEXT_*`, `CODE_REVIEW_*`, observability, and related options).
+
 In **CI/Jenkins**, the pipeline supplies these via credentials and job or global env—you do not need a local `.env`. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start](docs/QUICKSTART.md#configuration).
 
 **Context-aware review (optional)** — The runner can pull linked GitHub Issues, Jira tickets, or Confluence pages, distill them into a short brief, and attach that (plus optional PR commit messages) to the review prompt. Off by default; requires PostgreSQL with pgvector when enabled. See [Context-aware user guide](docs/CONTEXT-AWARE-USER-GUIDE.md) and [Context-aware developer guide](docs/CONTEXT-AWARE-DEVELOPER-GUIDE.md).

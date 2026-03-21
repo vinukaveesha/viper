@@ -1,4 +1,7 @@
-"""Validated configuration (Pydantic Settings). Centralizes env var handling."""
+"""Validated configuration (Pydantic Settings). Centralizes env var handling.
+
+See docs/CONFIGURATION-REFERENCE.md for a consolidated list of all environment variables.
+"""
 
 from typing import Literal
 from urllib.parse import urlparse
