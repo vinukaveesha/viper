@@ -1556,6 +1556,7 @@ class ReviewOrchestrator:
         all_findings: list[FindingV1],
         successful_post_count: int,
         to_post: list[tuple[FindingV1, str]],
+        context_brief_attached: bool = False,
     ) -> list[FindingV1]:
         """
         Emit run_complete log and observability.finish_run, then return the list of findings posted.
@@ -1580,6 +1581,7 @@ class ReviewOrchestrator:
             findings_count=len(all_findings),
             posts_count=successful_post_count,
             duration_seconds=_duration_ms / 1000.0,
+            context_brief_attached=context_brief_attached,
         )
         return [f for f, _ in to_post]
 
@@ -1905,7 +1907,7 @@ class ReviewOrchestrator:
             repo,
             pr_number,
             use_file_by_file=use_file_by_file,
-            context_brief_attached=bool(context_brief),
+            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
         )
 
         all_findings = self._run_agent_and_collect_findings(
@@ -1968,6 +1970,7 @@ class ReviewOrchestrator:
             all_findings,
             successful_post_count,
             to_post,
+            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
         )
 
 

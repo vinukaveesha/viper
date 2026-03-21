@@ -249,18 +249,32 @@ class ContextStore:
         conn,
         query_embedding: Sequence[float],
         limit: int = 12,
+        document_ids: Sequence[object] | None = None,
     ) -> list[str]:
         if len(query_embedding) != self.embedding_dimensions:
             return []
         vec_lit = "[" + ",".join(str(float(x)) for x in query_embedding) + "]"
+        if document_ids is not None and len(document_ids) == 0:
+            return []
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT content FROM {T_CHUNKS}
-                ORDER BY embedding <=> %s::vector
-                LIMIT %s
-                """,
-                (vec_lit, limit),
-            )
+            if document_ids is not None:
+                cur.execute(
+                    f"""
+                    SELECT content FROM {T_CHUNKS}
+                    WHERE document_id = ANY(%s)
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (list(document_ids), vec_lit, limit),
+                )
+            else:
+                cur.execute(
+                    f"""
+                    SELECT content FROM {T_CHUNKS}
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (vec_lit, limit),
+                )
             rows = cur.fetchall()
         return [r[0] for r in rows]
