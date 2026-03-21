@@ -1,6 +1,7 @@
 """GitHub API provider (for local testing without Gitea)."""
 
 import base64
+import json
 import logging
 from typing import Any, Literal
 
@@ -268,7 +269,7 @@ class GitHubProvider(ProviderInterface):
         """Use GraphQL review threads (resolved / outdated). On GraphQL failure, return []."""
         try:
             return self._unresolved_review_threads_graphql(owner, repo, pr_number)
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, RuntimeError) as e:
             logger.warning(
                 "GitHub GraphQL reviewThreads failed owner=%s repo=%s pr=%s: %s; "
                 "skipping pre-existing unresolved aggregation (REST comments lack resolution state).",
