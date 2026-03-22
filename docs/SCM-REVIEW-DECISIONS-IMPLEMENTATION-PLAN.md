@@ -24,13 +24,17 @@ Follow **single responsibility**, established patterns, and **reuse** shared inf
   - Bitbucket Server/DC: unresolved inline comments plus open PR tasks.
 - Tests already cover the implemented baseline in [`tests/test_runner.py`](../tests/test_runner.py), [`tests/config/test_config.py`](../tests/config/test_config.py), [`tests/providers/test_review_decision_common.py`](../tests/providers/test_review_decision_common.py), and provider-specific test modules.
 
-### 0.2 Confirmed gaps
+### 0.2 Confirmed gaps (updated after Phases A–D)
 
-- There is **no** review-decision-only mode yet.
-- There is **no** provider-neutral event/context object for comment-driven re-evaluation.
-- There is **no** API to ask whether the bot is **currently blocking** the PR/MR.
-- There is **no** reply-dismissal agent, reply classification schema, or runner path for classifying user replies.
-- The bundled Jenkins pipeline currently triggers full runs only for push-style PR actions (`opened`, `reopened`, `synchronize`, `synchronized`, or Bitbucket `pr:*`), not comment/discussion-only changes.
+**Still open**
+
+- There is **no** reply-dismissal agent, reply classification schema, or runner path for classifying user replies (Phase E).
+- There is **no** named `get_bot_attribution_identity`-style abstraction yet (§5.3); blocking state uses provider-specific token-user identity.
+- Item deletion / outdated / resolved transitions are modeled in `ReviewDecisionEventContext` and can drive decision-only runs when CI invokes them; **no** new automatic SCM subscription logic lives in this repo.
+
+**Addressed (see §8 checklist)**
+
+- Review-decision-only mode, shared gate helper, event context model, tri-state `get_bot_blocking_state`, optional short-circuit (`CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING`), head SHA resolution, Jenkins decision-only branch, and config/docs updates.
 
 ### 0.3 Corrections to earlier wording
 
@@ -68,14 +72,16 @@ Adding a **new** SCM still means: implement `submit_review_decision`, set `suppo
 | `get_unresolved_review_items_for_quality_gate(...)` | `ProviderInterface` in `src/code_review/providers/base.py` | Default maps unresolved comments into `UnresolvedReviewItem` |
 | `UnresolvedReviewItem` | `src/code_review/providers/base.py` | Existing normalized shape for quality-gate aggregation |
 
-No interface exists yet for:
+Implemented on `ProviderInterface` / `ProviderCapabilities`:
 
-- current bot blocking state
-- bot attribution identity (Viper’s review/comment author — see §5.3)
-- comment-webhook event context
-- thread/reply classification input
+- **Bot blocking state:** `get_bot_blocking_state(...) -> BotBlockingState` and `supports_bot_blocking_state_query` (GitHub, Gitea, GitLab, Bitbucket Cloud, Bitbucket Server/DC when slug is set).
 
-Those should be added deliberately instead of being inferred ad hoc inside provider methods.
+Still not on the interface (planned / Phase E):
+
+- **Bot attribution identity** as a dedicated typed value (§5.3) — distinct from token-user lookups used for blocking state today.
+- **Thread/reply classification input** for the reply-dismissal agent.
+
+**Event context:** `ReviewDecisionEventContext` plus `CODE_REVIEW_EVENT_*` env parsing (`review_decision_event_context_from_env`) supplies a provider-neutral webhook/CI surface.
 
 ---
 
@@ -360,18 +366,19 @@ Use a **separate agent** from the code review agent.
 | File | Role |
 |------|------|
 | `src/code_review/runner.py` | review-decision aggregation, submission, and orchestrator flow |
-| `src/code_review/__main__.py` | CLI overrides; future home of `--review-decision-only` |
-| `src/code_review/config.py` | review-decision config; likely future env for decision-only mode and optional bot identity overrides |
-| `src/code_review/providers/base.py` | `ReviewDecision`, `UnresolvedReviewItem`, future blocking-state / identity / event interfaces |
+| `src/code_review/__main__.py` | CLI overrides; `--review-decision-only` |
+| `src/code_review/config.py` | `SCMConfig` review-decision fields; `CodeReviewAppConfig` for decision-only and skip-if-not-blocking |
+| `src/code_review/providers/base.py` | `ReviewDecision`, `UnresolvedReviewItem`, `BotBlockingState`, `get_bot_blocking_state` |
+| `src/code_review/schemas/review_decision_event.py` | `ReviewDecisionEventContext`, env loader, skip-eligibility helper |
 | `src/code_review/providers/review_decision_common.py` | shared helpers for review-decision submission |
 | `src/code_review/providers/github.py` | thread-based gate; strong candidate for first reply-dismissal implementation |
 | `src/code_review/providers/gitlab.py` | discussion-based gate; strong candidate for first reply-dismissal implementation |
 | `src/code_review/providers/gitea.py` | comment-based gate; thread support must be validated before dismissal work |
 | `src/code_review/providers/bitbucket.py` | task-first gate; likely partial/late reply-dismissal support |
-| `src/code_review/providers/bitbucket_server.py` | inline-comment + task gate; needs participant-state reuse for blocking checks |
+| `src/code_review/providers/bitbucket_server.py` | inline-comment + task gate; participant status for blocking + review decisions |
 | `src/code_review/agent/agent.py` | code review agent only; do not merge reply-dismissal logic into this prompt |
 | `src/code_review/agent/reply_dismissal_agent.py` (planned) | reply-dismissal agent |
-| `docker/jenkins/Jenkinsfile` | current PR trigger filtering; must be updated for comment-only decision runs |
+| `docker/jenkins/Jenkinsfile` | PR trigger filtering; optional `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS` decision-only path |
 | `tests/test_runner.py` | review-decision orchestration tests |
 | `tests/config/test_config.py` | config and CLI override behavior |
 | `tests/providers/test_*.py` | per-provider review-decision and gate semantics |
@@ -380,14 +387,18 @@ Use a **separate agent** from the code review agent.
 
 ## 8. Ordered checklist
 
-1. [ ] Extract a shared runner helper for `high_count`, `medium_count`, `decision`, and `reason`, and reuse it from both `_maybe_submit_review_decision(...)` and `_optional_quality_gate_summary_suffix(...)`.
-2. [ ] Add tests for the shared helper so future review modes do not drift in threshold or dedupe behavior.
-3. [ ] Introduce a provider-neutral `ReviewDecisionEventContext` model and thread it through `ReviewOrchestrator`.
-4. [ ] Add a review-decision-only mode in CLI and config, implemented inside the orchestrator and intentionally skipping agent execution, inline posting, stale-resolution, and omit-marker PR summary comments.
-5. [ ] Define how decision-only runs obtain `head_sha` when the triggering event does not provide one, and implement provider support if a fetch is required.
+**How to use this list:** check boxes track **repository** work. Keep this section updated when phases land so it stays the rollout ledger.
+
+**Phases A–D (as implemented):** items **1–5**, **7**, and **8** are done. **6** is still open (blocking state uses token-user/review APIs per provider, not a shared `get_bot_attribution_identity` type). **9** is only partial: event kinds exist and CI can call decision-only with `CODE_REVIEW_EVENT_KIND`; there is no new in-repo webhook receiver. **13** is partial (`docs/CONFIGURATION-REFERENCE.md`, `docs/GITHUB-ACTIONS.md`, Jenkinsfile comments; Phase F remains for merge-blocking doc parity and richer observability).
+
+1. [x] Extract a shared runner helper for `high_count`, `medium_count`, `decision`, and `reason`, and reuse it from both `_maybe_submit_review_decision(...)` and `_optional_quality_gate_summary_suffix(...)`.
+2. [x] Add tests for the shared helper so future review modes do not drift in threshold or dedupe behavior.
+3. [x] Introduce a provider-neutral `ReviewDecisionEventContext` model and thread it through `ReviewOrchestrator`.
+4. [x] Add a review-decision-only mode in CLI and config, implemented inside the orchestrator and intentionally skipping agent execution, inline posting, stale-resolution, and omit-marker PR summary comments.
+5. [x] Define how decision-only runs obtain `head_sha` when the triggering event does not provide one, and implement provider support if a fetch is required.
 6. [ ] Add a bot-attribution identity abstraction to providers (`get_bot_attribution_identity` or equivalent per §5.3) so later work can reliably distinguish Viper’s comments/reviews from human replies.
-7. [ ] Add a tri-state provider API for “is the bot currently blocking this PR/MR?” and use it to short-circuit decision-only runs when safe.
-8. [ ] Update Jenkins and other trigger docs/examples so comment/discussion events can invoke review-decision-only runs.
+7. [x] Add a tri-state provider API for “is the bot currently blocking this PR/MR?” and use it to short-circuit decision-only runs when safe.
+8. [x] Update Jenkins and other trigger docs/examples so comment/discussion events can invoke review-decision-only runs.
 9. [ ] Extend provider event/context handling so review-item deletion, thread resolution, and thread outdated transitions also trigger decision-only recomputation.
 10. [ ] Implement provider fetchers for reply-thread context and deleted/outdated-item detection, starting with GitHub and GitLab.
 11. [ ] Add the reply-dismissal agent, schema validation, and runner integration for single-reply classification.
