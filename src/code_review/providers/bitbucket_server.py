@@ -27,6 +27,17 @@ from code_review.providers.safety import truncate_repo_content
 
 logger = logging.getLogger("code_review")
 
+
+def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> str:
+    """Best-effort response body snippet for logging (Bitbucket Server review decision paths)."""
+    try:
+        if exc.response is not None:
+            return (exc.response.text or "")[:limit]
+    except Exception:
+        pass
+    return ""
+
+
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 CONTENT_TYPE_JSON = "application/json"
 _DEV_NULL = "/dev/null"
@@ -529,6 +540,104 @@ class BitbucketServerProvider(ProviderInterface):
         except (TypeError, ValueError):
             return None
 
+    def _bbs_participant_put(self, participant_path: str, payload: dict[str, str], pr_version: int) -> None:
+        self._put(f"{participant_path}?version={pr_version}", payload)
+
+    def _bbs_submit_review_decision_retry_after_409(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        participant_path: str,
+        payload: dict[str, str],
+        cause: httpx.HTTPStatusError,
+    ) -> None:
+        """Refetch PR version and retry participant PUT once after HTTP 409."""
+        version2 = self._pull_request_version(owner, repo, pr_number)
+        if version2 is None:
+            raise ValueError(
+                "Bitbucket Server: could not read pull request version after 409 on review decision."
+            ) from cause
+        logger.debug(
+            "Bitbucket Server submit_review_decision 409; retrying participant PUT "
+            "owner=%s repo=%s pr=%s",
+            owner,
+            repo,
+            pr_number,
+        )
+        self._bbs_participant_put(participant_path, payload, version2)
+
+    def _bbs_try_participant_put_after_refetch(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        participant_path: str,
+        payload: dict[str, str],
+        version2: int,
+    ) -> bool:
+        """PUT with a refetched PR version. True if succeeded; False if HTTP 400 (caller may try -1)."""
+        try:
+            self._bbs_participant_put(participant_path, payload, version2)
+            return True
+        except httpx.HTTPStatusError as exc2:
+            sc2 = exc2.response.status_code if exc2.response is not None else 0
+            if sc2 == 409:
+                version3 = self._pull_request_version(owner, repo, pr_number)
+                if version3 is None:
+                    raise ValueError(
+                        "Bitbucket Server: could not read pull request version "
+                        "after second 409 on review decision."
+                    ) from exc2
+                self._bbs_participant_put(participant_path, payload, version3)
+                return True
+            if sc2 != 400:
+                raise
+            return False
+
+    def _bbs_submit_review_decision_handle_400(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        participant_path: str,
+        payload: dict[str, str],
+        version: int,
+        exc: httpx.HTTPStatusError,
+    ) -> None:
+        """Recover from HTTP 400: retry with refetched version and/or version=-1 wildcard."""
+        err_text = _http_error_response_text(exc)
+        logger.warning(
+            "Bitbucket Server submit_review_decision HTTP 400 owner=%s repo=%s pr=%s "
+            "participant_slug=%s first_version=%s response=%s",
+            owner,
+            repo,
+            pr_number,
+            self._participant_user_slug,
+            version,
+            err_text,
+        )
+        version2 = self._pull_request_version(owner, repo, pr_number)
+        if (
+            version2 is not None
+            and version2 != version
+            and self._bbs_try_participant_put_after_refetch(
+                owner, repo, pr_number, participant_path, payload, version2
+            )
+        ):
+            return
+        try:
+            self._bbs_participant_put(participant_path, payload, -1)
+        except httpx.HTTPStatusError as exc3:
+            logger.warning(
+                "Bitbucket Server participant PUT with version=-1 failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                _http_error_response_text(exc3),
+            )
+            raise exc3
+
     def submit_review_decision(
         self,
         owner: str,
@@ -558,31 +667,24 @@ class BitbucketServerProvider(ProviderInterface):
             )
         slug = quote(self._participant_user_slug, safe="")
         status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
-        path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
+        participant_path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
         payload = {"status": status}
 
-        def _put_participant(ver: int) -> None:
-            self._put(f"{path}?version={ver}", payload)
-
         try:
-            _put_participant(version)
+            self._bbs_participant_put(participant_path, payload, version)
         except httpx.HTTPStatusError as exc:
-            if exc.response is None or exc.response.status_code != 409:
-                raise
-            version2 = self._pull_request_version(owner, repo, pr_number)
-            if version2 is None:
-                raise ValueError(
-                    "Bitbucket Server: could not read pull request version "
-                    "after 409 on review decision."
-                ) from exc
-            logger.debug(
-                "Bitbucket Server submit_review_decision 409; retrying participant PUT "
-                "owner=%s repo=%s pr=%s",
-                owner,
-                repo,
-                pr_number,
-            )
-            _put_participant(version2)
+            sc = exc.response.status_code if exc.response is not None else 0
+            if sc == 409:
+                self._bbs_submit_review_decision_retry_after_409(
+                    owner, repo, pr_number, participant_path, payload, exc
+                )
+                return
+            if sc == 400:
+                self._bbs_submit_review_decision_handle_400(
+                    owner, repo, pr_number, participant_path, payload, version, exc
+                )
+                return
+            raise
 
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the pull request (paginated REST)."""
@@ -659,5 +761,6 @@ class BitbucketServerProvider(ProviderInterface):
             markup_hides_html_comment=False,
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
+            embed_agent_marker_as_commonmark_linkref=True,
             supports_review_decisions=bool(self._participant_user_slug),
         )

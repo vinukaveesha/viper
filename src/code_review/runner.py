@@ -284,6 +284,55 @@ def _validate_suggested_patches(
     return result
 
 
+# Model sometimes emits stream-of-consciousness findings then retracts them in the same message.
+# Every pattern ties the walk-back to the model / this finding (I, this, that, it), not domain jargon alone.
+_SELF_RETRACTION_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:i\s+will|i['\u2019]ll)\s+retract\b", re.I),
+    re.compile(r"\bi\s+retract\b", re.I),
+    re.compile(r"\bretract(?:ed|ing)?\s+this\s+finding\b", re.I),
+    re.compile(r"\bretract\s+this\b", re.I),
+    re.compile(r"\b(?:this|that|it)\s+is\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bthat\s+was\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bit's\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bwithdraw\s+this\s+finding\b", re.I),
+    re.compile(r"\bdisregard\s+this\b", re.I),
+    re.compile(r"\bignore\s+this\s+(?:finding|comment)\b", re.I),
+    re.compile(r"\b(?:i|we)\s+no\s+longer\s+(?:believe|think)\b", re.I),
+    re.compile(r"\bi\s+was\s+wrong\b", re.I),
+    re.compile(r"\bi\s+was\s+mistaken\b", re.I),
+    re.compile(r"\bmy\s+mistake\b", re.I),
+    re.compile(r"\bon\s+second\s+thought\b", re.I),
+    re.compile(r"\bupon\s+reflection\b", re.I),
+    re.compile(r"\b(?:sorry|apologies),?\s+(?:ignore|disregard)\b", re.I),
+    re.compile(r"\bactually,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
+    re.compile(r"\bhowever,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
+)
+
+
+def _finding_message_looks_self_retracted(message: str) -> bool:
+    """True when the model walked back or disowned the issue inside the same message."""
+    if not message or not str(message).strip():
+        return False
+    return any(p.search(message) for p in _SELF_RETRACTION_MESSAGE_PATTERNS)
+
+
+def _filter_self_retracted_finding_messages(findings: list[FindingV1]) -> list[FindingV1]:
+    """Drop findings whose message text retracts or negates the issue (non-actionable noise)."""
+    if not findings:
+        return findings
+    kept: list[FindingV1] = []
+    for f in findings:
+        if _finding_message_looks_self_retracted(f.message):
+            logger.info(
+                "Dropping finding with self-retracted or withdrawn message text: %s:%d",
+                f.path,
+                f.line,
+            )
+            continue
+        kept.append(f)
+    return kept
+
+
 # Default search radius for anchor-based line relocation (lines above & below finding.line).
 _ANCHOR_RELOCATION_WINDOW = 20
 
@@ -684,7 +733,88 @@ def _post_comments_one_by_one(
     return count
 
 
-def _post_run_marker_comment(
+def _omit_marker_pr_summary_visible_text(
+    *,
+    findings_planned: int,
+    successful_inline_posts: int,
+    cfg,
+    provider,
+    high_count: int,
+    medium_count: int,
+) -> str:
+    """Human-readable PR summary for providers that omit inline HTML markers (e.g. Bitbucket)."""
+    lines: list[str] = [
+        "**Viper** (automated code review) finished for this pull request at the current revision."
+    ]
+    if findings_planned == 0:
+        lines.append(
+            "It **did not flag new issues** that require inline comments in this run "
+            "(within the reviewed diff scope and your ignore rules)."
+        )
+        lines.append(
+            "**From this automated pass, the change appears to meet expectations** for the areas reviewed."
+        )
+    else:
+        lines.append(
+            f"It **identified {findings_planned} issue(s)** worth addressing on the diff."
+        )
+        if successful_inline_posts >= findings_planned:
+            lines.append(f"**Posted {successful_inline_posts} inline comment(s)** on the diff.")
+        elif successful_inline_posts > 0:
+            lines.append(
+                f"**Posted {successful_inline_posts} of {findings_planned} inline comment(s)**; "
+                "some could not be anchored (see CI logs)."
+            )
+        else:
+            lines.append(
+                "**Could not post inline comments** (e.g. anchor conflicts); see CI logs. "
+                "Re-run after updating the PR or fixing the reported problems."
+            )
+
+    extra = _optional_quality_gate_summary_suffix(
+        provider, cfg, high_count, medium_count
+    )
+    if extra:
+        lines.append(extra)
+    return "\n\n".join(lines)
+
+
+def _optional_quality_gate_summary_suffix(
+    provider,
+    cfg,
+    high_count: int,
+    medium_count: int,
+) -> str:
+    """Append threshold / merge-gate wording when review decisions are enabled.
+
+    *high_count* and *medium_count* must match the single pre-inline-post snapshot from
+    :func:`_quality_gate_high_medium_counts` so summary text agrees with ``submit_review_decision``.
+    """
+    if not bool(getattr(cfg, "review_decision_enabled", False)):
+        return ""
+    if not provider.capabilities().supports_review_decisions:
+        return ""
+    high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
+    medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
+    decision = _compute_review_decision_from_counts(
+        high_count,
+        medium_count,
+        high_threshold=high_threshold,
+        medium_threshold=medium_threshold,
+    )
+    if decision == "REQUEST_CHANGES":
+        return (
+            f"Given your configured thresholds, Viper **suggests this PR needs work** before merge "
+            f"(open high={high_count} vs threshold {high_threshold}, "
+            f"open medium={medium_count} vs threshold {medium_threshold})."
+        )
+    return (
+        f"Given your configured thresholds, this PR **passes Viper's automated merge gate** "
+        f"(open high={high_count}, open medium={medium_count})."
+    )
+
+
+def _post_omit_marker_pr_summary_comment(
     provider,
     owner: str,
     repo: str,
@@ -692,25 +822,49 @@ def _post_run_marker_comment(
     cfg,
     llm_cfg,
     head_sha: str,
+    *,
+    findings_planned: int,
+    successful_inline_posts: int,
+    high_count: int,
+    medium_count: int,
+    include_run_marker: bool = True,
 ) -> None:
-    """Post a minimal PR-level comment containing the run idempotency marker.
+    """Post a PR-level summary for omit-marker providers; optionally attach the ``run=`` id marker.
 
-    Called after every non-dry run for providers that do not embed the fingerprint
-    marker in inline comment bodies (omit_fingerprint_marker_in_body=True, e.g.
-    Bitbucket Server).  Without this comment the run_id is never stored anywhere,
-    so _idempotency_key_seen_in_comments can never fire and the runner re-processes
-    the same PR on every CI trigger — even when all inline comments fail with 409.
+    The run marker must only be included when every planned inline comment was posted (or
+    there were none to post). Otherwise a later CI run would short-circuit on idempotency
+    and never retry failed inline posts.
 
-    A PR-level comment (no anchor) is used so there are no lineType constraints
-    that could cause 409 errors.
+    When *include_run_marker* is False, only the visible summary is posted (still useful
+    for operators); no idempotency short-circuit until a fully successful post run.
     """
-    run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
-    body = format_comment_body_with_marker("", "", AGENT_VERSION, run_id=run_id)
+    caps = provider.capabilities()
+    visible = _omit_marker_pr_summary_visible_text(
+        findings_planned=findings_planned,
+        successful_inline_posts=successful_inline_posts,
+        cfg=cfg,
+        provider=provider,
+        high_count=high_count,
+        medium_count=medium_count,
+    )
+    if include_run_marker:
+        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+        use_linkref = getattr(caps, "embed_agent_marker_as_commonmark_linkref", None) is True
+        body = format_comment_body_with_marker(
+            visible,
+            "",
+            AGENT_VERSION,
+            run_id=run_id,
+            marker_at_end=not caps.markup_hides_html_comment,
+            use_commonmark_linkref=use_linkref,
+        )
+    else:
+        body = visible
     try:
         provider.post_pr_summary_comment(owner, repo, pr_number, body)
     except Exception as e:
         logger.warning(
-            "_post_run_marker_comment failed owner=%s repo=%s pr_number=%s: %s",
+            "_post_omit_marker_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
             owner,
             repo,
             pr_number,
@@ -808,18 +962,21 @@ def _maybe_submit_review_decision(
     pr_number: int,
     head_sha: str,
     dry_run: bool,
-    to_post: list[tuple[FindingV1, str]],
     cfg,
+    *,
+    high_count: int,
+    medium_count: int,
 ) -> None:
-    """Submit or log PR-level review decision when configured and supported."""
+    """Submit or log PR-level review decision when configured and supported.
+
+    *high_count* / *medium_count* must be the same pre-inline-post values used for the
+    omit-marker PR summary so decision and user-visible counts stay aligned.
+    """
     if not bool(getattr(cfg, "review_decision_enabled", False)):
         return
 
     high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
     medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
-    high_count, medium_count = _quality_gate_high_medium_counts(
-        provider, owner, repo, pr_number, to_post
-    )
     decision = _compute_review_decision_from_counts(
         high_count,
         medium_count,
@@ -1486,6 +1643,9 @@ class ReviewOrchestrator:
         )
         if dry_run:
             return 0
+        high_count, medium_count = _quality_gate_high_medium_counts(
+            provider, owner, repo, pr_number, to_post
+        )
         count = 0
         if to_post:
             if not head_sha:
@@ -1504,20 +1664,25 @@ class ReviewOrchestrator:
                 llm_cfg,
                 full_diff=full_diff,
             )
-        # For providers that omit the fingerprint marker from inline comment bodies
-        # (e.g. Bitbucket Server), there is no run_id persisted when inline posting
-        # completely fails. In that specific case, post a dedicated PR-level marker
-        # comment so future runs can short-circuit instead of infinite re-processing.
-        #
-        # When at least one inline comment is posted successfully, avoid posting this
-        # marker comment because it appears as a visible, out-of-place activity entry.
-        if (
-            head_sha
-            and to_post
-            and count == 0
-            and provider.capabilities().omit_fingerprint_marker_in_body
-        ):
-            _post_run_marker_comment(provider, owner, repo, pr_number, cfg, llm_cfg, head_sha)
+        # Bitbucket Server/Cloud: PR-level summary; run= marker only when inline posting
+        # fully succeeded (or nothing was planned) so partial failures can retry on the next run.
+        if head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
+            planned = len(to_post)
+            include_marker = planned == 0 or count == planned
+            _post_omit_marker_pr_summary_comment(
+                provider,
+                owner,
+                repo,
+                pr_number,
+                cfg,
+                llm_cfg,
+                head_sha,
+                findings_planned=planned,
+                successful_inline_posts=count,
+                high_count=high_count,
+                medium_count=medium_count,
+                include_run_marker=include_marker,
+            )
         _maybe_submit_review_decision(
             provider,
             owner,
@@ -1525,8 +1690,9 @@ class ReviewOrchestrator:
             pr_number,
             head_sha,
             dry_run,
-            to_post,
             cfg,
+            high_count=high_count,
+            medium_count=medium_count,
         )
         return count
 
@@ -1679,7 +1845,9 @@ class ReviewOrchestrator:
         # naming a visible line (so the line-visibility guard above passes).  Without
         # this guard, the patch would be rendered as a suggestion block replacing the
         # wrong code.  Stripping it degrades gracefully to a plain inline comment.
-        return _validate_suggested_patches(line_filtered, full_diff)
+        patched = _validate_suggested_patches(line_filtered, full_diff)
+        # Drop findings where the model argued itself out of the issue in the same message.
+        return _filter_self_retracted_finding_messages(patched)
 
     @staticmethod
     def _build_pr_url(cfg, owner: str, repo: str, pr_number: int) -> str:
