@@ -761,10 +761,14 @@ def _omit_marker_pr_summary_visible_text(
             "It **did not flag new issues** that require inline comments in this run "
             "(within the reviewed diff scope and your ignore rules)."
         )
-        lines.append(
-            "**From this automated pass, the change appears to meet expectations** "
-            "for the areas reviewed."
+        gate_in_summary = bool(getattr(cfg, "review_decision_enabled", False)) and (
+            provider.capabilities().supports_review_decisions
         )
+        if not gate_in_summary or gate_outcome.decision != "REQUEST_CHANGES":
+            lines.append(
+                "**From this automated pass, the change appears to meet expectations** "
+                "for the areas reviewed."
+            )
     else:
         lines.append(
             f"It **identified {findings_planned} issue(s)** worth addressing on the diff."

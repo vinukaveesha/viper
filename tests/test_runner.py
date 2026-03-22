@@ -781,6 +781,93 @@ def test_compute_quality_gate_review_outcome_excludes_stable_ids():
     assert out.decision == "REQUEST_CHANGES"
 
 
+def test_omit_marker_pr_summary_omits_meets_expectations_when_gate_requests_changes():
+    from code_review.runner import (
+        QualityGateReviewOutcome,
+        _omit_marker_pr_summary_visible_text,
+    )
+
+    cfg = _review_decision_scm_config()
+    provider = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        supports_review_decisions=True,
+    )
+    gate = QualityGateReviewOutcome(
+        high_count=1,
+        medium_count=0,
+        decision="REQUEST_CHANGES",
+        submission_reason="x",
+    )
+    text = _omit_marker_pr_summary_visible_text(
+        findings_planned=0,
+        successful_inline_posts=0,
+        cfg=cfg,
+        provider=provider,
+        gate_outcome=gate,
+    )
+    assert "meet expectations" not in text.lower()
+    assert "needs work" in text.lower()
+
+
+def test_omit_marker_pr_summary_keeps_meets_expectations_when_gate_approves():
+    from code_review.runner import (
+        QualityGateReviewOutcome,
+        _omit_marker_pr_summary_visible_text,
+    )
+
+    cfg = _review_decision_scm_config()
+    provider = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        supports_review_decisions=True,
+    )
+    gate = QualityGateReviewOutcome(
+        high_count=0,
+        medium_count=0,
+        decision="APPROVE",
+        submission_reason="x",
+    )
+    text = _omit_marker_pr_summary_visible_text(
+        findings_planned=0,
+        successful_inline_posts=0,
+        cfg=cfg,
+        provider=provider,
+        gate_outcome=gate,
+    )
+    assert "meet expectations" in text.lower()
+
+
+def test_omit_marker_pr_summary_meets_expectations_when_review_decisions_disabled():
+    from code_review.runner import (
+        QualityGateReviewOutcome,
+        _omit_marker_pr_summary_visible_text,
+    )
+
+    cfg = _scm_config(
+        review_decision_enabled=False,
+        review_decision_high_threshold=1,
+        review_decision_medium_threshold=3,
+    )
+    provider = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        supports_review_decisions=True,
+    )
+    gate = QualityGateReviewOutcome(
+        high_count=9,
+        medium_count=9,
+        decision="REQUEST_CHANGES",
+        submission_reason="x",
+    )
+    text = _omit_marker_pr_summary_visible_text(
+        findings_planned=0,
+        successful_inline_posts=0,
+        cfg=cfg,
+        provider=provider,
+        gate_outcome=gate,
+    )
+    assert "meet expectations" in text.lower()
+    assert "needs work" not in text.lower()
+
+
 @patch("code_review.runner.get_code_review_app_config")
 @patch("code_review.runner._run_reply_dismissal_llm")
 @patch("code_review.runner.get_context_window")

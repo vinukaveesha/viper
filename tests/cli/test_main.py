@@ -123,7 +123,10 @@ def test_cli_head_sha_required_when_not_dry_run_exits_1():
 def test_cli_allows_missing_head_sha_with_review_decision_only():
     from code_review.config import reset_config_cache
 
-    with patch("code_review.__main__.run_review") as mock_run:
+    with (
+        patch.dict(os.environ, {"SCM_HEAD_SHA": ""}, clear=False),
+        patch("code_review.__main__.run_review") as mock_run,
+    ):
         mock_run.return_value = []
         reset_config_cache()
         try:

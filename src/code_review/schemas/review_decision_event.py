@@ -76,13 +76,15 @@ class ReviewDecisionEventContext(BaseModel):
     @classmethod
     def _normalize_kind(cls, v: object) -> str:
         s = (str(v) if v is not None else "").strip() or "other"
-        return s if s in _VALID_KINDS else "other"
+        key = s.lower()
+        return key if key in _VALID_KINDS else "other"
 
     @field_validator("source", mode="before")
     @classmethod
     def _normalize_source(cls, v: object) -> str:
         s = (str(v) if v is not None else "").strip() or "full_review"
-        return s if s in _VALID_SOURCES else "full_review"
+        key = s.lower()
+        return key if key in _VALID_SOURCES else "full_review"
 
     def has_audit_fields(self) -> bool:
         """True when any non-default identifying field is set (for structured logging)."""

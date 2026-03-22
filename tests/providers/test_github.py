@@ -359,6 +359,7 @@ def test_get_review_thread_dismissal_context_finds_thread(mock_gql):
                             "isResolved": False,
                             "isOutdated": False,
                             "comments": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
                                 "nodes": [
                                     {
                                         "databaseId": 100,
@@ -376,7 +377,7 @@ def test_get_review_thread_dismissal_context_finds_thread(mock_gql):
                                         "createdAt": "t2",
                                         "author": {"login": "dev"},
                                     },
-                                ]
+                                ],
                             },
                         }
                     ],
@@ -389,6 +390,65 @@ def test_get_review_thread_dismissal_context_finds_thread(mock_gql):
     assert ctx is not None
     assert ctx.gate_exclusion_stable_id == "github:thread:PRRT_kwDOABC"
     assert len(ctx.entries) == 2
+
+
+@patch.object(GitHubProvider, "_graphql")
+def test_get_review_thread_dismissal_context_fetches_extra_comment_pages(mock_gql):
+    """Triggered comment past first comments page is found via node(id) pagination."""
+    first_page_nodes = [
+        {
+            "databaseId": 1000 + i,
+            "body": f"c{i}",
+            "path": "a.py",
+            "line": 1,
+            "createdAt": "t0",
+            "author": {"login": "u"},
+        }
+        for i in range(50)
+    ]
+    thread = {
+        "id": "PRRT_kwLONG",
+        "isResolved": False,
+        "isOutdated": False,
+        "comments": {
+            "pageInfo": {"hasNextPage": True, "endCursor": "commentCur1"},
+            "nodes": first_page_nodes,
+        },
+    }
+    list_threads = {
+        "repository": {
+            "pullRequest": {
+                "reviewThreads": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [thread],
+                }
+            }
+        }
+    }
+    more_comments = {
+        "node": {
+            "comments": {
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                "nodes": [
+                    {
+                        "databaseId": 9999,
+                        "body": "target",
+                        "path": "a.py",
+                        "line": 1,
+                        "createdAt": "t9",
+                        "author": {"login": "human"},
+                    }
+                ],
+            }
+        }
+    }
+    mock_gql.side_effect = [list_threads, more_comments]
+
+    p = GitHubProvider("https://api.github.com", "tok")
+    ctx = p.get_review_thread_dismissal_context("o", "r", 1, "9999")
+    assert ctx is not None
+    assert len(ctx.entries) == 51
+    assert ctx.entries[-1].comment_id == "9999"
 
 
 @patch("code_review.providers.github.httpx.Client")

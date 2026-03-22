@@ -34,6 +34,12 @@ def test_context_accepts_valid_kind():
     assert c.source == "webhook_comment"
 
 
+def test_context_normalizes_kind_and_source_case_insensitive():
+    c = ReviewDecisionEventContext(event_kind="REPLY_ADDED", source="WEBHOOK_COMMENT")
+    assert c.event_kind == "reply_added"
+    assert c.source == "webhook_comment"
+
+
 def test_has_audit_fields():
     assert not ReviewDecisionEventContext().has_audit_fields()
     assert ReviewDecisionEventContext(event_name="issue_comment").has_audit_fields()
@@ -79,4 +85,7 @@ def test_event_allows_skip_only_for_reply_added_with_audit():
     )
     assert event_allows_decision_only_skip_when_bot_not_blocking(
         ReviewDecisionEventContext(event_kind="reply_added", comment_id="1")
+    )
+    assert event_allows_decision_only_skip_when_bot_not_blocking(
+        ReviewDecisionEventContext(event_kind="REPLY_ADDED", comment_id="1")
     )
