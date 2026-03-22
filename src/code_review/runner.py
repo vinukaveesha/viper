@@ -53,6 +53,7 @@ from code_review.providers.base import (
 from code_review.schemas.findings import FindingV1
 from code_review.schemas.review_decision_event import (
     ReviewDecisionEventContext,
+    event_allows_decision_only_skip_when_bot_not_blocking,
     review_decision_event_context_from_env,
 )
 from code_review.standards import detect_from_paths, get_review_standards
@@ -225,9 +226,9 @@ def _patch_tokens(text: str) -> set[str]:
 
 
 def _validate_suggested_patches(
-    findings: list["FindingV1"],
+    findings: list[FindingV1],
     diff_text: str,
-) -> list["FindingV1"]:
+) -> list[FindingV1]:
     """Strip suggested_patch from findings where the patch doesn't match the anchored line.
 
     For each finding with a suggested_patch, look up the actual content of finding.line
@@ -293,7 +294,7 @@ def _validate_suggested_patches(
 
 
 # Model sometimes emits stream-of-consciousness findings then retracts them in the same message.
-# Every pattern ties the walk-back to the model / this finding (I, this, that, it), not domain jargon alone.
+# Patterns tie the walk-back to the model / this finding (I, this, that, it), not domain jargon.
 _SELF_RETRACTION_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:i\s+will|i['\u2019]ll)\s+retract\b", re.I),
     re.compile(r"\bi\s+retract\b", re.I),
@@ -387,10 +388,10 @@ def _find_closest_anchor_line(
 
 
 def _relocate_findings_by_anchor(
-    findings: list["FindingV1"],
+    findings: list[FindingV1],
     diff_text: str,
     window: int = _ANCHOR_RELOCATION_WINDOW,
-) -> list["FindingV1"]:
+) -> list[FindingV1]:
     """Correct finding line numbers when the anchor text doesn't match the reported line.
 
     The LLM sometimes identifies the right code issue but reports a line number
@@ -415,10 +416,10 @@ def _relocate_findings_by_anchor(
 
 
 def _maybe_relocate_finding(
-    f: "FindingV1",
+    f: FindingV1,
     file_lines: dict[str, dict[int, str]],
     window: int,
-) -> "FindingV1":
+) -> FindingV1:
     """Return *f* relocated to the correct line if anchor text doesn't match, else unchanged."""
     anchor_text = (f.anchor or f.fingerprint_hint or "").strip()
     if not anchor_text:
@@ -759,7 +760,8 @@ def _omit_marker_pr_summary_visible_text(
             "(within the reviewed diff scope and your ignore rules)."
         )
         lines.append(
-            "**From this automated pass, the change appears to meet expectations** for the areas reviewed."
+            "**From this automated pass, the change appears to meet expectations** "
+            "for the areas reviewed."
         )
     else:
         lines.append(
@@ -2029,6 +2031,32 @@ class ReviewOrchestrator:
         print(f"Review-decision-only for PR: {pr_url}")
 
         _log_review_decision_event_if_present(self._event_context)
+
+        app_cfg = get_code_review_app_config()
+        if (
+            app_cfg.review_decision_only_skip_if_bot_not_blocking
+            and event_allows_decision_only_skip_when_bot_not_blocking(self._event_context)
+        ):
+            caps = provider.capabilities()
+            if caps.supports_bot_blocking_state_query:
+                if provider.get_bot_blocking_state(owner, repo, pr_number) == "NOT_BLOCKING":
+                    logger.info(
+                        "Review-decision-only: skipping quality gate (bot not blocking; "
+                        "CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING=1, "
+                        "event_kind=reply_added)."
+                    )
+                    return self._record_observability_and_build_result(
+                        trace_id,
+                        owner,
+                        repo,
+                        pr_number,
+                        start_time,
+                        run_handle,
+                        paths=[],
+                        all_findings=[],
+                        successful_post_count=0,
+                        to_post=[],
+                    )
 
         skip_result = self._determine_skip_reason(
             provider, cfg, owner, repo, pr_number, trace_id, start_time, run_handle

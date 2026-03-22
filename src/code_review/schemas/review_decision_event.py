@@ -102,6 +102,20 @@ class ReviewDecisionEventContext(BaseModel):
         return False
 
 
+def event_allows_decision_only_skip_when_bot_not_blocking(
+    event: ReviewDecisionEventContext | None,
+) -> bool:
+    """True when opt-in may skip the gate if the provider reports *NOT_BLOCKING*.
+
+    Default / empty event context never allows this (backward compatible: always recompute).
+    Only ``reply_added`` is skippable; other kinds (e.g. ``comment_deleted``, ``thread_resolved``)
+    must still recompute so the bot can transition back to *APPROVE*.
+    """
+    if event is None or not event.has_audit_fields():
+        return False
+    return event.event_kind == "reply_added"
+
+
 def review_decision_event_context_from_env() -> ReviewDecisionEventContext | None:
     """Build context from ``CODE_REVIEW_EVENT_*`` env vars; return None if all are empty."""
     values: dict[str, str] = {}

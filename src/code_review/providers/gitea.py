@@ -9,6 +9,7 @@ import httpx
 from code_review.diff.position import get_diff_hunk_for_line
 from code_review.formatters.comment import render_suggestion_block
 from code_review.providers.base import (
+    BotBlockingState,
     FileInfo,
     InlineComment,
     PRInfo,
@@ -23,6 +24,7 @@ from code_review.providers.base import (
     file_infos_from_pull_file_list,
     pr_info_from_api_dict,
 )
+from code_review.providers.bot_blocking_common import blocking_state_from_github_style_reviews
 from code_review.providers.review_decision_common import github_style_pull_review_json
 from code_review.providers.safety import truncate_repo_content
 
@@ -197,6 +199,63 @@ class GiteaProvider(ProviderInterface):
             )
         return result
 
+    def _gitea_token_user_login_lower(self) -> str | None:
+        try:
+            data = self._get("/user")
+            if isinstance(data, dict):
+                login = str(data.get("login") or "").strip().lower()
+                return login or None
+        except Exception as e:
+            logger.warning("Gitea GET /user failed for bot blocking state: %s", e)
+        return None
+
+    def _gitea_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any] | None:
+        """Return reviews, ``None`` if the endpoint is missing (cannot infer state)."""
+        path = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
+        out: list[Any] = []
+        page = 1
+        try:
+            for _ in range(50):
+                data = self._get(path, params={"limit": 100, "page": page})
+                if not isinstance(data, list) or not data:
+                    break
+                out.extend(data)
+                if len(data) < 100:
+                    break
+                page += 1
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code if exc.response is not None else 0
+            if code in (404, 405, 501):
+                return None
+            logger.warning(
+                "Gitea list PR reviews failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                exc,
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Gitea list PR reviews failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        return out
+
+    def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
+        """Latest token-user pull review; Gitea aligns with GitHub-style review states."""
+        login = self._gitea_token_user_login_lower()
+        if not login:
+            return "UNKNOWN"
+        reviews = self._gitea_list_pull_reviews(owner, repo, pr_number)
+        if reviews is None:
+            return "UNKNOWN"
+        return blocking_state_from_github_style_reviews(reviews, token_login_lower=login)
+
     def submit_review_decision(
         self,
         owner: str,
@@ -216,7 +275,8 @@ class GiteaProvider(ProviderInterface):
             code = exc.response.status_code if exc.response is not None else None
             if code in (404, 405, 501):
                 logger.warning(
-                    "Gitea PR review decision not supported or rejected (HTTP %s) owner=%s repo=%s pr=%s",
+                    "Gitea PR review decision not supported or rejected (HTTP %s) "
+                    "owner=%s repo=%s pr=%s",
                     code,
                     owner,
                     repo,
@@ -257,7 +317,7 @@ class GiteaProvider(ProviderInterface):
         )
 
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
-        """List commits on the pull request (Gitea: GET /repos/{owner}/{repo}/pulls/{index}/commits)."""
+        """List commits on the PR (GET /repos/{owner}/{repo}/pulls/{index}/commits)."""
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/commits"
         out: list[str] = []
         page = 1
@@ -304,4 +364,5 @@ class GiteaProvider(ProviderInterface):
             resolvable_comments=False,
             supports_suggestions=True,
             supports_review_decisions=True,
+            supports_bot_blocking_state_query=True,
         )

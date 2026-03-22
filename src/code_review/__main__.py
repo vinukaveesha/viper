@@ -147,8 +147,9 @@ def review(
         False,
         "--review-decision-only",
         help=(
-            "Skip LLM and inline comments; only recompute quality gate and submit PR review decision "
-            "(also set CODE_REVIEW_REVIEW_DECISION_ONLY=1). head_sha optional — fetched from API if missing."
+            "Skip LLM and inline comments; only recompute quality gate and "
+            "submit PR review decision (also set CODE_REVIEW_REVIEW_DECISION_ONLY=1). "
+            "head_sha optional — fetched from API if missing."
         ),
     ),
 ) -> None:

@@ -104,6 +104,7 @@ Loaded via `LLMConfig` (`env_prefix="LLM_"`).
 | `CODE_REVIEW_LOG_LEVEL` | `WARNING` | `DEBUG`, `INFO`, `WARNING`, `ERROR` (case-insensitive). |
 | `CODE_REVIEW_INCLUDE_COMMIT_MESSAGES_IN_PROMPT` | `true` | Include a PR commit-message block in the review prompt. |
 | `CODE_REVIEW_REVIEW_DECISION_ONLY` | `false` | When `true` / `1`, skip the LLM and inline posting; only recompute the quality gate and submit a PR review decision (requires `SCM_REVIEW_DECISION_ENABLED` for submission). Same effect as CLI `--review-decision-only`. |
+| `CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING` | `false` | **Review-decision-only:** if non-empty `CODE_REVIEW_EVENT_*` is present and `CODE_REVIEW_EVENT_KIND` is `reply_added`, skip the run when the SCM provider reports the token user is **not** in a blocking review state (`NOT_BLOCKING`). Empty event context or other event kinds always recompute. Providers without `supports_bot_blocking_state_query` never skip on this path. |
 | `CODE_REVIEW_PRINT_RAW_RESPONSE` | *(unset)* | `1` / `true` / `TRUE` to log the raw LLM final response (debug). |
 | `CODE_REVIEW_SIGNING_KEY` | *(unset)* | If set, HMAC-signs fingerprint markers in posted comments (see §8). |
 

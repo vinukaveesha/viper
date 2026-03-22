@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from code_review.schemas.review_decision_event import (
     ReviewDecisionEventContext,
+    event_allows_decision_only_skip_when_bot_not_blocking,
     review_decision_event_context_from_env,
 )
 
@@ -39,7 +40,7 @@ def test_has_audit_fields():
 
 
 def test_from_env_returns_none_when_unset():
-    with patch.dict(os.environ, {k: "" for k in _EVENT_ENV_KEYS}, clear=False):
+    with patch.dict(os.environ, dict.fromkeys(_EVENT_ENV_KEYS, ""), clear=False):
         assert review_decision_event_context_from_env() is None
 
 
@@ -68,3 +69,14 @@ def test_extra_keys_ignored_on_model_validate():
         {"event_name": "e", "unexpected": "ignored"}
     )
     assert ctx.event_name == "e"
+
+
+def test_event_allows_skip_only_for_reply_added_with_audit():
+    assert not event_allows_decision_only_skip_when_bot_not_blocking(None)
+    assert not event_allows_decision_only_skip_when_bot_not_blocking(ReviewDecisionEventContext())
+    assert not event_allows_decision_only_skip_when_bot_not_blocking(
+        ReviewDecisionEventContext(event_kind="comment_deleted", comment_id="1")
+    )
+    assert event_allows_decision_only_skip_when_bot_not_blocking(
+        ReviewDecisionEventContext(event_kind="reply_added", comment_id="1")
+    )

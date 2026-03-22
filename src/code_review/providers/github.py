@@ -13,6 +13,7 @@ from code_review.formatters.comment import (
     render_suggestion_block,
 )
 from code_review.providers.base import (
+    BotBlockingState,
     FileInfo,
     InlineComment,
     PRInfo,
@@ -27,6 +28,7 @@ from code_review.providers.base import (
     file_infos_from_pull_file_list,
     pr_info_from_api_dict,
 )
+from code_review.providers.bot_blocking_common import blocking_state_from_github_style_reviews
 from code_review.providers.review_decision_common import github_style_pull_review_json
 from code_review.providers.safety import truncate_repo_content
 
@@ -256,7 +258,8 @@ class GitHubProvider(ProviderInterface):
                 break
         else:
             logger.warning(
-                "GitHub GraphQL reviewThreads pagination exceeded max_pages=%s owner=%s repo=%s pr=%s",
+                "GitHub GraphQL reviewThreads pagination exceeded max_pages=%s "
+                "owner=%s repo=%s pr=%s",
                 max_pages,
                 owner,
                 repo,
@@ -273,7 +276,7 @@ class GitHubProvider(ProviderInterface):
         except (httpx.HTTPError, json.JSONDecodeError, RuntimeError) as e:
             logger.warning(
                 "GitHub GraphQL reviewThreads failed owner=%s repo=%s pr=%s: %s; "
-                "skipping pre-existing unresolved aggregation (REST comments lack resolution state).",
+                "skipping unresolved aggregation (REST comments lack resolution state).",
                 owner,
                 repo,
                 pr_number,
@@ -355,6 +358,48 @@ class GitHubProvider(ProviderInterface):
             )
         return result
 
+    def _github_token_user_login_lower(self) -> str | None:
+        try:
+            data = self._get("/user")
+            if isinstance(data, dict):
+                login = str(data.get("login") or "").strip().lower()
+                return login or None
+        except Exception as e:
+            logger.warning("GitHub GET /user failed for bot blocking state: %s", e)
+        return None
+
+    def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any]:
+        path = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
+        out: list[Any] = []
+        page = 1
+        for _ in range(50):
+            try:
+                data = self._get(path, params={"per_page": 100, "page": page})
+            except Exception as e:
+                logger.warning(
+                    "GitHub list PR reviews failed owner=%s repo=%s pr=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
+                )
+                return []
+            if not isinstance(data, list) or not data:
+                break
+            out.extend(data)
+            if len(data) < 100:
+                break
+            page += 1
+        return out
+
+    def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
+        """Latest token-user PR review: ``CHANGES_REQUESTED`` → blocking."""
+        login = self._github_token_user_login_lower()
+        if not login:
+            return "UNKNOWN"
+        reviews = self._github_list_pull_reviews(owner, repo, pr_number)
+        return blocking_state_from_github_style_reviews(reviews, token_login_lower=login)
+
     def submit_review_decision(
         self,
         owner: str,
@@ -408,4 +453,5 @@ class GitHubProvider(ProviderInterface):
             supports_suggestions=True,
             supports_multiline_suggestions=True,
             supports_review_decisions=True,
+            supports_bot_blocking_state_query=True,
         )

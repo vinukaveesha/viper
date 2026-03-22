@@ -100,6 +100,8 @@ class ProviderCapabilities(BaseModel):
       definitions produce no rendered output when unreferenced.
     - supports_review_decisions: provider supports PR-level review decisions
       (APPROVE / REQUEST_CHANGES).
+    - supports_bot_blocking_state_query: provider can report whether the token user
+      currently has an active request-changes / needs-work style block (Phase D).
     """
 
     resolvable_comments: bool = False
@@ -110,9 +112,12 @@ class ProviderCapabilities(BaseModel):
     omit_fingerprint_marker_in_body: bool = False
     embed_agent_marker_as_commonmark_linkref: bool = False
     supports_review_decisions: bool = False
+    supports_bot_blocking_state_query: bool = False
 
 
 ReviewDecision = Literal["APPROVE", "REQUEST_CHANGES"]
+
+BotBlockingState = Literal["BLOCKING", "NOT_BLOCKING", "UNKNOWN"]
 
 
 class FileInfo(BaseModel):
@@ -166,10 +171,16 @@ def head_sha_from_pr_api_dict(data: dict) -> str:
 
 
 def pr_info_from_api_dict(data: dict, description_key: str = "body") -> PRInfo:
-    """Build PRInfo from a provider API dict. Use description_key='description' for GitLab/Bitbucket."""
+    """Build PRInfo from a provider API dict.
+
+    Use description_key='description' for GitLab/Bitbucket.
+    """
     title = data.get("title", "") or ""
     labels_raw = data.get("labels") or []
-    labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
+    labels = [
+        (lb.get("name", lb) if isinstance(lb, dict) else str(lb))
+        for lb in labels_raw
+    ]
     description = data.get(description_key, "") or ""
     return PRInfo(
         title=title,
@@ -195,7 +206,10 @@ def normalize_diff_anchor_path(file_path: str) -> str:
 
 
 def file_infos_from_pull_file_list(files: list) -> list[FileInfo]:
-    """Build list of FileInfo from a provider API list of file dicts (filename/path, status, additions, deletions)."""
+    """Build list of FileInfo from a provider list of file dicts.
+
+    Dicts use filename/path, status, additions, deletions.
+    """
     if not isinstance(files, list):
         return []
     result: list[FileInfo] = []
@@ -293,7 +307,9 @@ class InlineComment(BaseModel):
     )
     line_type: str | None = Field(
         default=None,
-        description="For Bitbucket Server: 'ADDED' or 'CONTEXT' so the comment anchors to the diff line",
+        description=(
+            "For Bitbucket Server: 'ADDED' or 'CONTEXT' so the comment anchors to the diff line"
+        ),
     )
 
     @model_validator(mode="after")
@@ -501,3 +517,14 @@ class ProviderInterface(ABC):
         Default: empty list (provider does not implement commit listing).
         """
         return []
+
+    def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
+        """Return whether the token/integration user currently blocks merge via review state.
+
+        ``BLOCKING`` ≈ request-changes / needs-work still in effect for this user.
+        ``NOT_BLOCKING`` ≈ approved or no blocking review from this user.
+        ``UNKNOWN`` when the SCM does not expose this or the call fails.
+
+        Used for optional review-decision-only short-circuits (see Phase D docs).
+        """
+        return "UNKNOWN"

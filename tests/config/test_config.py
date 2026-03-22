@@ -186,3 +186,13 @@ def test_code_review_app_review_decision_only_from_env():
     with patch.dict(os.environ, {"CODE_REVIEW_REVIEW_DECISION_ONLY": "true"}, clear=False):
         cfg = CodeReviewAppConfig()
         assert cfg.review_decision_only is True
+
+
+def test_code_review_app_skip_if_bot_not_blocking_from_env():
+    with patch.dict(
+        os.environ,
+        {"CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING": "true"},
+        clear=False,
+    ):
+        cfg = CodeReviewAppConfig()
+        assert cfg.review_decision_only_skip_if_bot_not_blocking is True

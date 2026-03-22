@@ -12,6 +12,7 @@ from code_review.formatters.comment import (
     render_suggestion_block,
 )
 from code_review.providers.base import (
+    BotBlockingState,
     FileInfo,
     InlineComment,
     PRInfo,
@@ -62,7 +63,7 @@ class GitLabProvider(ProviderInterface):
     def _get_mr_discussions_paginated(
         self, owner: str, repo: str, pr_number: int
     ) -> list[dict[str, Any]]:
-        """List all MR discussions (GitLab paginates; default page size would omit later threads)."""
+        """List all MR discussions (GitLab paginates; small pages omit later threads)."""
         base_path = self._path(owner, repo, "merge_requests", str(pr_number), "discussions")
         combined: list[dict[str, Any]] = []
         page = 1
@@ -334,6 +335,58 @@ class GitLabProvider(ProviderInterface):
             {"body": body},
         )
 
+    def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
+        """Use MR reviews API when available; ``requested_changes`` → blocking."""
+        try:
+            me = self._get(f"{self._base_url}/user")
+            if not isinstance(me, dict) or me.get("id") is None:
+                return "UNKNOWN"
+            my_id = int(me["id"])
+            path = self._path(owner, repo, "merge_requests", str(pr_number), "reviews")
+            data = self._get(path)
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code if exc.response is not None else 0
+            if code == 404:
+                return "UNKNOWN"
+            logger.warning(
+                "GitLab get_bot_blocking_state HTTP error owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                exc,
+            )
+            return "UNKNOWN"
+        except Exception as e:
+            logger.warning(
+                "GitLab get_bot_blocking_state failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return "UNKNOWN"
+        if not isinstance(data, list):
+            return "UNKNOWN"
+        mine: list[tuple[int, str]] = []
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            u = r.get("user") or {}
+            if not isinstance(u, dict) or u.get("id") is None:
+                continue
+            if int(u["id"]) != my_id:
+                continue
+            mine.append((int(r.get("id") or 0), str(r.get("state") or "").strip().lower()))
+        if not mine:
+            return "NOT_BLOCKING"
+        mine.sort(key=lambda x: x[0])
+        last = mine[-1][1]
+        if last == "requested_changes":
+            return "BLOCKING"
+        if last == "approved":
+            return "NOT_BLOCKING"
+        return "UNKNOWN"
+
     def submit_review_decision(
         self,
         owner: str,
@@ -435,4 +488,5 @@ class GitLabProvider(ProviderInterface):
             supports_suggestions=True,
             supports_multiline_suggestions=True,
             supports_review_decisions=True,
+            supports_bot_blocking_state_query=True,
         )

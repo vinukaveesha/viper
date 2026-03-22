@@ -9,6 +9,7 @@ import httpx
 from code_review.diff.parser import parse_unified_diff
 from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
 from code_review.providers.base import (
+    BotBlockingState,
     FileInfo,
     InlineComment,
     PRInfo,
@@ -244,7 +245,8 @@ class BitbucketServerProvider(ProviderInterface):
                 if cache_key not in self._missing_files:
                     self._missing_files.add(cache_key)
                     logger.warning(
-                        "get_file_content 404 for path=%s owner=%s repo=%s ref=%s (Bitbucket raw API)",
+                        "get_file_content 404 for path=%s owner=%s repo=%s ref=%s "
+                        "(Bitbucket raw API)",
                         path,
                         owner,
                         repo,
@@ -501,7 +503,8 @@ class BitbucketServerProvider(ProviderInterface):
             existing = self.get_existing_review_comments(owner, repo, pr_number)
         except Exception as e:
             logger.warning(
-                "Bitbucket Server PR activities fetch failed for quality gate owner=%s repo=%s pr=%s: %s",
+                "Bitbucket Server PR activities fetch failed for quality gate "
+                "owner=%s repo=%s pr=%s: %s",
                 owner,
                 repo,
                 pr_number,
@@ -541,7 +544,9 @@ class BitbucketServerProvider(ProviderInterface):
         except (TypeError, ValueError):
             return None
 
-    def _bbs_participant_put(self, participant_path: str, payload: dict[str, str], pr_version: int) -> None:
+    def _bbs_participant_put(
+        self, participant_path: str, payload: dict[str, str], pr_version: int
+    ) -> None:
         self._put(f"{participant_path}?version={pr_version}", payload)
 
     def _bbs_submit_review_decision_retry_after_409(
@@ -557,7 +562,8 @@ class BitbucketServerProvider(ProviderInterface):
         version2 = self._pull_request_version(owner, repo, pr_number)
         if version2 is None:
             raise ValueError(
-                "Bitbucket Server: could not read pull request version after 409 on review decision."
+                "Bitbucket Server: could not read pull request version "
+                "after 409 on review decision."
             ) from cause
         logger.debug(
             "Bitbucket Server submit_review_decision 409; retrying participant PUT "
@@ -577,7 +583,10 @@ class BitbucketServerProvider(ProviderInterface):
         payload: dict[str, str],
         version2: int,
     ) -> bool:
-        """PUT with a refetched PR version. True if succeeded; False if HTTP 400 (caller may try -1)."""
+        """PUT with a refetched PR version.
+
+        True if succeeded; False if HTTP 400 (caller may try -1).
+        """
         try:
             self._bbs_participant_put(participant_path, payload, version2)
             return True
@@ -631,7 +640,8 @@ class BitbucketServerProvider(ProviderInterface):
             self._bbs_participant_put(participant_path, payload, -1)
         except httpx.HTTPStatusError as exc3:
             logger.warning(
-                "Bitbucket Server participant PUT with version=-1 failed owner=%s repo=%s pr=%s: %s",
+                "Bitbucket Server participant PUT with version=-1 failed "
+                "owner=%s repo=%s pr=%s: %s",
                 owner,
                 repo,
                 pr_number,
@@ -668,7 +678,9 @@ class BitbucketServerProvider(ProviderInterface):
             )
         slug = quote(self._participant_user_slug, safe="")
         status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
-        participant_path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
+        participant_path = self._path(
+            owner, repo, "pull-requests", str(pr_number), "participants", slug
+        )
         payload = {"status": status}
 
         try:
@@ -731,6 +743,41 @@ class BitbucketServerProvider(ProviderInterface):
             return None
         return next_start
 
+    def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
+        """Map token user's reviewer ``status`` (``NEEDS_WORK`` / ``APPROVED``)."""
+        if not self._participant_user_slug:
+            return "UNKNOWN"
+        want = self._participant_user_slug.strip().lower()
+        try:
+            data = self._get(self._path(owner, repo, "pull-requests", str(pr_number)))
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server get_bot_blocking_state failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return "UNKNOWN"
+        if not isinstance(data, dict):
+            return "UNKNOWN"
+        for rev in data.get("reviewers") or []:
+            if not isinstance(rev, dict):
+                continue
+            user = rev.get("user") or {}
+            if not isinstance(user, dict):
+                continue
+            uslug = str(user.get("slug") or "").strip().lower()
+            if uslug != want:
+                continue
+            status = str(rev.get("status") or "").upper()
+            if status == "NEEDS_WORK":
+                return "BLOCKING"
+            if status == "APPROVED":
+                return "NOT_BLOCKING"
+            return "NOT_BLOCKING"
+        return "NOT_BLOCKING"
+
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
         """Return PR title and description for skip-review. Labels from Server may vary."""
         try:
@@ -769,4 +816,5 @@ class BitbucketServerProvider(ProviderInterface):
             omit_fingerprint_marker_in_body=True,
             embed_agent_marker_as_commonmark_linkref=True,
             supports_review_decisions=bool(self._participant_user_slug),
+            supports_bot_blocking_state_query=bool(self._participant_user_slug),
         )
