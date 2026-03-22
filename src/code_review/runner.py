@@ -1075,7 +1075,12 @@ class ReviewOrchestrator:
         token_val = (
             cfg.token.get_secret_value() if hasattr(cfg.token, "get_secret_value") else cfg.token
         )
-        provider = get_provider(cfg.provider, cfg.url, token_val)
+        provider = get_provider(
+            cfg.provider,
+            cfg.url,
+            token_val,
+            bitbucket_server_user_slug=cfg.bitbucket_server_user_slug,
+        )
         return (cfg, llm_cfg, provider)
 
     def _determine_skip_reason(

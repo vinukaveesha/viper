@@ -27,6 +27,7 @@ from code_review.formatters.comment import (
     max_inferred_severity,
     render_suggestion_block,
 )
+from code_review.providers.review_decision_common import github_style_pull_review_json
 from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
@@ -365,12 +366,7 @@ class GitHubProvider(ProviderInterface):
         head_sha: str = "",
     ) -> None:
         """Submit a PR-level review decision on GitHub."""
-        payload: dict[str, Any] = {
-            "event": decision,
-            "body": body or "Automated review decision by Viper.",
-        }
-        if head_sha:
-            payload["commit_id"] = head_sha
+        payload = github_style_pull_review_json(decision, body, head_sha)
         self._post(f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews", payload)
 
     def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:

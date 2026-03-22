@@ -707,3 +707,55 @@ def test_capabilities():
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     caps = p.capabilities()
     assert caps.supports_suggestions is True
+    assert caps.supports_review_decisions is False
+
+
+def test_capabilities_with_participant_slug_enables_review_decisions():
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="buildbot",
+    )
+    assert p.capabilities().supports_review_decisions is True
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_needs_work(mock_client):
+    mock_get = MagicMock()
+    mock_get.raise_for_status = MagicMock()
+    mock_get.headers = {"content-type": "application/json"}
+    mock_get.json.return_value = {"version": 3, "id": 1}
+
+    mock_put = MagicMock()
+    mock_put.raise_for_status = MagicMock()
+    mock_put.content = b""
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get
+    client.put.return_value = mock_put
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="buildbot",
+    )
+    p.submit_review_decision(
+        "PROJ",
+        "repo",
+        42,
+        "REQUEST_CHANGES",
+        body="reason",
+        head_sha="ignored",
+    )
+    assert client.put.call_count == 1
+    put_args = client.put.call_args
+    assert "/pull-requests/42/participants/" in put_args[0][0]
+    assert "buildbot" in put_args[0][0]
+    assert "version=3" in put_args[0][0]
+    assert put_args[1]["json"] == {"status": "NEEDS_WORK"}
+
+
+def test_submit_review_decision_requires_participant_slug():
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with pytest.raises(ValueError, match="SCM_BITBUCKET_SERVER_USER_SLUG"):
+        p.submit_review_decision("PROJ", "repo", 1, "APPROVE")

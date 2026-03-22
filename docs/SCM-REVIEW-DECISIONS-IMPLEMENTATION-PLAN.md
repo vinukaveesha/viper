@@ -44,21 +44,20 @@ No runner changes are **required** to add a new SCM: implement `submit_review_de
 - **Quality gate**: Default path from `get_existing_review_comments` (`resolved=false` when API exposes it).
 - **Tests**: `tests/providers/test_gitea.py`.
 
-### 3.3 GitLab — **gap (submission only)**
+### 3.3 GitLab — **done (submission)**
 
-- **Quality gate**: **Implemented** — `get_unresolved_review_items_for_quality_gate` walks MR discussions, unresolved threads, severity from diff notes (`src/code_review/providers/gitlab.py`).
-- **`submit_review_decision`**: **Not implemented** — inherits default; `supports_review_decisions` remains `False`, so the runner logs *Skipping review decision submission* with the computed decision.
-- **Posting comments**: Uses merge request discussions API (separate from approvals).
+- **Quality gate**: **Implemented** — MR discussions (`src/code_review/providers/gitlab.py`).
+- **`submit_review_decision`**: **Implemented** — `POST .../approve` (optional `sha`); `REQUEST_CHANGES` via MR note + `/submit_review requested_changes` (GitLab may require a pending review for the quick action to apply).
 
-### 3.4 Bitbucket Cloud — **gap (submission only)**
+### 3.4 Bitbucket Cloud — **done (submission)**
 
-- **Quality gate**: **Partial** — only **open PR tasks** count (`get_unresolved_review_items_for_quality_gate`); inline comment severity does not feed the gate (API limitation documented in README).
-- **`submit_review_decision`**: **Not implemented**; `supports_review_decisions` is `False`.
+- **Quality gate**: **Partial** — open PR tasks only (unchanged).
+- **`submit_review_decision`**: **Implemented** — `POST .../approve` and `.../request-changes`.
 
-### 3.5 Bitbucket Server / Data Center — **gap (submission only)**
+### 3.5 Bitbucket Server / Data Center — **done (submission, conditional)**
 
-- **Quality gate**: **Implemented** — non-resolved comments from activities + open tasks (`src/code_review/providers/bitbucket_server.py`).
-- **`submit_review_decision`**: **Not implemented**; `supports_review_decisions` is `False`.
+- **Quality gate**: **Implemented** — activities + tasks.
+- **`submit_review_decision`**: **Implemented** — `PUT .../participants/{slug}` with `APPROVED` / `NEEDS_WORK` when **`SCM_BITBUCKET_SERVER_USER_SLUG`** is set; `supports_review_decisions` is `True` only in that case.
 
 ---
 

@@ -65,6 +65,13 @@ class SCMConfig(BaseSettings):
             "SCM_URL must use one of these hosts."
         ),
     )
+    bitbucket_server_user_slug: str = Field(
+        default="",
+        description=(
+            "Bitbucket Server/DC: username slug of the token user for "
+            "`PUT .../pull-requests/{id}/participants/{slug}` when submitting review decisions."
+        ),
+    )
 
     @field_validator("url")
     @classmethod

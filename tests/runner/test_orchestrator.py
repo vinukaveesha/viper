@@ -67,6 +67,7 @@ def test_load_config_and_provider_calls_deps_and_returns_tuple(
     Returns (cfg, llm_cfg, provider).
     """
     cfg = MagicMock(provider="gitea", url="https://gitea.example.com", token="token123")
+    cfg.bitbucket_server_user_slug = ""
     llm_cfg = MagicMock(provider="gemini", model="gemini-2.5-flash")
     provider = MagicMock()
     mock_get_scm_config.return_value = cfg
@@ -78,7 +79,12 @@ def test_load_config_and_provider_calls_deps_and_returns_tuple(
 
     mock_get_scm_config.assert_called_once()
     mock_get_llm_config.assert_called_once()
-    mock_get_provider.assert_called_once_with("gitea", "https://gitea.example.com", "token123")
+    mock_get_provider.assert_called_once_with(
+        "gitea",
+        "https://gitea.example.com",
+        "token123",
+        bitbucket_server_user_slug="",
+    )
     assert result == (cfg, llm_cfg, provider)
 
 
@@ -92,6 +98,7 @@ def test_load_config_and_provider_unwraps_secret_str(
     secret = MagicMock()
     secret.get_secret_value.return_value = "unwrapped-secret"
     cfg = MagicMock(provider="github", url="https://api.github.com", token=secret)
+    cfg.bitbucket_server_user_slug = ""
     llm_cfg = MagicMock()
     provider = MagicMock()
     mock_get_scm_config.return_value = cfg
@@ -103,7 +110,10 @@ def test_load_config_and_provider_unwraps_secret_str(
 
     secret.get_secret_value.assert_called_once()
     mock_get_provider.assert_called_once_with(
-        "github", "https://api.github.com", "unwrapped-secret"
+        "github",
+        "https://api.github.com",
+        "unwrapped-secret",
+        bitbucket_server_user_slug="",
     )
 
 
@@ -116,6 +126,7 @@ def test_load_config_and_provider_uses_plain_token_when_no_get_secret_value(
     """When cfg.token is a plain str (no get_secret_value), it is passed to get_provider as-is."""
     cfg = MagicMock(provider="gitea", url="https://x.com")
     cfg.token = "plain-token"  # plain str has no get_secret_value
+    cfg.bitbucket_server_user_slug = ""
     llm_cfg = MagicMock()
     provider = MagicMock()
     mock_get_scm_config.return_value = cfg
@@ -125,7 +136,9 @@ def test_load_config_and_provider_uses_plain_token_when_no_get_secret_value(
     orchestrator = ReviewOrchestrator("o", "r", 1)
     orchestrator._load_config_and_provider()
 
-    mock_get_provider.assert_called_once_with("gitea", "https://x.com", "plain-token")
+    mock_get_provider.assert_called_once_with(
+        "gitea", "https://x.com", "plain-token", bitbucket_server_user_slug=""
+    )
 
 
 @patch("code_review.runner.get_llm_config")

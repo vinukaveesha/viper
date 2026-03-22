@@ -23,6 +23,7 @@ from code_review.providers.base import (
     pr_info_from_api_dict,
 )
 from code_review.formatters.comment import render_suggestion_block
+from code_review.providers.review_decision_common import github_style_pull_review_json
 from code_review.providers.safety import truncate_repo_content
 
 logger = logging.getLogger(__name__)
@@ -209,12 +210,7 @@ class GiteaProvider(ProviderInterface):
         head_sha: str = "",
     ) -> None:
         """Submit a PR-level review decision on Gitea."""
-        payload: dict[str, Any] = {
-            "event": decision,
-            "body": body or "Automated review decision by Viper.",
-        }
-        if head_sha:
-            payload["commit_id"] = head_sha
+        payload = github_style_pull_review_json(decision, body, head_sha)
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
         try:
             self._post(path, payload)

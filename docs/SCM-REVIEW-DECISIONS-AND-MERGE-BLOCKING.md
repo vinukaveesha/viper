@@ -27,11 +27,11 @@ Counts are based on **aggregated open** high/medium signals (this run plus unres
 |---------------------------|----------------------------------------|
 | `github` | Yes (`POST .../pulls/{id}/reviews` with `event`). |
 | `gitea` | Yes (same-style review API; unsupported or old servers may return 404/405 — handled in code). |
-| `gitlab` | No — capability false; runner skips submission. |
-| `bitbucket` (Cloud) | No — capability false; runner skips submission. |
-| `bitbucket_server` (Data Center / Server) | No — capability false; runner skips submission. |
+| `gitlab` | Yes — `POST .../merge_requests/:iid/approve` (optional `sha`); `REQUEST_CHANGES` via MR note + `/submit_review requested_changes` (needs a pending review on some GitLab versions). |
+| `bitbucket` (Cloud) | Yes — `POST .../pullrequests/{id}/approve` and `.../request-changes`. |
+| `bitbucket_server` (Data Center / Server) | Yes when **`SCM_BITBUCKET_SERVER_USER_SLUG`** is set — `PUT .../pull-requests/{id}/participants/{slug}?version=…` with `APPROVED` / `NEEDS_WORK`. If unset, capability is false and the runner skips submission. |
 
-GitLab and both Bitbucket providers still post **inline comments** and participate in the **quality gate counts** where the implementation supports it; they simply do not push a native “approve / request changes” review object yet.
+All providers still post **inline comments** and participate in the **quality gate counts** as documented in the README.
 
 For a **code-level inventory**, test coverage, and a phased implementation backlog (GitLab → Bitbucket Server → Bitbucket Cloud), see **[SCM review decisions — implementation plan](SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md)**.
 
@@ -66,7 +66,7 @@ The table below maps **UI/API concepts** to **when merge can be blocked**, point
 | **Approvals** | **Approve** satisfies **approval rules** when configured. **Required** approval rules that block merge are a **Premium / Ultimate** (and correct project) concern; on **Free**, approvals exist but do not enforce the same merge barrier ([Merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)). |
 | **Request changes** | Reviewers can **Request changes**; **blocking the MR** until that is cleared is documented under **Prevent merge when you request changes** on [Merge request reviews](https://docs.gitlab.com/ee/user/project/merge_requests/reviews/) (tier and settings apply). Maintainers may **bypass** that check when permitted. |
 | **API** | Approvals use the [Merge request approvals API](https://docs.gitlab.com/ee/api/merge_request_approvals.html) (e.g. `POST .../approve`). **Request changes** is part of the MR review flow, not the same endpoint family as GitHub’s single `event` field. |
-| **Viper** | Does **not** yet call GitLab to approve or request changes. To get parity, a provider would need the appropriate GitLab APIs and `supports_review_decisions=True` once implemented. |
+| **Viper** | Calls `POST .../approve` (optional `sha`) and posts an MR note with `/submit_review requested_changes` for `REQUEST_CHANGES` (quick action may require a pending review on some GitLab versions). |
 
 ### 3.4 Bitbucket Cloud
 
@@ -74,7 +74,7 @@ The table below maps **UI/API concepts** to **when merge can be blocked**, point
 |-------|--------|
 | **Merge checks** | Repository **branch restrictions** and **merge checks** can require minimum approvals, **no “Changes requested”** from reviewers, no unresolved tasks, successful builds, etc. ([Suggest or require checks before a merge](https://support.atlassian.com/bitbucket-cloud/docs/suggest-or-require-checks-before-a-merge/)). |
 | **Enforcement vs warning** | **Prevent a merge with unresolved merge checks** is tied to **Bitbucket Cloud Premium** for full enforcement; lower tiers may **warn** but still allow merge in some setups — confirm your plan and settings. |
-| **Viper** | Does **not** set Bitbucket Cloud reviewer approval or “changes requested” via API today. Inline comments and tasks (where used) remain the integration surface. |
+| **Viper** | Uses Cloud `approve` and `request-changes` REST endpoints when `SCM_REVIEW_DECISION_ENABLED` is on. |
 
 ### 3.5 Bitbucket Data Center / Server
 
@@ -83,7 +83,7 @@ The table below maps **UI/API concepts** to **when merge can be blocked**, point
 | **“Needs work” and merge checks** | Server uses **merge checks** on the target branch (minimum approvals, **no changes requested** / needs-work style hooks, unresolved tasks, builds, etc.). Atlassian maps the Server hook **`needs-work-merge-check`** to the idea of **no changes requested** when comparing to Cloud concepts ([merge checks comparison KB](https://support.atlassian.com/bitbucket-cloud/kb/merge-checks-comparison-between-bitbucket-server-vs-bitbucket-cloud/)). |
 | **Documentation** | See **Checks for merging pull requests** in [Bitbucket Data Center documentation](https://confluence.atlassian.com/spaces/BitbucketServer/pages/776640039/Checks+for+merging+pull-requests) for the checklist available in your version. |
 | **Bypass** | Project and permission settings determine whether users with elevated access can override failed checks; configure explicitly if you need a hard gate. |
-| **Viper** | Does **not** submit Data Center **participant / approval / needs-work** state via REST today. Implementing that would require the appropriate Bitbucket Server REST endpoints and tests, then `supports_review_decisions=True` (or a provider-specific capability name if the model diverges from `APPROVE` / `REQUEST_CHANGES`). |
+| **Viper** | Submits participant status via `PUT .../participants/{slug}` when **`SCM_BITBUCKET_SERVER_USER_SLUG`** matches the token user; maps `REQUEST_CHANGES` → `NEEDS_WORK`. |
 
 ---
 
@@ -93,9 +93,9 @@ The table below maps **UI/API concepts** to **when merge can be blocked**, point
 |-----|----------------------------------------|---------------------------|----------------------------------------|
 | **GitHub** | Yes, with branch protection | Required PR reviews + optional no-bypass | Yes |
 | **Gitea** | Yes, if enabled | Protected branch + **Block merge on rejected reviews** (+ optional admin must follow rules) | Yes (if API supported) |
-| **GitLab** | Yes, with tier/settings | Premium+ rules + “prevent merge when request changes” where applicable | No (not implemented) |
-| **Bitbucket Cloud** | Yes, if plan/settings require checks | Branch restrictions + required merge checks (Premium for strict prevent) | No (not implemented) |
-| **Bitbucket Data Center** | Yes, if merge checks enabled | Branch merge checks including needs-work / no changes requested | No (not implemented) |
+| **GitLab** | Yes, with tier/settings | Premium+ rules + “prevent merge when request changes” where applicable | Yes (approve REST + request-changes note; see §3.3) |
+| **Bitbucket Cloud** | Yes, if plan/settings require checks | Branch restrictions + required merge checks (Premium for strict prevent) | Yes |
+| **Bitbucket Data Center** | Yes, if merge checks enabled | Branch merge checks including needs-work / no changes requested | Yes when `SCM_BITBUCKET_SERVER_USER_SLUG` is set |
 
 ---
 

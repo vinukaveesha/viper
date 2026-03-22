@@ -12,6 +12,7 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_info_warning,
     normalize_diff_anchor_path,
@@ -300,6 +301,24 @@ class BitbucketProvider(ProviderInterface):
         path = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
         self._post(path, {"content": {"raw": body}})
 
+    def submit_review_decision(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        decision: ReviewDecision,
+        *,
+        body: str = "",
+        head_sha: str = "",
+    ) -> None:
+        """Approve or request changes (Bitbucket Cloud 2.0). ``head_sha`` is ignored (API unused)."""
+        base = self._path(owner, repo, "pullrequests", str(pr_number))
+        if decision == "APPROVE":
+            self._post(f"{base}/approve", {})
+            return
+        _ = body, head_sha
+        self._post(f"{base}/request-changes", {})
+
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the PR (paginated)."""
         url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "commits")
@@ -387,4 +406,5 @@ class BitbucketProvider(ProviderInterface):
             markup_hides_html_comment=False,
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
+            supports_review_decisions=True,
         )

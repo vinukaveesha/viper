@@ -207,3 +207,30 @@ def test_capabilities():
     p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
     caps = p.capabilities()
     assert caps.supports_suggestions is True
+    assert caps.supports_review_decisions is True
+
+
+@patch("code_review.providers.bitbucket.httpx.Client")
+def test_submit_review_decision_approve(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "APPROVE", body="x", head_sha="sha")
+    url = mock_client.return_value.__enter__.return_value.post.call_args[0][0]
+    assert url.endswith("/pullrequests/9/approve")
+
+
+@patch("code_review.providers.bitbucket.httpx.Client")
+def test_submit_review_decision_request_changes(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "REQUEST_CHANGES", body="please fix")
+    url = mock_client.return_value.__enter__.return_value.post.call_args[0][0]
+    assert url.endswith("/pullrequests/9/request-changes")

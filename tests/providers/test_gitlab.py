@@ -312,3 +312,37 @@ def test_get_pr_info(mock_client):
     assert info is not None
     assert info.title == "Fix bug"
     assert "skip-review" in info.labels
+
+
+@patch("code_review.providers.gitlab.httpx.Client")
+def test_submit_review_decision_approve(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "APPROVE", body="ok", head_sha="deadbeef")
+    call_args = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/merge_requests/7/approve" in call_args[0][0]
+    assert call_args[1]["json"] == {"sha": "deadbeef"}
+
+
+@patch("code_review.providers.gitlab.httpx.Client")
+def test_submit_review_decision_request_changes_note(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.json.return_value = {"id": 1}
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "REQUEST_CHANGES", body="fix it")
+    call_args = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/merge_requests/7/notes" in call_args[0][0]
+    assert "/submit_review requested_changes" in call_args[1]["json"]["body"]
+    assert "fix it" in call_args[1]["json"]["body"]
+
+
+def test_gitlab_capabilities_support_review_decisions():
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    assert p.capabilities().supports_review_decisions is True

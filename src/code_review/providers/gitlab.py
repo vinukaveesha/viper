@@ -13,10 +13,12 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_info_warning,
     pr_info_from_api_dict,
 )
+from code_review.providers.review_decision_common import gitlab_note_with_submit_review_requested_changes
 from code_review.formatters.comment import (
     infer_severity_from_comment_body,
     max_inferred_severity,
@@ -337,6 +339,32 @@ class GitLabProvider(ProviderInterface):
             {"body": body},
         )
 
+    def submit_review_decision(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        decision: ReviewDecision,
+        *,
+        body: str = "",
+        head_sha: str = "",
+    ) -> None:
+        """Submit MR approval or request-changes via GitLab REST + quick actions.
+
+        * ``APPROVE`` → ``POST .../merge_requests/:iid/approve`` (optional ``sha``).
+        * ``REQUEST_CHANGES`` → MR note with ``/submit_review requested_changes`` (requires a
+          pending review in some GitLab versions; see GitLab merge request reviews docs).
+        """
+        base = self._path(owner, repo, "merge_requests", str(pr_number))
+        if decision == "APPROVE":
+            payload: dict[str, str] = {}
+            if head_sha:
+                payload["sha"] = head_sha
+            self._post(f"{base}/approve", payload)
+            return
+        note = gitlab_note_with_submit_review_requested_changes(body)
+        self._post(f"{base}/notes", {"body": note})
+
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List MR commits (GitLab: GET .../merge_requests/:iid/commits), paginated."""
         base_path = self._path(owner, repo, "merge_requests", str(pr_number), "commits")
@@ -400,4 +428,5 @@ class GitLabProvider(ProviderInterface):
             resolvable_comments=False,
             supports_suggestions=True,
             supports_multiline_suggestions=True,
+            supports_review_decisions=True,
         )

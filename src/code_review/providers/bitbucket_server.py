@@ -2,6 +2,7 @@
 
 from typing import Any
 import logging
+from urllib.parse import quote
 
 import httpx
 
@@ -13,6 +14,7 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_commit_messages_warning,
     _log_pr_info_warning,
@@ -140,10 +142,18 @@ class BitbucketServerProvider(ProviderInterface):
     e.g. http://localhost:7990/rest/api/1.0 (no trailing slash).
     """
 
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: float = 30.0,
+        *,
+        participant_user_slug: str = "",
+    ):
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
+        self._participant_user_slug = (participant_user_slug or "").strip()
         # Cache (owner, repo, ref, path) combinations that returned 404 from the raw API
         # so we don't hammer Bitbucket or spam logs when the LLM repeatedly asks for
         # content of a file that doesn't exist at this ref (e.g. deleted/renamed files).
@@ -494,6 +504,61 @@ class BitbucketServerProvider(ProviderInterface):
         path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
         self._post(path, {"text": body})
 
+    def _pull_request_version(self, owner: str, repo: str, pr_number: int) -> int | None:
+        """Return PR ``version`` for optimistic locking on participant updates."""
+        path = self._path(owner, repo, "pull-requests", str(pr_number))
+        try:
+            data = self._get(path)
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server GET pull request failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        if not isinstance(data, dict):
+            return None
+        raw = data.get("version")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def submit_review_decision(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        decision: ReviewDecision,
+        *,
+        body: str = "",
+        head_sha: str = "",
+    ) -> None:
+        """Set the token user's participant status (``APPROVED`` / ``NEEDS_WORK``).
+
+        Requires ``SCM_BITBUCKET_SERVER_USER_SLUG`` (``participant_user_slug``) to match the
+        authenticated user's username slug. ``body`` and ``head_sha`` are ignored (participant
+        PUT does not carry a review summary in this client).
+        """
+        _ = body, head_sha
+        if not self._participant_user_slug:
+            raise ValueError(
+                "Bitbucket Server review decisions require SCM_BITBUCKET_SERVER_USER_SLUG "
+                "(username slug of the API token user)."
+            )
+        version = self._pull_request_version(owner, repo, pr_number)
+        if version is None:
+            raise ValueError("Bitbucket Server: could not read pull request version for review decision.")
+        slug = quote(self._participant_user_slug, safe="")
+        status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
+        url = f"{path}?version={version}"
+        self._put(url, {"status": status})
+
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the pull request (paginated REST)."""
         path = self._path(owner, repo, "pull-requests", str(pr_number), "commits")
@@ -569,4 +634,5 @@ class BitbucketServerProvider(ProviderInterface):
             markup_hides_html_comment=False,
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
+            supports_review_decisions=bool(self._participant_user_slug),
         )
