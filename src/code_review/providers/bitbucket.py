@@ -19,7 +19,7 @@ from code_review.providers.base import (
     normalize_diff_anchor_path,
     pr_info_from_api_dict,
 )
-from code_review.providers.review_decision_common import effective_review_body
+from code_review.providers.review_decision_common import delete_soft_fail, effective_review_body
 from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
@@ -78,6 +78,11 @@ class BitbucketProvider(ProviderInterface):
             r = client.put(path, headers=self._headers(), json=json)
             r.raise_for_status()
             return r.json() if r.content else None
+
+    def _delete(self, path: str) -> None:
+        with httpx.Client(timeout=self._timeout) as client:
+            r = client.delete(path, headers=self._headers())
+            r.raise_for_status()
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR."""
@@ -312,17 +317,32 @@ class BitbucketProvider(ProviderInterface):
     ) -> None:
         """Approve or request changes (Bitbucket Cloud 2.0).
 
-        ``POST {base}/approve`` and ``POST {base}/request-changes`` (``REQUEST_CHANGES`` uses the
-        latter) do not accept review rationale in the JSON body. We then post the runner summary
-        to ``pullrequests/<id>/comments`` (:meth:`post_pr_summary_comment`), using
-        ``effective_review_body(body)`` for ``content.raw`` (see ``review_decision_common``).
+        ``POST {base}/approve`` and ``POST {base}/request-changes`` do not accept a review
+        rationale in the JSON body. We post the runner summary to
+        ``pullrequests/<id>/comments`` (:meth:`post_pr_summary_comment`) using
+        ``effective_review_body(body)`` (see ``review_decision_common``).
         ``head_sha`` is unused.
+
+        Before writing the new state the opposite endpoint is cleared first
+        (``DELETE /request-changes`` before approving; ``DELETE /approve`` before requesting
+        changes) so that a re-run on an updated PR cannot leave the bot simultaneously in both
+        states.  A 404 on the DELETE is silently ignored (already clear).
         """
         _ = head_sha
         base = self._path(owner, repo, "pullrequests", str(pr_number))
         if decision == "APPROVE":
+            delete_soft_fail(
+                self._delete,
+                f"{base}/request-changes",
+                log_label=f"Bitbucket Cloud clear request-changes for PR {pr_number}",
+            )
             self._post(f"{base}/approve", {})
         else:
+            delete_soft_fail(
+                self._delete,
+                f"{base}/approve",
+                log_label=f"Bitbucket Cloud clear approve for PR {pr_number}",
+            )
             self._post(f"{base}/request-changes", {})
         self.post_pr_summary_comment(owner, repo, pr_number, effective_review_body(body))
 

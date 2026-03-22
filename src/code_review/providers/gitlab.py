@@ -24,6 +24,7 @@ from code_review.providers.base import (
     pr_info_from_api_dict,
 )
 from code_review.providers.review_decision_common import (
+    delete_soft_fail,
     gitlab_note_with_submit_review_requested_changes,
 )
 from code_review.providers.safety import truncate_repo_content
@@ -112,6 +113,11 @@ class GitLabProvider(ProviderInterface):
             r = client.put(path, headers=self._headers(), json=json)
             r.raise_for_status()
             return r.json() if r.content else None
+
+    def _delete(self, path: str) -> None:
+        with httpx.Client(timeout=self._timeout) as client:
+            r = client.delete(path, headers=self._headers())
+            r.raise_for_status()
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff by concatenating MR diffs."""
@@ -354,7 +360,9 @@ class GitLabProvider(ProviderInterface):
         """Submit MR approval or request-changes via GitLab REST + quick actions.
 
         * ``APPROVE`` → ``POST .../merge_requests/:iid/approve`` (optional ``sha``).
-        * ``REQUEST_CHANGES`` → MR note with ``/submit_review requested_changes`` (requires a
+        * ``REQUEST_CHANGES`` → first removes any prior approval via ``DELETE .../approve``
+          (so the bot cannot be simultaneously approved and requesting changes after a PR is
+          updated), then posts an MR note with ``/submit_review requested_changes`` (requires a
           pending review in some GitLab versions; see GitLab merge request reviews docs).
         """
         base = self._path(owner, repo, "merge_requests", str(pr_number))
@@ -364,6 +372,14 @@ class GitLabProvider(ProviderInterface):
                 payload["sha"] = head_sha
             self._post(f"{base}/approve", payload)
             return
+        # Remove any prior bot approval before requesting changes so the MR is not left
+        # in the contradictory "approved + request changes" state when the PR is re-reviewed.
+        delete_soft_fail(
+            self._delete,
+            f"{base}/approve",
+            safe_codes=frozenset({403, 404, 405}),
+            log_label=f"GitLab unapprove owner={owner} repo={repo} pr={pr_number}",
+        )
         note = gitlab_note_with_submit_review_requested_changes(body)
         self._post(f"{base}/notes", {"body": note})
 
