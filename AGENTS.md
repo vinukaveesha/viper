@@ -23,6 +23,7 @@ This file helps AI coding assistants (e.g. Cursor, Codex) work effectively on th
 | **Logging** | `src/code_review/logging_config.py` | Centralized logging configuration |
 | **Model** | `src/code_review/models.py` | `get_configured_model()`, `get_context_window()`, `get_max_output_tokens()` |
 | **Findings** | `src/code_review/schemas/findings.py` | `FindingV1` — contract for agent JSON output |
+| **Reply dismissal (Phase E)** | `src/code_review/schemas/reply_dismissal.py`, `src/code_review/agent/reply_dismissal_agent.py` | Separate tool-free agent; verdict JSON for thread reply classification (runner wiring optional) |
 | **Diff** | `src/code_review/diff/` | Parser, position, fingerprint/marker for dedup and comments |
 | **Standards** | `src/code_review/standards/` | Language/framework detection; `prompts/` contains review prompt fragments |
 | **Formatters** | `src/code_review/formatters/comment.py` | `finding_to_comment_body()` |
@@ -55,7 +56,7 @@ Tests mirror `src/`: `tests/test_runner.py`, `tests/providers/`, `tests/runner/`
 
 - **README.md** — Quick start, config, Docker/CI, observability.
 - **docs/SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md** — Per-SCM approve / needs-work / merge checks vs `SCM_REVIEW_DECISION_*`.
-- **docs/SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md** — Code inventory for review decisions; gap backlog (GitLab, Bitbucket).
+- **docs/SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md** — Code inventory for review decisions; gap backlog (GitLab, Bitbucket). **When you land a phase (A–F), update §8’s checklist in the same change set** so the doc stays an accurate rollout ledger.
 - **docs/DEVELOPER_GUIDE.md** — Full implementation guide: architecture, flow, modules, config, extension points, testing.
 
 **ADK**: Runner builds an ADK Agent (model, instruction, tools from `agent/tools/`) and uses Runner + InMemorySessionService; it calls `Runner.run()` then parses the final response for a JSON array of findings. Tools delegate to the provider; the agent does not post or fetch comments.

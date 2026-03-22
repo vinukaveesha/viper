@@ -320,6 +320,8 @@ Use a **separate agent** from the code review agent.
 
 - Validate with Pydantic before the runner acts on it.
 
+**Implemented (skeleton):** `src/code_review/schemas/reply_dismissal.py` (`ReplyDismissalVerdictV1`), `create_reply_dismissal_agent()`, and `reply_dismissal_verdict_from_llm_text()` for fenced/raw JSON. **Not wired:** runner / E.3 gate integration or SCM posting of `reply_text`.
+
 #### E.3 Gate integration
 
 - On a comment webhook:
@@ -370,6 +372,7 @@ Use a **separate agent** from the code review agent.
 | `src/code_review/config.py` | `SCMConfig` review-decision fields; `CodeReviewAppConfig` for decision-only and skip-if-not-blocking |
 | `src/code_review/providers/base.py` | `ReviewDecision`, `UnresolvedReviewItem`, `BotBlockingState`, `get_bot_blocking_state` |
 | `src/code_review/schemas/review_decision_event.py` | `ReviewDecisionEventContext`, env loader, skip-eligibility helper |
+| `src/code_review/schemas/reply_dismissal.py` | `ReplyDismissalVerdictV1` — reply-dismissal agent JSON contract |
 | `src/code_review/providers/review_decision_common.py` | shared helpers for review-decision submission |
 | `src/code_review/providers/github.py` | thread-based gate; strong candidate for first reply-dismissal implementation |
 | `src/code_review/providers/gitlab.py` | discussion-based gate; strong candidate for first reply-dismissal implementation |
@@ -377,7 +380,7 @@ Use a **separate agent** from the code review agent.
 | `src/code_review/providers/bitbucket.py` | task-first gate; likely partial/late reply-dismissal support |
 | `src/code_review/providers/bitbucket_server.py` | inline-comment + task gate; participant status for blocking + review decisions |
 | `src/code_review/agent/agent.py` | code review agent only; do not merge reply-dismissal logic into this prompt |
-| `src/code_review/agent/reply_dismissal_agent.py` (planned) | reply-dismissal agent |
+| `src/code_review/agent/reply_dismissal_agent.py` | tool-free reply-dismissal LlmAgent + LLM text → verdict parser |
 | `docker/jenkins/Jenkinsfile` | PR trigger filtering; optional `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS` decision-only path |
 | `tests/test_runner.py` | review-decision orchestration tests |
 | `tests/config/test_config.py` | config and CLI override behavior |
@@ -390,6 +393,8 @@ Use a **separate agent** from the code review agent.
 **How to use this list:** check boxes track **repository** work. Keep this section updated when phases land so it stays the rollout ledger.
 
 **Phases A–D (as implemented):** items **1–5**, **7**, and **8** are done. **6** is still open (blocking state uses token-user/review APIs per provider, not a shared `get_bot_attribution_identity` type). **9** is only partial: event kinds exist and CI can call decision-only with `CODE_REVIEW_EVENT_KIND`; there is no new in-repo webhook receiver. **13** is partial (`docs/CONFIGURATION-REFERENCE.md`, `docs/GITHUB-ACTIONS.md`, Jenkinsfile comments; Phase F remains for merge-blocking doc parity and richer observability).
+
+**Phase E.2 (partial):** `ReplyDismissalVerdictV1`, `create_reply_dismissal_agent()`, and `reply_dismissal_verdict_from_llm_text()` are in-repo; checklist **11** stays open until runner integration (E.3) and optional SCM posting (**12**).
 
 1. [x] Extract a shared runner helper for `high_count`, `medium_count`, `decision`, and `reason`, and reuse it from both `_maybe_submit_review_decision(...)` and `_optional_quality_gate_summary_suffix(...)`.
 2. [x] Add tests for the shared helper so future review modes do not drift in threshold or dedupe behavior.
