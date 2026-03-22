@@ -2,9 +2,7 @@
 
 This document is for **developers**: what exists today for `SCM_REVIEW_DECISION_*`, where it lives, and the **planned work** to re-evaluate approve vs needs-work when review threads change without a full agent run. User-facing merge semantics stay in [SCM review decisions and merge blocking](SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md).
 
-
-It is very important that we follow the Single Responsibility principal when building this. We should rely on 
-established design patterns where possible and always strive to reuse code as much as possible.
+Follow **single responsibility**, established patterns, and **reuse** shared infrastructure (config, model factory, logging) without merging unrelated prompts or tools into one agent.
 
 ---
 
@@ -93,6 +91,23 @@ For threads that still appear **open** in the SCM (unresolved, non-outdated) but
 
 Exact rule for “only if blocking”: query bot review/participant state vs always recompute when `UNKNOWN` (see Phase C).
 
+### 5.3 Agent boundaries — two agents
+
+Use **two separate agents** (separate ADK `Agent` definitions / instruction surfaces, or equivalent isolated invocations). Do **not** extend the code-review agent with reply-dismissal instructions or merge-gate JSON.
+
+| | **Code review agent** (existing) | **Reply-dismissal agent** (new) |
+|---|-----------------------------------|----------------------------------|
+| **Responsibility** | Discover issues on the diff; output structured **findings** for posting. | Judge one **user reply** against one **prior review comment**; output **verdict** JSON per §5.1. |
+| **Inputs** | Diff, file content, standards context, optional context brief. | Original comment body (+ severity if known), reply body; no full diff. |
+| **Tools** | SCM tools (or single-shot mode without tools per runner). | **None** — all context is passed in the prompt (runner/provider assemble the thread slice). |
+| **Output contract** | JSON array of `FindingV1` (parsed by runner). | Verdict JSON per §5.1 (`agreed` / `disagreed`, `reply_text` when needed); validate with Pydantic. |
+| **Location (planned)** | `src/code_review/agent/agent.py` (`create_review_agent`, …). | New module e.g. `src/code_review/agent/reply_dismissal_agent.py` with `create_reply_dismissal_agent(...)` (exact name TBD). |
+| **Model config** | `LLM_*` via `get_configured_model()` etc. | **Same default** `LLM_*` unless we add optional overrides (e.g. `LLM_REPLY_DISMISSAL_MODEL`) later. |
+
+**Orchestration:** `runner` (or a thin coordinator) decides **which** agent runs: full review path → code review agent only; comment-webhook / review-decision path that needs dismissal classification → reply-dismissal agent, then gate math and `submit_review_decision`. No agent calls the other.
+
+**Reuse:** Shared **model wiring** (`models.py`, config), **logging**, and **JSON extraction** helpers where sensible; do **not** share one system prompt or one tool list across both.
+
 ---
 
 ## 6. Technical plan (phased)
@@ -100,13 +115,13 @@ Exact rule for “only if blocking”: query bot review/participant state vs alw
 ### Phase A — Review-decision-only mode (runner + CLI)
 
 - Add a mode (CLI flag and/or env, e.g. `--review-decision-only` / `CODE_REVIEW_REVIEW_DECISION_ONLY`) that:
-  - Skips the **main code-review agent** (no full diff review / findings JSON).
-  - May still invoke the **configured LLM** if Phase D reply classification is enabled for that run (see below).
+  - Skips the **code review agent** (no full diff review / findings JSON).
+  - May still invoke the **reply-dismissal agent** (§5.3) when Phase D classification is enabled for that run.
   - Reuses `_quality_gate_high_medium_counts` (after any reply-based exclusions) and `_maybe_submit_review_decision` with `to_post=[]` unless we also surface net-new findings in some hybrid flow.
 - Refactor if needed so decision submission is not duplicated between the full path and this path.
 - `head_sha` handling: keep consistent with existing `submit_review_decision` per provider (GitHub/Gitea/GitLab use it in places).
 
-**Tests:** `MockProvider`: counts → `APPROVE` / `REQUEST_CHANGES`; patch LLM for reply classification when testing Phase D integration.
+**Tests:** `MockProvider`: counts → `APPROVE` / `REQUEST_CHANGES`; patch reply-dismissal agent when testing Phase D integration.
 
 ### Phase B — SCM triggers for non-push activity
 
@@ -134,7 +149,7 @@ Exact rule for “only if blocking”: query bot review/participant state vs alw
    - **Bitbucket Server / Cloud:** activity / note payloads where threading exists; Cloud may stay tasks-first until inline threads are rich enough.
    - **Gitea:** confirm API; document gaps.
 
-2. **Gate integration** — On a **comment webhook**, map the payload to a thread + **that** new reply and classify once. On a **batch path**, consider each unresolved high/medium thread whose **latest non-bot** reply is **not yet classified** (same LLM contract). Return **structured JSON** per §5.1 (`verdict`, `reply_text` when `disagreed`).
+2. **Gate integration** — On a **comment webhook**, map the payload to a thread + **that** new reply and run the **reply-dismissal agent** once (§5.3). On a **batch path**, same agent per thread that needs classification. Return **structured JSON** per §5.1 (`verdict`, `reply_text` when `disagreed`).
    - If **`agreed`**, **omit that thread** from the high/medium dedupe set (one thread → at most one gate bump today).
    - If **`disagreed`**, keep the thread in counts and surface **`reply_text`** to the layer that posts SCM comments (or logs in dry-run).
 
@@ -153,8 +168,10 @@ Exact rule for “only if blocking”: query bot review/participant state vs alw
 
 | File | Role |
 |------|------|
-| `src/code_review/runner.py` | `_quality_gate_*`, `_maybe_submit_review_decision`, orchestration (future: reply-dismissal hook) |
-| `src/code_review/models.py` | `get_configured_model()` — reuse for reply-classification calls |
+| `src/code_review/runner.py` | `_quality_gate_*`, `_maybe_submit_review_decision`, orchestration (future: which agent to run) |
+| `src/code_review/agent/agent.py` | Code review agent only — do not add dismissal logic here |
+| `src/code_review/agent/reply_dismissal_agent.py` (TBD) | Reply-dismissal agent — §5.3 |
+| `src/code_review/models.py` | `get_configured_model()` — shared by both agents |
 | `src/code_review/config.py` | `review_decision_*`, `bitbucket_server_user_slug` |
 | `src/code_review/providers/base.py` | `ReviewDecision`, `submit_review_decision`, `get_unresolved_review_items_for_quality_gate` |
 | `src/code_review/providers/review_decision_common.py` | Shared helpers for GitHub-style JSON, GitLab note, effective body |
