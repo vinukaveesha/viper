@@ -739,10 +739,8 @@ def _omit_marker_pr_summary_visible_text(
     successful_inline_posts: int,
     cfg,
     provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
+    high_count: int,
+    medium_count: int,
 ) -> str:
     """Human-readable PR summary for providers that omit inline HTML markers (e.g. Bitbucket)."""
     lines: list[str] = [
@@ -774,7 +772,7 @@ def _omit_marker_pr_summary_visible_text(
             )
 
     extra = _optional_quality_gate_summary_suffix(
-        provider, cfg, owner, repo, pr_number, to_post
+        provider, cfg, high_count, medium_count
     )
     if extra:
         lines.append(extra)
@@ -784,19 +782,18 @@ def _omit_marker_pr_summary_visible_text(
 def _optional_quality_gate_summary_suffix(
     provider,
     cfg,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
+    high_count: int,
+    medium_count: int,
 ) -> str:
-    """Append threshold / merge-gate wording when review decisions are enabled."""
+    """Append threshold / merge-gate wording when review decisions are enabled.
+
+    *high_count* and *medium_count* must match the single pre-inline-post snapshot from
+    :func:`_quality_gate_high_medium_counts` so summary text agrees with ``submit_review_decision``.
+    """
     if not bool(getattr(cfg, "review_decision_enabled", False)):
         return ""
     if not provider.capabilities().supports_review_decisions:
         return ""
-    high_count, medium_count = _quality_gate_high_medium_counts(
-        provider, owner, repo, pr_number, to_post
-    )
     high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
     medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
     decision = _compute_review_decision_from_counts(
@@ -829,6 +826,8 @@ def _post_omit_marker_pr_summary_comment(
     findings_planned: int,
     successful_inline_posts: int,
     to_post: list[tuple[FindingV1, str]],
+    high_count: int,
+    medium_count: int,
     include_run_marker: bool = True,
 ) -> None:
     """Post a PR-level summary for omit-marker providers; optionally attach the ``run=`` id marker.
@@ -846,10 +845,8 @@ def _post_omit_marker_pr_summary_comment(
         successful_inline_posts=successful_inline_posts,
         cfg=cfg,
         provider=provider,
-        owner=owner,
-        repo=repo,
-        pr_number=pr_number,
-        to_post=to_post,
+        high_count=high_count,
+        medium_count=medium_count,
     )
     if include_run_marker:
         run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
@@ -966,18 +963,21 @@ def _maybe_submit_review_decision(
     pr_number: int,
     head_sha: str,
     dry_run: bool,
-    to_post: list[tuple[FindingV1, str]],
     cfg,
+    *,
+    high_count: int,
+    medium_count: int,
 ) -> None:
-    """Submit or log PR-level review decision when configured and supported."""
+    """Submit or log PR-level review decision when configured and supported.
+
+    *high_count* / *medium_count* must be the same pre-inline-post values used for the
+    omit-marker PR summary so decision and user-visible counts stay aligned.
+    """
     if not bool(getattr(cfg, "review_decision_enabled", False)):
         return
 
     high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
     medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
-    high_count, medium_count = _quality_gate_high_medium_counts(
-        provider, owner, repo, pr_number, to_post
-    )
     decision = _compute_review_decision_from_counts(
         high_count,
         medium_count,
@@ -1644,6 +1644,9 @@ class ReviewOrchestrator:
         )
         if dry_run:
             return 0
+        high_count, medium_count = _quality_gate_high_medium_counts(
+            provider, owner, repo, pr_number, to_post
+        )
         count = 0
         if to_post:
             if not head_sha:
@@ -1678,6 +1681,8 @@ class ReviewOrchestrator:
                 findings_planned=planned,
                 successful_inline_posts=count,
                 to_post=to_post,
+                high_count=high_count,
+                medium_count=medium_count,
                 include_run_marker=include_marker,
             )
         _maybe_submit_review_decision(
@@ -1687,8 +1692,9 @@ class ReviewOrchestrator:
             pr_number,
             head_sha,
             dry_run,
-            to_post,
             cfg,
+            high_count=high_count,
+            medium_count=medium_count,
         )
         return count
 
