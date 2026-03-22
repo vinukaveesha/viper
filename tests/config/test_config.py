@@ -25,6 +25,32 @@ def test_scm_config_invalid_url_raises():
             SCMConfig()
 
 
+def test_scm_config_bitbucket_server_user_slug_stripped():
+    """Whitespace-only slug is empty so truthy checks match review-decision availability."""
+    with patch.dict(
+        os.environ,
+        {
+            "SCM_URL": "https://gitea.example.com",
+            "SCM_TOKEN": "x",
+            "SCM_BITBUCKET_SERVER_USER_SLUG": "  \t  ",
+        },
+        clear=False,
+    ):
+        cfg = SCMConfig()
+        assert cfg.bitbucket_server_user_slug == ""
+    with patch.dict(
+        os.environ,
+        {
+            "SCM_URL": "https://gitea.example.com",
+            "SCM_TOKEN": "x",
+            "SCM_BITBUCKET_SERVER_USER_SLUG": "  buildbot  ",
+        },
+        clear=False,
+    ):
+        cfg = SCMConfig()
+        assert cfg.bitbucket_server_user_slug == "buildbot"
+
+
 def test_scm_config_allowed_hosts_normalized():
     """allowed_hosts is stripped and empty segments removed; empty string becomes None."""
     with patch.dict(

@@ -768,6 +768,42 @@ def test_submit_review_decision_needs_work(mock_client):
     assert put_args[1]["json"] == {"status": "NEEDS_WORK"}
 
 
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_retries_participant_put_on_409(mock_client):
+    mock_get_ok = MagicMock()
+    mock_get_ok.raise_for_status = MagicMock()
+    mock_get_ok.headers = {"content-type": "application/json"}
+    mock_get_ok.json.side_effect = [{"version": 2}, {"version": 5}]
+
+    req = httpx.Request("PUT", "https://bb/pull")
+    resp_409 = httpx.Response(409, request=req)
+
+    def raise_409() -> None:
+        raise httpx.HTTPStatusError("conflict", request=req, response=resp_409)
+
+    mock_put_fail = MagicMock()
+    mock_put_fail.raise_for_status = raise_409
+    mock_put_ok = MagicMock()
+    mock_put_ok.raise_for_status = MagicMock()
+    mock_put_ok.content = b""
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get_ok
+    client.put.side_effect = [mock_put_fail, mock_put_ok]
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="u1",
+    )
+    p.submit_review_decision("PROJ", "repo", 7, "APPROVE")
+
+    assert client.get.call_count == 2
+    assert client.put.call_count == 2
+    assert "version=2" in client.put.call_args_list[0][0][0]
+    assert "version=5" in client.put.call_args_list[1][0][0]
+
+
 def test_submit_review_decision_requires_participant_slug():
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     with pytest.raises(ValueError, match="SCM_BITBUCKET_SERVER_USER_SLUG"):

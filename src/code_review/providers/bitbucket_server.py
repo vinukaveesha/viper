@@ -559,8 +559,30 @@ class BitbucketServerProvider(ProviderInterface):
         slug = quote(self._participant_user_slug, safe="")
         status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
         path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
-        url = f"{path}?version={version}"
-        self._put(url, {"status": status})
+        payload = {"status": status}
+
+        def _put_participant(ver: int) -> None:
+            self._put(f"{path}?version={ver}", payload)
+
+        try:
+            _put_participant(version)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is None or exc.response.status_code != 409:
+                raise
+            version2 = self._pull_request_version(owner, repo, pr_number)
+            if version2 is None:
+                raise ValueError(
+                    "Bitbucket Server: could not read pull request version "
+                    "after 409 on review decision."
+                ) from exc
+            logger.debug(
+                "Bitbucket Server submit_review_decision 409; retrying participant PUT "
+                "owner=%s repo=%s pr=%s",
+                owner,
+                repo,
+                pr_number,
+            )
+            _put_participant(version2)
 
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the pull request (paginated REST)."""

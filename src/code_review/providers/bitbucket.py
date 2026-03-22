@@ -312,8 +312,10 @@ class BitbucketProvider(ProviderInterface):
     ) -> None:
         """Approve or request changes (Bitbucket Cloud 2.0).
 
-        Cloud approve/request-changes endpoints do not take the runner's reason text; we post the
-        same summary as a PR comment so it matches GitHub/Gitea review bodies.
+        ``POST {base}/approve`` and ``POST {base}/request-changes`` (``REQUEST_CHANGES`` uses the
+        latter) do not accept review rationale in the JSON body. We then post the runner summary
+        to ``pullrequests/<id>/comments`` (:meth:`post_pr_summary_comment`), using
+        ``effective_review_body(body)`` for ``content.raw`` (see ``review_decision_common``).
         ``head_sha`` is unused.
         """
         _ = head_sha

@@ -69,7 +69,8 @@ class SCMConfig(BaseSettings):
         default="",
         description=(
             "Bitbucket Server/DC: username slug of the token user for "
-            "`PUT .../pull-requests/{id}/participants/{slug}` when submitting review decisions."
+            "`PUT .../pull-requests/{id}/participants/{slug}` when submitting review decisions. "
+            "Leading/trailing whitespace is stripped; whitespace-only values are treated as empty."
         ),
     )
 
@@ -88,6 +89,12 @@ class SCMConfig(BaseSettings):
             return None
         cleaned = ",".join(h.strip() for h in v.split(",") if h.strip())
         return cleaned or None
+
+    @field_validator("bitbucket_server_user_slug")
+    @classmethod
+    def _normalize_bitbucket_server_user_slug(cls, v: str) -> str:
+        """Strip so whitespace-only env values do not look like a configured slug."""
+        return (v or "").strip()
 
 
 class LLMConfig(BaseSettings):
