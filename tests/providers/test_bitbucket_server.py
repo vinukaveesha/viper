@@ -1,8 +1,9 @@
 """Tests for BitbucketServerProvider (mocked HTTP)."""
 
-import pytest
+from unittest.mock import MagicMock, patch
+
 import httpx
-from unittest.mock import MagicMock, call, patch
+import pytest
 
 from code_review.providers import get_provider
 from code_review.providers.base import InlineComment
@@ -319,9 +320,7 @@ def test_get_existing_review_comments_uses_activities_endpoint(mock_client):
     # Verify the /activities URL was called, not /comments
     call_args = mock_client.return_value.__enter__.return_value.get.call_args
     called_url = call_args[0][0]
-    assert called_url.endswith("/activities"), (
-        f"Expected /activities endpoint, got: {called_url}"
-    )
+    assert called_url.endswith("/activities"), f"Expected /activities endpoint, got: {called_url}"
     assert "/comments" not in called_url
 
     assert len(comments) == 1
@@ -433,7 +432,10 @@ def test_extract_commit_id_missing_latestcommit_uses_ref_id():
 @pytest.mark.parametrize("bad_latest", [None, ""])
 def test_extract_commit_id_empty_latestcommit_uses_ref_id(bad_latest):
     """latestCommit=None/empty falls back to ref.id."""
-    assert _extract_commit_id({"id": "refs/heads/main", "latestCommit": bad_latest}) == "refs/heads/main"
+    assert (
+        _extract_commit_id({"id": "refs/heads/main", "latestCommit": bad_latest})
+        == "refs/heads/main"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +507,9 @@ def test_post_review_comments_uses_line_type_added(mock_client):
     provider, http = _setup_post_review_comments_mocks(mock_client)
 
     provider.post_review_comments(
-        "PROJ", "repo", 1,
+        "PROJ",
+        "repo",
+        1,
         [InlineComment(path="foo.java", line=10, body="Bug", line_type="ADDED")],
         head_sha="sha1",
     )
@@ -520,7 +524,9 @@ def test_post_review_comments_uses_line_type_context(mock_client):
     provider, http = _setup_post_review_comments_mocks(mock_client)
 
     provider.post_review_comments(
-        "PROJ", "repo", 1,
+        "PROJ",
+        "repo",
+        1,
         [InlineComment(path="foo.java", line=8, body="Context issue", line_type="CONTEXT")],
         head_sha="sha1",
     )
@@ -548,7 +554,9 @@ def test_post_review_comments_uses_base_to_head_hash_direction_for_to_file(mock_
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     p.post_review_comments(
-        "PROJ", "repo", 1,
+        "PROJ",
+        "repo",
+        1,
         [InlineComment(path="foo.java", line=10, body="Bug", line_type="ADDED")],
         head_sha="source_head_hash",
     )
@@ -592,7 +600,9 @@ def test_post_review_comments_retries_without_hashes_on_409(mock_client):
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     p.post_review_comments(
-        "PROJ", "repo", 1,
+        "PROJ",
+        "repo",
+        1,
         [InlineComment(path="foo.java", line=10, body="Bug", line_type="ADDED")],
         head_sha="source_head_hash",
     )
@@ -638,7 +648,9 @@ def test_post_review_comments_409_without_hashes_propagates(mock_client):
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     with pytest.raises(httpx.HTTPStatusError):
         p.post_review_comments(
-            "PROJ", "repo", 1,
+            "PROJ",
+            "repo",
+            1,
             [InlineComment(path="foo.java", line=10, body="Bug", line_type="ADDED")],
         )
 
@@ -703,7 +715,96 @@ def test_fallback_no_pr_summary_when_inline_fails():
     # PR summary fallback must NOT be called
     provider.post_pr_summary_comment.assert_not_called()
 
+
 def test_capabilities():
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     caps = p.capabilities()
     assert caps.supports_suggestions is True
+    assert caps.supports_review_decisions is False
+
+
+def test_capabilities_with_participant_slug_enables_review_decisions():
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="buildbot",
+    )
+    assert p.capabilities().supports_review_decisions is True
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_needs_work(mock_client):
+    mock_get = MagicMock()
+    mock_get.raise_for_status = MagicMock()
+    mock_get.headers = {"content-type": "application/json"}
+    mock_get.json.return_value = {"version": 3, "id": 1}
+
+    mock_put = MagicMock()
+    mock_put.raise_for_status = MagicMock()
+    mock_put.content = b""
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get
+    client.put.return_value = mock_put
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="buildbot",
+    )
+    p.submit_review_decision(
+        "PROJ",
+        "repo",
+        42,
+        "REQUEST_CHANGES",
+        body="reason",
+        head_sha="ignored",
+    )
+    assert client.put.call_count == 1
+    put_args = client.put.call_args
+    assert "/pull-requests/42/participants/" in put_args[0][0]
+    assert "buildbot" in put_args[0][0]
+    assert "version=3" in put_args[0][0]
+    assert put_args[1]["json"] == {"status": "NEEDS_WORK"}
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_retries_participant_put_on_409(mock_client):
+    mock_get_ok = MagicMock()
+    mock_get_ok.raise_for_status = MagicMock()
+    mock_get_ok.headers = {"content-type": "application/json"}
+    mock_get_ok.json.side_effect = [{"version": 2}, {"version": 5}]
+
+    req = httpx.Request("PUT", "https://bb/pull")
+    resp_409 = httpx.Response(409, request=req)
+
+    def raise_409() -> None:
+        raise httpx.HTTPStatusError("conflict", request=req, response=resp_409)
+
+    mock_put_fail = MagicMock()
+    mock_put_fail.raise_for_status = raise_409
+    mock_put_ok = MagicMock()
+    mock_put_ok.raise_for_status = MagicMock()
+    mock_put_ok.content = b""
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get_ok
+    client.put.side_effect = [mock_put_fail, mock_put_ok]
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="u1",
+    )
+    p.submit_review_decision("PROJ", "repo", 7, "APPROVE")
+
+    assert client.get.call_count == 2
+    assert client.put.call_count == 2
+    assert "version=2" in client.put.call_args_list[0][0][0]
+    assert "version=5" in client.put.call_args_list[1][0][0]
+
+
+def test_submit_review_decision_requires_participant_slug():
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with pytest.raises(ValueError, match="SCM_BITBUCKET_SERVER_USER_SLUG"):
+        p.submit_review_decision("PROJ", "repo", 1, "APPROVE")

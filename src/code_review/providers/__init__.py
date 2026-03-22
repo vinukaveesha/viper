@@ -16,7 +16,13 @@ from code_review.providers.github import GitHubProvider
 from code_review.providers.gitlab import GitLabProvider
 
 
-def get_provider(name: str, base_url: str, token: str) -> ProviderInterface:
+def get_provider(
+    name: str,
+    base_url: str,
+    token: str,
+    *,
+    bitbucket_server_user_slug: str = "",
+) -> ProviderInterface:
     """Factory for SCM providers."""
     if name == "gitea":
         return GiteaProvider(base_url=base_url, token=token)
@@ -27,7 +33,11 @@ def get_provider(name: str, base_url: str, token: str) -> ProviderInterface:
     if name == "bitbucket":
         return BitbucketProvider(base_url=base_url, token=token)
     if name == "bitbucket_server":
-        return BitbucketServerProvider(base_url=base_url, token=token)
+        return BitbucketServerProvider(
+            base_url=base_url,
+            token=token,
+            participant_user_slug=bitbucket_server_user_slug,
+        )
     raise ValueError(f"Unknown provider: {name}")
 
 

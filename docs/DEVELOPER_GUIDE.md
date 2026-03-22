@@ -227,6 +227,8 @@ The agent (inside ADK) uses `get_configured_model()` for the model and calls too
 
 Configuration is read via **Pydantic Settings** in `config.py`; no `.env` file is loaded by default (env vars must be set in the process or loaded by the caller).
 
+For a **single consolidated table** of every environment variable (including context-aware, observability, runner-only flags, and E2E helpers), see **[CONFIGURATION-REFERENCE.md](CONFIGURATION-REFERENCE.md)**.
+
 ### 6.1 SCM (`SCM_` prefix)
 
 | Variable | Required | Description |
@@ -329,9 +331,10 @@ Compare with and without this env var; if you get findings only with `LLM_DIFF_B
 ### 7.1 Adding a New SCM Provider
 
 1. Implement **ProviderInterface** in a new module under `providers/` (e.g. `providers/my_scm.py`). Implement: `get_pr_diff`, `get_pr_diff_for_file`, `get_file_content`, `get_file_lines`, `get_pr_files`, `post_review_comments`, `get_existing_review_comments`, `post_pr_summary_comment`, `get_pr_info`, `capabilities()`.
-2. In `providers/__init__.py`, extend **get_provider(name, base_url, token)** to return your provider when `name == "my_scm"` and add it to `__all__`.
-3. Extend **SCMConfig.provider** in `config.py` to include `"my_scm"` (e.g. `Literal[..., "my_scm"]`).
-4. Add tests under `tests/providers/test_my_scm.py` with mocked HTTP.
+2. Optionally implement **submit_review_decision** and set **ProviderCapabilities.supports_review_decisions=True** if the SCM exposes an equivalent to GitHub’s `APPROVE` / `REQUEST_CHANGES` review submission and you want `SCM_REVIEW_DECISION_ENABLED` to run end-to-end. See **GitHub** and **Gitea** providers for reference; see [SCM review decisions and merge blocking](SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md) for product semantics and [SCM review decisions — implementation plan](SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md) for current code status and backlog.
+3. In `providers/__init__.py`, extend **`get_provider(name, base_url, token, *, bitbucket_server_user_slug="")`** so it returns your provider when `name == "my_scm"` and add the class to `__all__`. The runner calls this factory with **`bitbucket_server_user_slug=`** from config (used only for Bitbucket Server review decisions); **`get_provider` must keep accepting that keyword-only argument**, and your new branch should pass it through only if applicable—otherwise ignore it (e.g. `return MyScmProvider(base_url=base_url, token=token)`).
+4. Extend **SCMConfig.provider** in `config.py` to include **`"my_scm"`** (e.g. `Literal[..., "my_scm"]`).
+5. Add tests under **`tests/providers/test_my_scm.py`** with mocked HTTP.
 
 ### 7.2 Adding or Changing an LLM Backend
 
@@ -464,6 +467,7 @@ repos:
 ## 10. References
 
 - **README.md**: Quick start, configuration summary, Docker/CI, observability.
+- **CONFIGURATION-REFERENCE.md**: All environment variables in one place.
 - **.env.example**: Example SCM and LLM env vars.
 - **AGENTS.md**: Project summary, where things live, ADK usage, conventions; optional context for the review agent.
 - **Google ADK**: [Agent Development Kit](https://google.github.io/adk-docs/) — LlmAgent, Runner, SessionService, function tools.

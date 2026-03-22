@@ -15,8 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 def _choice_message_text(choice: object) -> str:
-    msg = choice["message"] if isinstance(choice, dict) else getattr(choice, "message", None)
-    content = msg["content"] if isinstance(msg, dict) else getattr(msg, "content", None)
+    if isinstance(choice, dict):
+        msg = choice.get("message")
+    else:
+        msg = getattr(choice, "message", None)
+    if isinstance(msg, dict):
+        content = msg.get("content")
+    else:
+        content = getattr(msg, "content", None)
     if isinstance(content, list):
         content = " ".join(
             block["text"]
@@ -55,7 +61,9 @@ def build_semantic_query_from_diff(diff_text: str, max_diff_chars: int = 14_000)
             max_tokens=256,
             temperature=llm.temperature,
         )
-        choices = (resp["choices"] if isinstance(resp, dict) else getattr(resp, "choices", None)) or []
+        choices = (
+            resp["choices"] if isinstance(resp, dict) else getattr(resp, "choices", None)
+        ) or []
         if choices:
             text = _choice_message_text(choices[0])
             if text:

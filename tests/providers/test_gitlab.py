@@ -12,7 +12,7 @@ def test_get_provider_gitlab():
     assert isinstance(p, GitLabProvider)
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_diff(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = [
@@ -43,7 +43,7 @@ def test_get_file_content(mock_client):
     assert content == "print('hello')"
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_files(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = [
@@ -74,7 +74,7 @@ def test_get_pr_files(mock_client):
     assert files[1].status == "added"
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_review_comments(mock_client):
     # First call: get MR for diff_refs
     mr_resp = MagicMock()
@@ -107,7 +107,7 @@ def test_post_review_comments(mock_client):
     assert payload["position"].get("new_line") == 10
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_review_comments_with_suggested_patch(mock_client):
     # First call: get MR for diff_refs
     mr_resp = MagicMock()
@@ -144,7 +144,7 @@ def test_post_review_comments_with_suggested_patch(mock_client):
     assert "replacement_code();" in body
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_existing_review_comments(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = [
@@ -183,7 +183,7 @@ def test_get_existing_review_comments(mock_client):
     assert comments[1].id == "2" and comments[1].resolved is True
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_unresolved_review_items_skips_resolved_discussions(mock_client):
     """Quality gate uses discussion-level resolved; one thread row per discussion."""
     mock_resp = MagicMock()
@@ -237,7 +237,7 @@ def _json_get_response(payload):
     return m
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_unresolved_review_items_paginates_discussions(mock_client):
     """Quality gate must follow GitLab discussions pagination (page/per_page)."""
     note = {
@@ -283,7 +283,7 @@ def test_get_unresolved_review_items_paginates_discussions(mock_client):
     assert any("page=2" in u for u in urls)
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_pr_summary_comment(mock_client):
     mock_post = MagicMock()
     mock_post.raise_for_status = MagicMock()
@@ -297,7 +297,7 @@ def test_post_pr_summary_comment(mock_client):
     assert call_args[1]["json"]["body"] == "Summary body"
 
 
-@patch("code_review.providers.gitlab.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_info(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -312,3 +312,105 @@ def test_get_pr_info(mock_client):
     assert info is not None
     assert info.title == "Fix bug"
     assert "skip-review" in info.labels
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_approve(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "APPROVE", body="ok", head_sha="deadbeef")
+    call_args = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/merge_requests/7/approve" in call_args[0][0]
+    assert call_args[1]["json"] == {"sha": "deadbeef"}
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_request_changes_note(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.json.return_value = {"id": 1}
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "REQUEST_CHANGES", body="fix it")
+    call_args = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/merge_requests/7/notes" in call_args[0][0]
+    assert "/submit_review requested_changes" in call_args[1]["json"]["body"]
+    assert "fix it" in call_args[1]["json"]["body"]
+
+
+def test_gitlab_capabilities_support_review_decisions():
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    assert p.capabilities().supports_review_decisions is True
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_request_changes_unapproves_first(mock_client):
+    """REQUEST_CHANGES must DELETE /approve before posting the note (re-run scenario).
+
+    When the agent re-runs on an updated PR and the bot had previously approved,
+    submitting REQUEST_CHANGES should first remove that approval so the MR is not
+    left in the contradictory "approved + request-changes" state.
+    """
+    mock_delete_resp = MagicMock()
+    mock_delete_resp.raise_for_status = MagicMock()
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.json.return_value = {"id": 1}
+    http = mock_client.return_value.__enter__.return_value
+    http.delete.return_value = mock_delete_resp
+    http.post.return_value = mock_post_resp
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "REQUEST_CHANGES", body="fix it")
+
+    # DELETE /approve must have been called
+    assert http.delete.call_count == 1
+    delete_url = http.delete.call_args[0][0]
+    assert "/merge_requests/7/approve" in delete_url
+    # POST /notes with the quick-action body must follow
+    assert http.post.call_count == 1
+    assert "/merge_requests/7/notes" in http.post.call_args[0][0]
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_request_changes_ignores_404_unapprove(mock_client):
+    """A 404 from DELETE /approve (bot had not approved) must be silently ignored."""
+    import httpx as real_httpx
+
+    mock_delete_resp = MagicMock()
+    mock_delete_resp.status_code = 404
+    mock_404 = real_httpx.HTTPStatusError("not found", request=MagicMock(), response=mock_delete_resp)
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.json.return_value = {"id": 1}
+    http = mock_client.return_value.__enter__.return_value
+    http.delete.return_value = MagicMock(raise_for_status=MagicMock(side_effect=mock_404))
+    http.post.return_value = mock_post_resp
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    # Must not raise even though DELETE returned 404
+    p.submit_review_decision("owner", "repo", 7, "REQUEST_CHANGES", body="fix it")
+    assert http.post.call_count == 1
+    assert "/merge_requests/7/notes" in http.post.call_args[0][0]
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_approve_does_not_delete(mock_client):
+    """APPROVE must NOT call DELETE /approve (no prior state to clean up on approve path)."""
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.content = b""
+    http = mock_client.return_value.__enter__.return_value
+    http.post.return_value = mock_post_resp
+
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    p.submit_review_decision("owner", "repo", 7, "APPROVE", body="lgtm", head_sha="abc")
+
+    assert http.delete.call_count == 0
+    assert http.post.call_count == 1
+    assert "/merge_requests/7/approve" in http.post.call_args[0][0]

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from code_review.providers import get_provider
 from code_review.providers.base import InlineComment
 from code_review.providers.bitbucket import BitbucketProvider
+from code_review.providers.review_decision_common import effective_review_body
 
 
 def test_get_provider_bitbucket():
@@ -12,7 +13,7 @@ def test_get_provider_bitbucket():
     assert isinstance(p, BitbucketProvider)
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_diff(mock_client):
     mock_resp = MagicMock()
     mock_resp.text = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py"
@@ -24,7 +25,7 @@ def test_get_pr_diff(mock_client):
     assert "diff --git" in diff
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_file_content(mock_client):
     mock_resp = MagicMock()
     mock_resp.text = "print('hello')"
@@ -37,7 +38,7 @@ def test_get_file_content(mock_client):
     assert content == "print('hello')"
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_files(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -56,7 +57,7 @@ def test_get_pr_files(mock_client):
     assert files[1].path == "bar.go"
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_review_comments(mock_client):
     mock_post = MagicMock()
     mock_post.raise_for_status = MagicMock()
@@ -79,7 +80,7 @@ def test_post_review_comments(mock_client):
     assert payload["inline"]["to"] == 10
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_review_comments_single_line_no_from(mock_client):
     """Single-line comments must NOT include 'from' in the inline anchor.
 
@@ -109,7 +110,7 @@ def test_post_review_comments_single_line_no_from(mock_client):
     assert payload["inline"]["to"] == 42
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_review_comments_multiline_includes_from(mock_client):
     """Multi-line range comments (end_line != line) MUST include 'from'."""
     mock_post = MagicMock()
@@ -129,7 +130,7 @@ def test_post_review_comments_multiline_includes_from(mock_client):
     assert payload["inline"]["to"] == 15
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_unresolved_review_items_open_tasks_only(mock_client):
     """Bitbucket Cloud quality gate uses PR tasks (comments lack resolved state)."""
     mock_resp = MagicMock()
@@ -152,7 +153,7 @@ def test_get_unresolved_review_items_open_tasks_only(mock_client):
     assert "/pullrequests/5/tasks" in call_url
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_existing_review_comments(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -172,7 +173,7 @@ def test_get_existing_review_comments(mock_client):
     assert comments[0].line == 10
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_post_pr_summary_comment(mock_client):
     mock_post = MagicMock()
     mock_post.raise_for_status = MagicMock()
@@ -186,7 +187,7 @@ def test_post_pr_summary_comment(mock_client):
     assert "inline" not in call_args[1]["json"] or call_args[1]["json"].get("inline") is None
 
 
-@patch("code_review.providers.bitbucket.httpx.Client")
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_pr_info(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -207,3 +208,106 @@ def test_capabilities():
     p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
     caps = p.capabilities()
     assert caps.supports_suggestions is True
+    assert caps.supports_review_decisions is True
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_approve(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "APPROVE", body="x", head_sha="sha")
+    posts = mock_client.return_value.__enter__.return_value.post
+    assert posts.call_count == 2
+    urls = [posts.call_args_list[i][0][0] for i in range(2)]
+    assert any(u.endswith("/pullrequests/9/approve") for u in urls)
+    comment_call = next(c for c in posts.call_args_list if "/pullrequests/9/comments" in c[0][0])
+    assert comment_call[1]["json"]["content"]["raw"] == effective_review_body("x")
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_request_changes(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "REQUEST_CHANGES", body="please fix")
+    posts = mock_client.return_value.__enter__.return_value.post
+    assert posts.call_count == 2
+    urls = [posts.call_args_list[i][0][0] for i in range(2)]
+    assert any(u.endswith("/pullrequests/9/request-changes") for u in urls)
+    comment_call = next(c for c in posts.call_args_list if "/pullrequests/9/comments" in c[0][0])
+    assert comment_call[1]["json"]["content"]["raw"] == effective_review_body("please fix")
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_approve_clears_request_changes_first(mock_client):
+    """APPROVE must DELETE /request-changes before POSTing /approve (re-run scenario).
+
+    When the agent re-runs on an updated PR that now passes quality gate and the bot had
+    previously requested changes, approving should first remove the prior state.
+    """
+    mock_delete_resp = MagicMock()
+    mock_delete_resp.raise_for_status = MagicMock()
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.content = b""
+    http = mock_client.return_value.__enter__.return_value
+    http.delete.return_value = mock_delete_resp
+    http.post.return_value = mock_post_resp
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "APPROVE", body="lgtm")
+
+    assert http.delete.call_count == 1
+    assert http.delete.call_args[0][0].endswith("/pullrequests/9/request-changes")
+    urls = [http.post.call_args_list[i][0][0] for i in range(http.post.call_count)]
+    assert any(u.endswith("/pullrequests/9/approve") for u in urls)
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_request_changes_clears_approve_first(mock_client):
+    """REQUEST_CHANGES must DELETE /approve before POSTing /request-changes (re-run scenario)."""
+    mock_delete_resp = MagicMock()
+    mock_delete_resp.raise_for_status = MagicMock()
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.content = b""
+    http = mock_client.return_value.__enter__.return_value
+    http.delete.return_value = mock_delete_resp
+    http.post.return_value = mock_post_resp
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "REQUEST_CHANGES", body="please fix")
+
+    assert http.delete.call_count == 1
+    assert http.delete.call_args[0][0].endswith("/pullrequests/9/approve")
+    urls = [http.post.call_args_list[i][0][0] for i in range(http.post.call_count)]
+    assert any(u.endswith("/pullrequests/9/request-changes") for u in urls)
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_submit_review_decision_approve_ignores_404_on_clear(mock_client):
+    """A 404 from DELETE /request-changes (nothing to clear) must be silently ignored."""
+    import httpx as real_httpx
+
+    mock_delete_resp = MagicMock()
+    mock_delete_resp.status_code = 404
+    mock_404 = real_httpx.HTTPStatusError("not found", request=MagicMock(), response=mock_delete_resp)
+    mock_post_resp = MagicMock()
+    mock_post_resp.raise_for_status = MagicMock()
+    mock_post_resp.content = b""
+    http = mock_client.return_value.__enter__.return_value
+    http.delete.return_value = MagicMock(raise_for_status=MagicMock(side_effect=mock_404))
+    http.post.return_value = mock_post_resp
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.submit_review_decision("ws", "repo", 9, "APPROVE", body="lgtm")
+
+    urls = [http.post.call_args_list[i][0][0] for i in range(http.post.call_count)]
+    assert any(u.endswith("/pullrequests/9/approve") for u in urls)

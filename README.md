@@ -1,6 +1,6 @@
 # Code Review Agent
 
-AI-driven code review for CI/CD: reviews pull request diffs, posts inline comments, and tracks resolved issues. Supports **Gitea**, **GitHub**, **GitLab**, **Bitbucket** and configurable LLMs (Gemini, OpenAI, Anthropic, Vertex, Ollama). The agent runs as a one-shot container or CLI. No long-running service.
+AI-driven code review for CI/CD: reviews pull request diffs, posts inline comments, and tracks resolved issues. Supports **Gitea**, **GitHub**, **GitLab**, **Bitbucket** and configurable LLMs (Gemini, OpenAI, Anthropic, Vertex etc and local models with Ollama). The agent runs as a one-shot container or CLI. No long-running service.
 
 ---
 
@@ -24,13 +24,20 @@ Choose the path that matches your setup.
 
 ## Configuration
 
-**For local testing** (running `code-review` on your machine or running the container locally), the agent needs **SCM** settings (provider, URL, token) and **LLM** settings (provider, model, API key). Copy `.env.example` to `.env` and set the required values; the file lists every option.  
+**Local runs.** When you run `code-review` on your machine or start the container locally, set:
 
-In **CI/Jenkins**, the pipeline supplies these via credentials and job or global env—you do not need a local `.env`. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start](docs/QUICKSTART.md#configuration).
+- **SCM** — provider, URL, and token  
+- **LLM** — provider, model, and API key  
 
-**Context-aware review (optional)** — The runner can pull linked GitHub Issues, Jira tickets, or Confluence pages, distill them into a short brief, and attach that (plus optional PR commit messages) to the review prompt. Off by default; requires PostgreSQL with pgvector when enabled. See [Context-aware user guide](docs/CONTEXT-AWARE-USER-GUIDE.md) and [Context-aware developer guide](docs/CONTEXT-AWARE-DEVELOPER-GUIDE.md).
+Copy `.env.example` to `.env` and fill in the values; that file documents every variable.
 
-**Auto review decision (optional)** — You can enable automatic PR review decisions on SCMs that support them. Set `SCM_REVIEW_DECISION_ENABLED=true` to submit `REQUEST_CHANGES` when **aggregated open** high/medium signals meet thresholds (`SCM_REVIEW_DECISION_HIGH_THRESHOLD`, `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD`), otherwise submit `APPROVE` (for example when only low/nit remain). Counts combine **net-new findings from this run** with **already-unresolved review items** from the SCM (deduped by fingerprint marker when present). Severity for existing threads is inferred from `[High]` / `[Medium]` / … in comment text where possible.
+**Reference:** [Configuration reference](docs/CONFIGURATION-REFERENCE.md) — full list of `SCM_*`, `LLM_*`, `CONTEXT_*`, `CODE_REVIEW_*`, observability, and related options.
+
+**CI and Jenkins.** Pipelines usually inject secrets as credentials mapped to job or global environment variables. You typically do **not** rely on a project `.env` on the agent. See [Jenkins (existing)](docs/JENKINS-EXISTING.md) and [Quick Start — Configuration](docs/QUICKSTART.md#configuration).
+
+**Context-aware review (optional).** If you turn this on, the runner can load linked GitHub Issues, Jira tickets, or Confluence pages, summarize them into a short brief, and attach that (and optionally PR commit messages) to the review prompt. It is **off by default**. Enabling it requires PostgreSQL with pgvector. See [Context-aware user guide](docs/CONTEXT-AWARE-USER-GUIDE.md) and [Context-aware developer guide](docs/CONTEXT-AWARE-DEVELOPER-GUIDE.md).
+
+**Auto review decision (optional)** — You can enable automatic PR review decisions on SCMs that support them. Set `SCM_REVIEW_DECISION_ENABLED=true` to submit `REQUEST_CHANGES` when **aggregated open** high/medium signals meet thresholds (`SCM_REVIEW_DECISION_HIGH_THRESHOLD`, `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD`), otherwise submit `APPROVE` (for example when only low/nit remain). Counts combine **net-new findings from this run** with **already-unresolved review items** from the SCM (deduped by fingerprint marker when present). Severity for existing threads is inferred from `[High]` / `[Medium]` / … in comment text where possible. **Merge blocking** depends on each host’s branch protection or merge checks, not on the API call alone; see **[SCM review decisions and merge blocking](docs/SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md)** for GitHub, Gitea, GitLab, Bitbucket Cloud, and Bitbucket Data Center.
 
 Per-SCM “open” semantics:
 

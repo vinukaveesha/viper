@@ -1,4 +1,7 @@
-"""Validated configuration (Pydantic Settings). Centralizes env var handling."""
+"""Validated configuration (Pydantic Settings). Centralizes env var handling.
+
+See docs/CONFIGURATION-REFERENCE.md for a consolidated list of all environment variables.
+"""
 
 from typing import Literal
 from urllib.parse import urlparse
@@ -62,6 +65,14 @@ class SCMConfig(BaseSettings):
             "SCM_URL must use one of these hosts."
         ),
     )
+    bitbucket_server_user_slug: str = Field(
+        default="",
+        description=(
+            "Bitbucket Server/DC: username slug of the token user for "
+            "`PUT .../pull-requests/{id}/participants/{slug}` when submitting review decisions. "
+            "Leading/trailing whitespace is stripped; whitespace-only values are treated as empty."
+        ),
+    )
 
     @field_validator("url")
     @classmethod
@@ -79,6 +90,12 @@ class SCMConfig(BaseSettings):
         cleaned = ",".join(h.strip() for h in v.split(",") if h.strip())
         return cleaned or None
 
+    @field_validator("bitbucket_server_user_slug")
+    @classmethod
+    def _normalize_bitbucket_server_user_slug(cls, v: str) -> str:
+        """Strip so whitespace-only env values do not look like a configured slug."""
+        return (v or "").strip()
+
 
 class LLMConfig(BaseSettings):
     """LLM configuration."""
@@ -86,9 +103,7 @@ class LLMConfig(BaseSettings):
     # See note above: we do not auto-load .env; only real env vars are used.
     model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")
 
-    provider: Literal[
-        "gemini", "openai", "anthropic", "ollama", "vertex", "openrouter"
-    ] = "gemini"
+    provider: Literal["gemini", "openai", "anthropic", "ollama", "vertex", "openrouter"] = "gemini"
     api_key: SecretStr | None = Field(
         default=None,
         description="API key for the configured LLM provider (single key; provider chosen via LLM_PROVIDER).",

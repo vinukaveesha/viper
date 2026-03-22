@@ -1,11 +1,13 @@
 """Bitbucket Server / Data Center REST API 1.0 (project key = owner, repo slug = repo)."""
 
-from typing import Any
 import logging
+from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from code_review.diff.parser import parse_unified_diff
+from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -13,15 +15,14 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_commit_messages_warning,
     _log_pr_info_warning,
     commit_messages_from_commit_list,
     default_unresolved_review_items_from_comments,
     normalize_diff_anchor_path,
-    pr_info_from_api_dict,
 )
-from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
 from code_review.providers.safety import truncate_repo_content
 
 logger = logging.getLogger("code_review")
@@ -140,10 +141,18 @@ class BitbucketServerProvider(ProviderInterface):
     e.g. http://localhost:7990/rest/api/1.0 (no trailing slash).
     """
 
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout: float = 30.0,
+        *,
+        participant_user_slug: str = "",
+    ):
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
+        self._participant_user_slug = (participant_user_slug or "").strip()
         # Cache (owner, repo, ref, path) combinations that returned 404 from the raw API
         # so we don't hammer Bitbucket or spam logs when the LLM repeatedly asks for
         # content of a file that doesn't exist at this ref (e.g. deleted/renamed files).
@@ -255,7 +264,9 @@ class BitbucketServerProvider(ProviderInterface):
         """Normalize path so it matches the PR diff (enables inline comments on the diff view)."""
         return normalize_diff_anchor_path(file_path)
 
-    def _get_pr_diff_refs(self, owner: str, repo: str, pr_number: int) -> tuple[str | None, str | None]:
+    def _get_pr_diff_refs(
+        self, owner: str, repo: str, pr_number: int
+    ) -> tuple[str | None, str | None]:
         """Get (from_hash, to_hash) for the PR diff. Used for inline comment anchors.
         Returns (None, None) if the PR cannot be read or hashes are missing."""
         try:
@@ -271,7 +282,10 @@ class BitbucketServerProvider(ProviderInterface):
         except Exception as e:
             logger.warning(
                 "_get_pr_diff_refs failed owner=%s repo=%s pr_number=%s: %s",
-                owner, repo, pr_number, e,
+                owner,
+                repo,
+                pr_number,
+                e,
             )
             return (None, None)
 
@@ -325,8 +339,10 @@ class BitbucketServerProvider(ProviderInterface):
             try:
                 self._post(path, payload)
             except httpx.HTTPStatusError as exc:
-                if exc.response is not None and exc.response.status_code == 409 and (
-                    "fromHash" in anchor
+                if (
+                    exc.response is not None
+                    and exc.response.status_code == 409
+                    and ("fromHash" in anchor)
                 ):
                     # The anchor's fromHash (toRef.latestCommit) may not be the PR's merge-base
                     # when the target branch has advanced.  Retry without the optional hash
@@ -341,7 +357,8 @@ class BitbucketServerProvider(ProviderInterface):
                         c.line,
                     )
                     anchor_simple: dict[str, Any] = {
-                        k: v for k, v in anchor.items()
+                        k: v
+                        for k, v in anchor.items()
                         if k not in ("fromHash", "toHash", "diffType")
                     }
                     self._post(
@@ -377,11 +394,7 @@ class BitbucketServerProvider(ProviderInterface):
         values = data.get("values") or []
         if not isinstance(values, list):
             return [], None
-        comments = [
-            c
-            for act in values
-            if (c := self._comment_from_activity(act)) is not None
-        ]
+        comments = [c for act in values if (c := self._comment_from_activity(act)) is not None]
         if data.get("isLastPage", True) or len(values) == 0:
             return comments, None
         next_start = data.get("nextPageStart")
@@ -411,9 +424,7 @@ class BitbucketServerProvider(ProviderInterface):
         return result
 
     @staticmethod
-    def _bbs_append_open_task_for_quality_gate(
-        t: Any, items: list[UnresolvedReviewItem]
-    ) -> None:
+    def _bbs_append_open_task_for_quality_gate(t: Any, items: list[UnresolvedReviewItem]) -> None:
         if not isinstance(t, dict):
             return
         state = (str(t.get("state") or "")).strip().upper()
@@ -494,6 +505,85 @@ class BitbucketServerProvider(ProviderInterface):
         path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
         self._post(path, {"text": body})
 
+    def _pull_request_version(self, owner: str, repo: str, pr_number: int) -> int | None:
+        """Return PR ``version`` for optimistic locking on participant updates."""
+        path = self._path(owner, repo, "pull-requests", str(pr_number))
+        try:
+            data = self._get(path)
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server GET pull request failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        if not isinstance(data, dict):
+            return None
+        raw = data.get("version")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def submit_review_decision(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        decision: ReviewDecision,
+        *,
+        body: str = "",
+        head_sha: str = "",
+    ) -> None:
+        """Set the token user's participant status (``APPROVED`` / ``NEEDS_WORK``).
+
+        Requires ``SCM_BITBUCKET_SERVER_USER_SLUG`` (``participant_user_slug``) to match the
+        authenticated user's username slug. ``body`` and ``head_sha`` are ignored (participant
+        PUT does not carry a review summary in this client).
+        """
+        _ = body, head_sha
+        if not self._participant_user_slug:
+            raise ValueError(
+                "Bitbucket Server review decisions require SCM_BITBUCKET_SERVER_USER_SLUG "
+                "(username slug of the API token user)."
+            )
+        version = self._pull_request_version(owner, repo, pr_number)
+        if version is None:
+            raise ValueError(
+                "Bitbucket Server: could not read pull request version for review decision."
+            )
+        slug = quote(self._participant_user_slug, safe="")
+        status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "participants", slug)
+        payload = {"status": status}
+
+        def _put_participant(ver: int) -> None:
+            self._put(f"{path}?version={ver}", payload)
+
+        try:
+            _put_participant(version)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is None or exc.response.status_code != 409:
+                raise
+            version2 = self._pull_request_version(owner, repo, pr_number)
+            if version2 is None:
+                raise ValueError(
+                    "Bitbucket Server: could not read pull request version "
+                    "after 409 on review decision."
+                ) from exc
+            logger.debug(
+                "Bitbucket Server submit_review_decision 409; retrying participant PUT "
+                "owner=%s repo=%s pr=%s",
+                owner,
+                repo,
+                pr_number,
+            )
+            _put_participant(version2)
+
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the pull request (paginated REST)."""
         path = self._path(owner, repo, "pull-requests", str(pr_number), "commits")
@@ -569,4 +659,5 @@ class BitbucketServerProvider(ProviderInterface):
             markup_hides_html_comment=False,
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
+            supports_review_decisions=bool(self._participant_user_slug),
         )

@@ -3,8 +3,7 @@
 import logging
 from typing import Any
 
-import httpx
-
+from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
 from code_review.providers.base import (
     FileInfo,
     InlineComment,
@@ -12,12 +11,20 @@ from code_review.providers.base import (
     ProviderCapabilities,
     ProviderInterface,
     ReviewComment,
+    ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_info_warning,
     normalize_diff_anchor_path,
     pr_info_from_api_dict,
 )
-from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
+from code_review.providers.http_shortcuts import (
+    http_delete,
+    http_get_bytes,
+    http_get_json_or_text,
+    http_post_json,
+    http_put_json,
+)
+from code_review.providers.review_decision_common import delete_soft_fail, effective_review_body
 from code_review.providers.safety import truncate_repo_content
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
@@ -52,30 +59,19 @@ class BitbucketProvider(ProviderInterface):
         return True
 
     def _get(self, path: str) -> Any:
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(path, headers=self._headers())
-            r.raise_for_status()
-            if "application/json" in (r.headers.get("content-type") or ""):
-                return r.json()
-            return r.text
+        return http_get_json_or_text(path, headers=self._headers(), timeout=self._timeout)
 
     def _get_raw_bytes(self, path: str) -> bytes:
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(path, headers=self._headers())
-            r.raise_for_status()
-            return r.content
+        return http_get_bytes(path, headers=self._headers(), timeout=self._timeout)
 
     def _post(self, path: str, json: dict) -> Any:
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.post(path, headers=self._headers(), json=json)
-            r.raise_for_status()
-            return r.json() if r.content else None
+        return http_post_json(path, json, headers=self._headers(), timeout=self._timeout)
 
     def _put(self, path: str, json: dict) -> Any:
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.put(path, headers=self._headers(), json=json)
-            r.raise_for_status()
-            return r.json() if r.content else None
+        return http_put_json(path, json, headers=self._headers(), timeout=self._timeout)
+
+    def _delete(self, path: str) -> None:
+        http_delete(path, headers=self._headers(), timeout=self._timeout)
 
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR."""
@@ -132,7 +128,7 @@ class BitbucketProvider(ProviderInterface):
 
     @staticmethod
     def _file_path_from_diffstat_entry(entry: dict[str, Any]) -> str:
-        return ((entry.get("new") or {}).get("path") or (entry.get("old") or {}).get("path") or "")
+        return (entry.get("new") or {}).get("path") or (entry.get("old") or {}).get("path") or ""
 
     @staticmethod
     def _status_from_diffstat(raw_status: Any) -> str:
@@ -231,9 +227,7 @@ class BitbucketProvider(ProviderInterface):
         return comments, stripped or None
 
     @staticmethod
-    def _bbcloud_open_task_from_value(
-        t: Any, out_len: int
-    ) -> UnresolvedReviewItem | None:
+    def _bbcloud_open_task_from_value(t: Any, out_len: int) -> UnresolvedReviewItem | None:
         if not isinstance(t, dict):
             return None
         state = (str(t.get("state") or "")).strip().upper()
@@ -299,6 +293,47 @@ class BitbucketProvider(ProviderInterface):
         """Post PR-level comment (no inline)."""
         path = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
         self._post(path, {"content": {"raw": body}})
+
+    def submit_review_decision(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        decision: ReviewDecision,
+        *,
+        body: str = "",
+        head_sha: str = "",
+    ) -> None:
+        """Approve or request changes (Bitbucket Cloud 2.0).
+
+        ``POST {base}/approve`` and ``POST {base}/request-changes`` do not accept a review
+        rationale in the JSON body. We post the runner summary to
+        ``pullrequests/<id>/comments`` (:meth:`post_pr_summary_comment`) using
+        ``effective_review_body(body)`` (see ``review_decision_common``).
+        ``head_sha`` is unused.
+
+        Before writing the new state the opposite endpoint is cleared first
+        (``DELETE /request-changes`` before approving; ``DELETE /approve`` before requesting
+        changes) so that a re-run on an updated PR cannot leave the bot simultaneously in both
+        states.  A 404 on the DELETE is silently ignored (already clear).
+        """
+        _ = head_sha
+        base = self._path(owner, repo, "pullrequests", str(pr_number))
+        if decision == "APPROVE":
+            delete_soft_fail(
+                self._delete,
+                f"{base}/request-changes",
+                log_label=f"Bitbucket Cloud clear request-changes for PR {pr_number}",
+            )
+            self._post(f"{base}/approve", {})
+        else:
+            delete_soft_fail(
+                self._delete,
+                f"{base}/approve",
+                log_label=f"Bitbucket Cloud clear approve for PR {pr_number}",
+            )
+            self._post(f"{base}/request-changes", {})
+        self.post_pr_summary_comment(owner, repo, pr_number, effective_review_body(body))
 
     def get_pr_commit_messages(self, owner: str, repo: str, pr_number: int) -> list[str]:
         """List commits on the PR (paginated)."""
@@ -387,4 +422,5 @@ class BitbucketProvider(ProviderInterface):
             markup_hides_html_comment=False,
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
+            supports_review_decisions=True,
         )
