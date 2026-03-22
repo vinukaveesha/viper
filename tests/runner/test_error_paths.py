@@ -312,13 +312,9 @@ def test_file_by_file_authentication_error_is_fatal(
 def test_run_marker_comment_posted_for_omit_marker_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """For providers with omit_fingerprint_marker_in_body=True (e.g. Bitbucket Server),
-    a PR-level run-marker comment must be posted when inline posting fully fails so
-    idempotency can short-circuit subsequent runs.
-
-    Without this comment, the run_id is never stored anywhere (inline markers are
-    suppressed) and _idempotency_key_seen_in_comments returns False on every run,
-    causing infinite retries even when all inline comments fail with 409.
+    """For omit-marker providers (e.g. Bitbucket Server), a PR-level Viper summary with
+    run marker is always posted. When inline posting fully fails, the summary explains
+    that and still records the run id for idempotency.
     """
 
     def configure_provider(provider):
@@ -329,6 +325,7 @@ def test_run_marker_comment_posted_for_omit_marker_providers(
         )
         provider.post_review_comments = MagicMock(side_effect=RuntimeError("409 Conflict"))
         provider.post_pr_summary_comment = MagicMock()
+        provider.get_pr_info.return_value = MagicMock(description="x" * 50, title="title")
 
     findings_json = '[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]'
     to_post, provider = _exercise_error_path(
@@ -341,15 +338,15 @@ def test_run_marker_comment_posted_for_omit_marker_providers(
     )
 
     assert len(to_post) == 1
-    # Inline posting failed entirely, so a PR-level marker comment must be posted.
     assert provider.post_pr_summary_comment.call_count >= 1
-    # The last call must contain the code-review-agent run marker in its body.
-    last_body = provider.post_pr_summary_comment.call_args_list[-1][0][3]
-    assert "code-review-agent:" in last_body, (
-        "run-marker comment body must contain the code-review-agent marker so "
-        "_idempotency_key_seen_in_comments can find the run_id on the next run"
-    )
-    assert "run=" in last_body, "run-marker comment must contain run=<run_id>"
+    bodies = [
+        (c[0][3] if c[0] else c[1].get("body", ""))
+        for c in provider.post_pr_summary_comment.call_args_list
+    ]
+    marker_bodies = [b for b in bodies if "code-review-agent:" in str(b) and "run=" in str(b)]
+    assert marker_bodies, "expected a PR comment body with idempotency marker"
+    assert any("Viper" in str(b) for b in marker_bodies)
+    assert any("inline comment" in str(b).lower() for b in marker_bodies)
 
 
 @patch("code_review.runner.get_context_window")
@@ -396,10 +393,11 @@ def test_run_marker_comment_not_posted_for_standard_providers(
 @patch("code_review.runner.get_llm_config")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
-def test_run_marker_comment_not_posted_when_inline_succeeds_for_omit_marker_providers(
+def test_run_marker_pr_summary_posted_when_inline_succeeds_for_omit_marker_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """For omit-marker providers, successful inline posts must not add a visible run-marker comment."""
+    """For omit-marker providers, a PR-level Viper summary with run marker is posted
+    even when inline comments succeed, so reruns with the same head/config skip the agent."""
 
     def configure_provider(provider):
         provider.capabilities.return_value = ProviderCapabilities(
@@ -409,6 +407,7 @@ def test_run_marker_comment_not_posted_when_inline_succeeds_for_omit_marker_prov
         )
         provider.post_review_comments = MagicMock()
         provider.post_pr_summary_comment = MagicMock()
+        provider.get_pr_info.return_value = MagicMock(description="x" * 50, title="title")
 
     findings_json = '[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]'
     _to_post, provider = _exercise_error_path(
@@ -420,9 +419,11 @@ def test_run_marker_comment_not_posted_when_inline_succeeds_for_omit_marker_prov
         configure_provider,
     )
 
-    # Inline post succeeded, so no separate marker comment should be added.
-    for call_args in provider.post_pr_summary_comment.call_args_list:
-        body = call_args[0][3] if call_args[0] else call_args[1].get("body", "")
-        assert "run=" not in str(body) or "code-review-agent:" not in str(body), (
-            "No visible run-marker comment expected when inline posting succeeded"
-        )
+    bodies = [
+        (c[0][3] if c[0] else c[1].get("body", ""))
+        for c in provider.post_pr_summary_comment.call_args_list
+    ]
+    marker_bodies = [b for b in bodies if "code-review-agent:" in str(b) and "run=" in str(b)]
+    assert marker_bodies, "expected PR summary with idempotency marker after successful inline post"
+    assert any("Viper" in str(b) for b in marker_bodies)
+    assert any("posted" in str(b).lower() for b in marker_bodies)

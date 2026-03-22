@@ -723,7 +723,91 @@ def _post_comments_one_by_one(
     return count
 
 
-def _post_run_marker_comment(
+def _omit_marker_pr_summary_visible_text(
+    *,
+    findings_planned: int,
+    successful_inline_posts: int,
+    cfg,
+    provider,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    to_post: list[tuple[FindingV1, str]],
+) -> str:
+    """Human-readable PR summary for providers that omit inline HTML markers (e.g. Bitbucket)."""
+    lines: list[str] = [
+        "**Viper** (automated code review) finished for this pull request at the current revision."
+    ]
+    if findings_planned == 0:
+        lines.append(
+            "It **did not flag new issues** that require inline comments in this run "
+            "(within the reviewed diff scope and your ignore rules)."
+        )
+        lines.append(
+            "**From this automated pass, the change appears to meet expectations** for the areas reviewed."
+        )
+    else:
+        lines.append(
+            f"It **identified {findings_planned} issue(s)** worth addressing on the diff."
+        )
+        if successful_inline_posts >= findings_planned:
+            lines.append(f"**Posted {successful_inline_posts} inline comment(s)** on the diff.")
+        elif successful_inline_posts > 0:
+            lines.append(
+                f"**Posted {successful_inline_posts} of {findings_planned} inline comment(s)**; "
+                "some could not be anchored (see CI logs)."
+            )
+        else:
+            lines.append(
+                "**Could not post inline comments** (e.g. anchor conflicts); see CI logs. "
+                "Re-run after updating the PR or fixing the reported problems."
+            )
+
+    extra = _optional_quality_gate_summary_suffix(
+        provider, cfg, owner, repo, pr_number, to_post
+    )
+    if extra:
+        lines.append(extra)
+    return "\n\n".join(lines)
+
+
+def _optional_quality_gate_summary_suffix(
+    provider,
+    cfg,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    to_post: list[tuple[FindingV1, str]],
+) -> str:
+    """Append threshold / merge-gate wording when review decisions are enabled."""
+    if not bool(getattr(cfg, "review_decision_enabled", False)):
+        return ""
+    if not provider.capabilities().supports_review_decisions:
+        return ""
+    high_count, medium_count = _quality_gate_high_medium_counts(
+        provider, owner, repo, pr_number, to_post
+    )
+    high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
+    medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
+    decision = _compute_review_decision_from_counts(
+        high_count,
+        medium_count,
+        high_threshold=high_threshold,
+        medium_threshold=medium_threshold,
+    )
+    if decision == "REQUEST_CHANGES":
+        return (
+            f"Given your configured thresholds, Viper **suggests this PR needs work** before merge "
+            f"(open high={high_count} vs threshold {high_threshold}, "
+            f"open medium={medium_count} vs threshold {medium_threshold})."
+        )
+    return (
+        f"Given your configured thresholds, this PR **passes Viper's automated merge gate** "
+        f"(open high={high_count}, open medium={medium_count})."
+    )
+
+
+def _post_omit_marker_pr_summary_comment(
     provider,
     owner: str,
     repo: str,
@@ -731,25 +815,46 @@ def _post_run_marker_comment(
     cfg,
     llm_cfg,
     head_sha: str,
+    *,
+    findings_planned: int,
+    successful_inline_posts: int,
+    to_post: list[tuple[FindingV1, str]],
 ) -> None:
-    """Post a minimal PR-level comment containing the run idempotency marker.
+    """Post a PR-level summary plus the run idempotency marker for omit-marker providers.
 
-    Called after every non-dry run for providers that do not embed the fingerprint
-    marker in inline comment bodies (omit_fingerprint_marker_in_body=True, e.g.
-    Bitbucket Server).  Without this comment the run_id is never stored anywhere,
-    so _idempotency_key_seen_in_comments can never fire and the runner re-processes
-    the same PR on every CI trigger — even when all inline comments fail with 409.
+    Bitbucket Server/Cloud omit hidden HTML markers in inline bodies, so the ``run=``
+    idempotency key must live on a general PR comment. This is posted after every
+    completed non-dry run (including when there are zero findings to post) so a
+    second CI trigger with the same head/config short-circuits instead of duplicating
+    work and comments.
 
-    A PR-level comment (no anchor) is used so there are no lineType constraints
-    that could cause 409 errors.
+    Uses a PR-level comment (no file anchor) so there are no lineType constraints
+    that could cause 409 errors on diff anchors.
     """
+    caps = provider.capabilities()
     run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
-    body = format_comment_body_with_marker("", "", AGENT_VERSION, run_id=run_id)
+    visible = _omit_marker_pr_summary_visible_text(
+        findings_planned=findings_planned,
+        successful_inline_posts=successful_inline_posts,
+        cfg=cfg,
+        provider=provider,
+        owner=owner,
+        repo=repo,
+        pr_number=pr_number,
+        to_post=to_post,
+    )
+    body = format_comment_body_with_marker(
+        visible,
+        "",
+        AGENT_VERSION,
+        run_id=run_id,
+        marker_at_end=not caps.markup_hides_html_comment,
+    )
     try:
         provider.post_pr_summary_comment(owner, repo, pr_number, body)
     except Exception as e:
         logger.warning(
-            "_post_run_marker_comment failed owner=%s repo=%s pr_number=%s: %s",
+            "_post_omit_marker_pr_summary_comment failed owner=%s repo=%s pr_number=%s: %s",
             owner,
             repo,
             pr_number,
@@ -1543,20 +1648,22 @@ class ReviewOrchestrator:
                 llm_cfg,
                 full_diff=full_diff,
             )
-        # For providers that omit the fingerprint marker from inline comment bodies
-        # (e.g. Bitbucket Server), there is no run_id persisted when inline posting
-        # completely fails. In that specific case, post a dedicated PR-level marker
-        # comment so future runs can short-circuit instead of infinite re-processing.
-        #
-        # When at least one inline comment is posted successfully, avoid posting this
-        # marker comment because it appears as a visible, out-of-place activity entry.
-        if (
-            head_sha
-            and to_post
-            and count == 0
-            and provider.capabilities().omit_fingerprint_marker_in_body
-        ):
-            _post_run_marker_comment(provider, owner, repo, pr_number, cfg, llm_cfg, head_sha)
+        # Bitbucket Server/Cloud omit HTML markers in inline bodies; persist run id on a
+        # PR-level summary so idempotency can short-circuit the next CI trigger. Post
+        # after every completed run (including zero findings) whenever head_sha is set.
+        if head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
+            _post_omit_marker_pr_summary_comment(
+                provider,
+                owner,
+                repo,
+                pr_number,
+                cfg,
+                llm_cfg,
+                head_sha,
+                findings_planned=len(to_post),
+                successful_inline_posts=count,
+                to_post=to_post,
+            )
         _maybe_submit_review_decision(
             provider,
             owner,
