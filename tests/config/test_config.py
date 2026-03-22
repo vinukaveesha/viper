@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from code_review.config import (
+    CodeReviewAppConfig,
     LLMConfig,
     SCMConfig,
     get_llm_config,
@@ -179,3 +180,9 @@ def test_review_decision_cli_overrides_use_copy_not_cached_mutation():
         assert get_scm_config() is cached
         assert get_scm_config().review_decision_enabled is False
     reset_config_cache()
+
+
+def test_code_review_app_review_decision_only_from_env():
+    with patch.dict(os.environ, {"CODE_REVIEW_REVIEW_DECISION_ONLY": "true"}, clear=False):
+        cfg = CodeReviewAppConfig()
+        assert cfg.review_decision_only is True

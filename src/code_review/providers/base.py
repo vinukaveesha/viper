@@ -130,6 +130,39 @@ class PRInfo(BaseModel):
     title: str = ""
     labels: list[str] = Field(default_factory=list, description="Label names")
     description: str = ""
+    head_sha: str = Field(
+        default="",
+        description="Current PR/MR head commit when returned by the provider (optional).",
+    )
+
+
+def head_sha_from_pr_api_dict(data: dict) -> str:
+    """Extract head commit SHA from common PR/MR JSON shapes (GitHub/Gitea, GitLab, Bitbucket)."""
+    if not isinstance(data, dict):
+        return ""
+    head = data.get("head")
+    if isinstance(head, dict):
+        s = head.get("sha")
+        if isinstance(s, str) and s.strip():
+            return s.strip()
+    diff_refs = data.get("diff_refs") or {}
+    if isinstance(diff_refs, dict):
+        s = diff_refs.get("head_sha")
+        if isinstance(s, str) and s.strip():
+            return s.strip()
+    source = data.get("source") or {}
+    if isinstance(source, dict):
+        commit = source.get("commit") or {}
+        if isinstance(commit, dict):
+            h = commit.get("hash")
+            if isinstance(h, str) and h.strip():
+                return h.strip()
+    from_ref = data.get("fromRef") or {}
+    if isinstance(from_ref, dict):
+        latest = from_ref.get("latestCommit")
+        if isinstance(latest, str) and latest.strip():
+            return latest.strip()
+    return ""
 
 
 def pr_info_from_api_dict(data: dict, description_key: str = "body") -> PRInfo:
@@ -138,7 +171,12 @@ def pr_info_from_api_dict(data: dict, description_key: str = "body") -> PRInfo:
     labels_raw = data.get("labels") or []
     labels = [lb.get("name", lb) if isinstance(lb, dict) else str(lb) for lb in labels_raw]
     description = data.get(description_key, "") or ""
-    return PRInfo(title=title, labels=labels, description=description)
+    return PRInfo(
+        title=title,
+        labels=labels,
+        description=description,
+        head_sha=head_sha_from_pr_api_dict(data),
+    )
 
 
 def normalize_diff_anchor_path(file_path: str) -> str:

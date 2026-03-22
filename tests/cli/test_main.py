@@ -1,7 +1,8 @@
 """CLI tests: code-review parses args and invokes runner."""
 
 import os
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -76,9 +77,46 @@ def test_cli_invalid_owner_repo_pattern_exits_1():
 
 def test_cli_head_sha_required_when_not_dry_run_exits_1():
     """When dry_run is False, head_sha is required."""
-    with pytest.raises(ClickExit) as exc_info:
-        review(owner="o", repo="r", pr=1, head_sha="", dry_run=False)
-    assert exc_info.value.exit_code == 1
+    with (
+        patch.dict(os.environ, {"SCM_HEAD_SHA": ""}, clear=False),
+        patch("code_review.__main__.get_code_review_app_config") as mock_app,
+        patch("code_review.__main__.run_review") as mock_run,
+    ):
+        mock_app.return_value = SimpleNamespace(review_decision_only=False)
+        mock_run.return_value = []
+        with pytest.raises(ClickExit) as exc_info:
+            review(
+                owner="o",
+                repo="r",
+                pr=1,
+                head_sha="",
+                dry_run=False,
+                review_decision_only=False,
+            )
+        assert exc_info.value.exit_code == 1
+        mock_run.assert_not_called()
+
+
+def test_cli_allows_missing_head_sha_with_review_decision_only():
+    from code_review.config import reset_config_cache
+
+    with patch("code_review.__main__.run_review") as mock_run:
+        mock_run.return_value = []
+        reset_config_cache()
+        try:
+            review(
+                owner="o",
+                repo="r",
+                pr=1,
+                head_sha="",
+                dry_run=False,
+                review_decision_only=True,
+            )
+        finally:
+            reset_config_cache()
+        kw = mock_run.call_args[1]
+        assert kw["review_decision_only"] is True
+        assert kw["head_sha"] == ""
 
 
 def test_cli_fail_on_critical_exits_2():

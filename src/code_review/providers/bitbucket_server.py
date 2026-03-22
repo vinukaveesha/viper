@@ -21,6 +21,7 @@ from code_review.providers.base import (
     _log_pr_info_warning,
     commit_messages_from_commit_list,
     default_unresolved_review_items_from_comments,
+    head_sha_from_pr_api_dict,
     normalize_diff_anchor_path,
 )
 from code_review.providers.safety import truncate_repo_content
@@ -739,7 +740,12 @@ class BitbucketServerProvider(ProviderInterface):
                 return None
             title = data.get("title", "") or ""
             description = data.get("description", "") or ""
-            return PRInfo(title=title, labels=[], description=description)
+            return PRInfo(
+                title=title,
+                labels=[],
+                description=description,
+                head_sha=head_sha_from_pr_api_dict(data),
+            )
         except Exception as e:
             _log_pr_info_warning(logger, owner, repo, pr_number, e)
             return None

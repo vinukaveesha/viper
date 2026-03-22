@@ -494,3 +494,59 @@ def test_run_review_request_changes_from_pre_existing_unresolved_high_comment(
 
     provider.submit_review_decision.assert_called_once()
     assert provider.submit_review_decision.call_args.args[3] == "REQUEST_CHANGES"
+
+
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
+def test_run_review_decision_only_skips_agent_and_inline(
+    mock_get_scm_config, mock_get_provider, mock_get_context_window
+):
+    """Decision-only mode resolves head_sha from get_pr_info and submits review without LLM."""
+    from code_review.runner import run_review
+
+    provider = _provider_with_review_decisions()
+    provider.get_pr_info = MagicMock(return_value=PRInfo(head_sha="from-api-sha"))
+    _wire_standard_runner_mocks(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_context_window,
+        scm=_review_decision_scm_config(),
+        provider=provider,
+    )
+
+    posted = run_review(
+        "o",
+        "r",
+        1,
+        head_sha="",
+        dry_run=False,
+        review_decision_only=True,
+    )
+
+    assert posted == []
+    provider.post_review_comments.assert_not_called()
+    provider.submit_review_decision.assert_called_once()
+    assert provider.submit_review_decision.call_args.kwargs.get("head_sha") == "from-api-sha"
+
+
+def test_compute_quality_gate_review_outcome_matches_thresholds():
+    """Shared outcome helper stays aligned with threshold semantics."""
+    from code_review.runner import _compute_quality_gate_review_outcome
+
+    provider = MagicMock()
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(return_value=[])
+    cfg = _review_decision_scm_config()
+    from code_review.schemas.findings import FindingV1
+
+    to_post = [
+        (
+            FindingV1(path="a.py", line=1, severity="high", code="c", message="m"),
+            "fp1",
+        )
+    ]
+    out = _compute_quality_gate_review_outcome(provider, "o", "r", 1, to_post, cfg)
+    assert out.high_count == 1
+    assert out.medium_count == 0
+    assert out.decision == "REQUEST_CHANGES"
+    assert "REQUEST_CHANGES" in out.submission_reason

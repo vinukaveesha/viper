@@ -259,6 +259,14 @@ class CodeReviewAppConfig(BaseSettings):
         default=True,
         validation_alias="CODE_REVIEW_INCLUDE_COMMIT_MESSAGES_IN_PROMPT",
     )
+    review_decision_only: bool = Field(
+        default=False,
+        validation_alias="CODE_REVIEW_REVIEW_DECISION_ONLY",
+        description=(
+            "Skip the LLM and inline posting; only recompute quality-gate counts and "
+            "submit PR review decision when SCM_REVIEW_DECISION_ENABLED is true."
+        ),
+    )
 
 
 def get_scm_config() -> SCMConfig:
