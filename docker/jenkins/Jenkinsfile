@@ -5,6 +5,7 @@
 // Credentials: ID "SCM_TOKEN" always; ID "LLM_API_KEY" required for non-ollama providers.
 // Optional review decisions (global/folder/job env): SCM_REVIEW_DECISION_ENABLED, SCM_REVIEW_DECISION_HIGH_THRESHOLD,
 // SCM_REVIEW_DECISION_MEDIUM_THRESHOLD, SCM_BITBUCKET_SERVER_USER_SLUG (Bitbucket Server/DC only for submit).
+// Optional: CODE_REVIEW_LOG_LEVEL on the agent (e.g. DEBUG); default INFO if unset.
 //
 // Self-contained; no load. Pipeline script from SCM (Script Path: docker/jenkins/Jenkinsfile) or paste inline.
 
@@ -92,6 +93,7 @@ pipeline {
                     }
 
                     def useInlineAgent = env.USE_INLINE_AGENT == 'true' || env.USE_INLINE_AGENT == '1'
+                    def codeReviewLogLevel = env.CODE_REVIEW_LOG_LEVEL?.trim() ?: 'INFO'
                     def bindings = [string(credentialsId: credId, variable: 'SCM_TOKEN')]
                     if (llmProvider != 'ollama') {
                         bindings << string(credentialsId: 'LLM_API_KEY', variable: 'LLM_API_KEY')
@@ -114,6 +116,7 @@ pipeline {
                             "REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD=${reviewDecisionMedium}",
                             "REVIEW_LLM_PROVIDER=${llmProvider}",
                             "REVIEW_LLM_MODEL=${llmModel}",
+                            "REVIEW_CODE_REVIEW_LOG_LEVEL=${codeReviewLogLevel}",
                             "USE_INLINE_AGENT=${useInlineAgent}",
                         ]) {
                             sh '''
@@ -126,7 +129,7 @@ pipeline {
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_HIGH_THRESHOLD:-}" ] && export SCM_REVIEW_DECISION_HIGH_THRESHOLD="$REVIEW_SCM_REVIEW_DECISION_HIGH_THRESHOLD"
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD:-}" ] && export SCM_REVIEW_DECISION_MEDIUM_THRESHOLD="$REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD"
                                     export LLM_PROVIDER="$REVIEW_LLM_PROVIDER" LLM_MODEL="$REVIEW_LLM_MODEL" LLM_API_KEY="${LLM_API_KEY:-}"
-                                    export CODE_REVIEW_LOG_LEVEL=INFO
+                                    export CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL"
                                     code-review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA" --print-findings
                                 else
                                     runtime="$CONTAINER_RUNTIME"
@@ -152,7 +155,7 @@ pipeline {
                                         -e LLM_MODEL="$REVIEW_LLM_MODEL" \
                                         -e LLM_API_KEY="${LLM_API_KEY:-}" \
                                         -e PYTHONUNBUFFERED=1 \
-                                        -e CODE_REVIEW_LOG_LEVEL=INFO \
+                                        -e CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL" \
                                         $RD_ENV \
                                         "$REVIEW_IMAGE" --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA" --print-findings \
                                     || { echo "HINT: Podman issues? Set USE_INLINE_AGENT=true (docs/QUICKSTART.md)."; exit 1; }

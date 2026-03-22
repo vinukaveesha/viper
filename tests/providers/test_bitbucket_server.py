@@ -804,6 +804,76 @@ def test_submit_review_decision_retries_participant_put_on_409(mock_client):
     assert "version=5" in client.put.call_args_list[1][0][0]
 
 
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_400_then_version_minus_one(mock_client):
+    """Some Bitbucket builds reject ?version=0; wildcard -1 succeeds."""
+    mock_get = MagicMock()
+    mock_get.raise_for_status = MagicMock()
+    mock_get.headers = {"content-type": "application/json"}
+    mock_get.json.return_value = {"version": 0, "id": 1}
+
+    req = httpx.Request("PUT", "https://bb/pull")
+    resp_400 = httpx.Response(400, request=req, text="invalid version")
+    put_calls = {"n": 0}
+
+    def put_side_effect(*_a, **_kw):
+        put_calls["n"] += 1
+        if put_calls["n"] == 1:
+            raise httpx.HTTPStatusError("bad", request=req, response=resp_400)
+        m = MagicMock()
+        m.raise_for_status = MagicMock()
+        return m
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get
+    client.put.side_effect = put_side_effect
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="u1",
+    )
+    p.submit_review_decision("PROJ", "repo", 7, "REQUEST_CHANGES")
+
+    assert client.get.call_count == 2
+    assert put_calls["n"] == 2
+    assert "version=-1" in client.put.call_args_list[-1][0][0]
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_submit_review_decision_400_then_refetched_version(mock_client):
+    """HTTP 400 then refetch shows newer version; retry succeeds."""
+    mock_get_ok = MagicMock()
+    mock_get_ok.raise_for_status = MagicMock()
+    mock_get_ok.headers = {"content-type": "application/json"}
+    mock_get_ok.json.side_effect = [{"version": 0}, {"version": 4}]
+
+    req = httpx.Request("PUT", "https://bb/pull")
+    resp_400 = httpx.Response(400, request=req)
+
+    mock_put_fail = MagicMock()
+    mock_put_fail.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError("bad", request=req, response=resp_400)
+    )
+    mock_put_ok = MagicMock()
+    mock_put_ok.raise_for_status = MagicMock()
+    mock_put_ok.content = b""
+
+    client = mock_client.return_value.__enter__.return_value
+    client.get.return_value = mock_get_ok
+    client.put.side_effect = [mock_put_fail, mock_put_ok]
+
+    p = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="u1",
+    )
+    p.submit_review_decision("PROJ", "repo", 7, "APPROVE")
+
+    assert client.get.call_count == 2
+    assert "version=4" in client.put.call_args_list[-1][0][0]
+
+
 def test_submit_review_decision_requires_participant_slug():
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     with pytest.raises(ValueError, match="SCM_BITBUCKET_SERVER_USER_SLUG"):
