@@ -46,11 +46,11 @@ pipeline {
                     def llmModel = params.LLM_MODEL ?: env.LLM_MODEL
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
                     // Optional Bitbucket Server/DC: username slug of SCM_TOKEN user (review decisions); from global/folder/job env
-                    def bbServerUserSlug = env.SCM_BITBUCKET_SERVER_USER_SLUG ?: ''
+                    def bbServerUserSlug = env.SCM_BITBUCKET_SERVER_USER_SLUG?.trim() ?: ''
                     // Optional review decision gate (omit env vars in Jenkins to keep app defaults)
-                    def reviewDecisionEnabled = env.SCM_REVIEW_DECISION_ENABLED ?: ''
-                    def reviewDecisionHigh = env.SCM_REVIEW_DECISION_HIGH_THRESHOLD ?: ''
-                    def reviewDecisionMedium = env.SCM_REVIEW_DECISION_MEDIUM_THRESHOLD ?: ''
+                    def reviewDecisionEnabled = env.SCM_REVIEW_DECISION_ENABLED?.trim() ?: ''
+                    def reviewDecisionHigh = env.SCM_REVIEW_DECISION_HIGH_THRESHOLD?.trim() ?: ''
+                    def reviewDecisionMedium = env.SCM_REVIEW_DECISION_MEDIUM_THRESHOLD?.trim() ?: ''
 
                     def scmProvider = env.SCM_PROVIDER ?: 'gitea'
                     // Bitbucket Data Center sends eventKey like pr:opened; infer provider if not set
