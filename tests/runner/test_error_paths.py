@@ -318,9 +318,8 @@ def test_file_by_file_authentication_error_is_fatal(
 def test_run_marker_comment_posted_for_omit_marker_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """For omit-marker providers (e.g. Bitbucket Server), a PR-level Viper summary with
-    run marker is always posted. When inline posting fully fails, the summary explains
-    that and still records the run id for idempotency.
+    """When all inline posts fail, omit-marker providers still get a visible PR summary but
+    no run= idempotency marker so the next CI run can retry posting (not short-circuit).
     """
 
     def configure_provider(provider):
@@ -351,9 +350,9 @@ def test_run_marker_comment_posted_for_omit_marker_providers(
         for c in provider.post_pr_summary_comment.call_args_list
     ]
     marker_bodies = [b for b in bodies if _pr_summary_body_has_run_marker(b)]
-    assert marker_bodies, "expected a PR comment body with idempotency marker"
-    assert any("Viper" in str(b) for b in marker_bodies)
-    assert any("inline comment" in str(b).lower() for b in marker_bodies)
+    assert not marker_bodies, "no run idempotency marker when inline posts all failed"
+    assert any("Viper" in str(b) for b in bodies)
+    assert any("inline comment" in str(b).lower() for b in bodies)
 
 
 @patch("code_review.runner.get_context_window")

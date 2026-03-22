@@ -285,17 +285,27 @@ def _validate_suggested_patches(
 
 
 # Model sometimes emits stream-of-consciousness findings then retracts them in the same message.
+# Every pattern ties the walk-back to the model / this finding (I, this, that, it), not domain jargon alone.
 _SELF_RETRACTION_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Phrase-based only: avoid matching domain words like "retract" in "retract the transaction".
-    re.compile(r"\b(?:i\s+)?will\s+retract\b", re.I),
+    re.compile(r"\b(?:i\s+will|i['\u2019]ll)\s+retract\b", re.I),
     re.compile(r"\bi\s+retract\b", re.I),
     re.compile(r"\bretract(?:ed|ing)?\s+this\s+finding\b", re.I),
     re.compile(r"\bretract\s+this\b", re.I),
-    re.compile(r"false\s+positive", re.I),
-    re.compile(r"\bwithdraw\s+(?:this\s+)?finding\b", re.I),
+    re.compile(r"\b(?:this|that|it)\s+is\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bthat\s+was\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bit's\s+(?:a\s+)?false\s+positive\b", re.I),
+    re.compile(r"\bwithdraw\s+this\s+finding\b", re.I),
     re.compile(r"\bdisregard\s+this\b", re.I),
     re.compile(r"\bignore\s+this\s+(?:finding|comment)\b", re.I),
-    re.compile(r"\bno\s+longer\s+(?:believe|think)\b", re.I),
+    re.compile(r"\b(?:i|we)\s+no\s+longer\s+(?:believe|think)\b", re.I),
+    re.compile(r"\bi\s+was\s+wrong\b", re.I),
+    re.compile(r"\bi\s+was\s+mistaken\b", re.I),
+    re.compile(r"\bmy\s+mistake\b", re.I),
+    re.compile(r"\bon\s+second\s+thought\b", re.I),
+    re.compile(r"\bupon\s+reflection\b", re.I),
+    re.compile(r"\b(?:sorry|apologies),?\s+(?:ignore|disregard)\b", re.I),
+    re.compile(r"\bactually,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
+    re.compile(r"\bhowever,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
 )
 
 
@@ -819,20 +829,18 @@ def _post_omit_marker_pr_summary_comment(
     findings_planned: int,
     successful_inline_posts: int,
     to_post: list[tuple[FindingV1, str]],
+    include_run_marker: bool = True,
 ) -> None:
-    """Post a PR-level summary plus the run idempotency marker for omit-marker providers.
+    """Post a PR-level summary for omit-marker providers; optionally attach the ``run=`` id marker.
 
-    Bitbucket Server/Cloud omit hidden HTML markers in inline bodies, so the ``run=``
-    idempotency key must live on a general PR comment. This is posted after every
-    completed non-dry run (including when there are zero findings to post) so a
-    second CI trigger with the same head/config short-circuits instead of duplicating
-    work and comments.
+    The run marker must only be included when every planned inline comment was posted (or
+    there were none to post). Otherwise a later CI run would short-circuit on idempotency
+    and never retry failed inline posts.
 
-    Uses a PR-level comment (no file anchor) so there are no lineType constraints
-    that could cause 409 errors on diff anchors.
+    When *include_run_marker* is False, only the visible summary is posted (still useful
+    for operators); no idempotency short-circuit until a fully successful post run.
     """
     caps = provider.capabilities()
-    run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
     visible = _omit_marker_pr_summary_visible_text(
         findings_planned=findings_planned,
         successful_inline_posts=successful_inline_posts,
@@ -843,15 +851,19 @@ def _post_omit_marker_pr_summary_comment(
         pr_number=pr_number,
         to_post=to_post,
     )
-    use_linkref = getattr(caps, "embed_agent_marker_as_commonmark_linkref", None) is True
-    body = format_comment_body_with_marker(
-        visible,
-        "",
-        AGENT_VERSION,
-        run_id=run_id,
-        marker_at_end=not caps.markup_hides_html_comment,
-        use_commonmark_linkref=use_linkref,
-    )
+    if include_run_marker:
+        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+        use_linkref = getattr(caps, "embed_agent_marker_as_commonmark_linkref", None) is True
+        body = format_comment_body_with_marker(
+            visible,
+            "",
+            AGENT_VERSION,
+            run_id=run_id,
+            marker_at_end=not caps.markup_hides_html_comment,
+            use_commonmark_linkref=use_linkref,
+        )
+    else:
+        body = visible
     try:
         provider.post_pr_summary_comment(owner, repo, pr_number, body)
     except Exception as e:
@@ -1650,10 +1662,11 @@ class ReviewOrchestrator:
                 llm_cfg,
                 full_diff=full_diff,
             )
-        # Bitbucket Server/Cloud omit HTML markers in inline bodies; persist run id on a
-        # PR-level summary so idempotency can short-circuit the next CI trigger. Post
-        # after every completed run (including zero findings) whenever head_sha is set.
+        # Bitbucket Server/Cloud: PR-level summary; run= marker only when inline posting
+        # fully succeeded (or nothing was planned) so partial failures can retry on the next run.
         if head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
+            planned = len(to_post)
+            include_marker = planned == 0 or count == planned
             _post_omit_marker_pr_summary_comment(
                 provider,
                 owner,
@@ -1662,9 +1675,10 @@ class ReviewOrchestrator:
                 cfg,
                 llm_cfg,
                 head_sha,
-                findings_planned=len(to_post),
+                findings_planned=planned,
                 successful_inline_posts=count,
                 to_post=to_post,
+                include_run_marker=include_marker,
             )
         _maybe_submit_review_decision(
             provider,
