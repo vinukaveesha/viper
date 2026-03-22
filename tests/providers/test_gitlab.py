@@ -451,3 +451,16 @@ def test_get_bot_blocking_state_unknown_on_reviews_404(mock_get):
     mock_get.side_effect = [{"id": 10}, err]
     p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
     assert p.get_bot_blocking_state("owner", "repo", 3) == "UNKNOWN"
+
+
+@patch("code_review.providers.gitlab.http_get_json_or_text")
+def test_get_bot_blocking_state_paginates_reviews(mock_get):
+    """Bot review on page 2 must not be ignored (first page only is stale)."""
+    page1 = [{"id": i, "user": {"id": 99}, "state": "approved"} for i in range(100)]
+    page2 = [
+        {"id": 150, "user": {"id": 10}, "state": "approved"},
+        {"id": 200, "user": {"id": 10}, "state": "requested_changes"},
+    ]
+    mock_get.side_effect = [{"id": 10}, page1, page2]
+    p = GitLabProvider("https://gitlab.example.com/api/v4", "tok")
+    assert p.get_bot_blocking_state("owner", "repo", 3) == "BLOCKING"

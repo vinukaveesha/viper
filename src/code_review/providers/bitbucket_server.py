@@ -41,6 +41,30 @@ def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> 
     return ""
 
 
+def _bbs_blocking_state_from_user_entries(
+    entries: list[Any] | None, want_slug_lower: str
+) -> BotBlockingState | None:
+    """Blocking state for ``want_slug_lower`` in PR participant/reviewer rows, or None if absent."""
+    for rev in entries or []:
+        if not isinstance(rev, dict):
+            continue
+        user = rev.get("user") or {}
+        if not isinstance(user, dict):
+            continue
+        uslug = str(user.get("slug") or "").strip().lower()
+        if uslug != want_slug_lower:
+            continue
+        status = str(rev.get("status") or "").upper()
+        if status == "NEEDS_WORK":
+            return "BLOCKING"
+        if status == "APPROVED":
+            return "NOT_BLOCKING"
+        if rev.get("approved") is True:
+            return "NOT_BLOCKING"
+        return "NOT_BLOCKING"
+    return None
+
+
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 CONTENT_TYPE_JSON = "application/json"
 _DEV_NULL = "/dev/null"
@@ -745,7 +769,7 @@ class BitbucketServerProvider(ProviderInterface):
         return next_start
 
     def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
-        """Map token user's reviewer ``status`` (``NEEDS_WORK`` / ``APPROVED``)."""
+        """Use PR ``participants`` first (participant PUT), then ``reviewers``."""
         if not self._participant_user_slug:
             return "UNKNOWN"
         want = self._participant_user_slug.strip().lower()
@@ -762,21 +786,12 @@ class BitbucketServerProvider(ProviderInterface):
             return "UNKNOWN"
         if not isinstance(data, dict):
             return "UNKNOWN"
-        for rev in data.get("reviewers") or []:
-            if not isinstance(rev, dict):
-                continue
-            user = rev.get("user") or {}
-            if not isinstance(user, dict):
-                continue
-            uslug = str(user.get("slug") or "").strip().lower()
-            if uslug != want:
-                continue
-            status = str(rev.get("status") or "").upper()
-            if status == "NEEDS_WORK":
-                return "BLOCKING"
-            if status == "APPROVED":
-                return "NOT_BLOCKING"
-            return "NOT_BLOCKING"
+        hit = _bbs_blocking_state_from_user_entries(data.get("participants"), want)
+        if hit is not None:
+            return hit
+        hit = _bbs_blocking_state_from_user_entries(data.get("reviewers"), want)
+        if hit is not None:
+            return hit
         return "NOT_BLOCKING"
 
     def get_bot_attribution_identity(

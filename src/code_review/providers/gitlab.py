@@ -100,6 +100,39 @@ class GitLabProvider(ProviderInterface):
             page += 1
         return combined
 
+    def _get_mr_reviews_paginated(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[dict[str, Any]] | None:
+        """List all MR reviews (paginated). ``None`` if any page fails or response is not a list."""
+        base_path = self._path(owner, repo, "merge_requests", str(pr_number), "reviews")
+        combined: list[dict[str, Any]] = []
+        page = 1
+        per_page = 100
+        max_pages = 500
+        for _ in range(max_pages):
+            url = f"{base_path}?per_page={per_page}&page={page}"
+            try:
+                data = self._get(url)
+            except Exception as e:
+                logger.warning(
+                    "GitLab MR reviews fetch failed owner=%s repo=%s pr_number=%s page=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    page,
+                    e,
+                )
+                return None
+            if not isinstance(data, list):
+                return None
+            for item in data:
+                if isinstance(item, dict):
+                    combined.append(item)
+            if len(data) < per_page:
+                break
+            page += 1
+        return combined
+
     def _get(self, path: str) -> Any:
         return http_get_json_or_text(path, headers=self._headers(), timeout=self._timeout)
 
@@ -342,13 +375,13 @@ class GitLabProvider(ProviderInterface):
 
     def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
         """Use MR reviews API when available; ``requested_changes`` → blocking."""
+        data: list[dict[str, Any]] | None = None
         try:
             me = self._get(f"{self._base_url}/user")
             if not isinstance(me, dict) or me.get("id") is None:
                 return "UNKNOWN"
             my_id = int(me["id"])
-            path = self._path(owner, repo, "merge_requests", str(pr_number), "reviews")
-            data = self._get(path)
+            data = self._get_mr_reviews_paginated(owner, repo, pr_number)
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code if exc.response is not None else 0
             if code == 404:
@@ -370,7 +403,7 @@ class GitLabProvider(ProviderInterface):
                 e,
             )
             return "UNKNOWN"
-        if not isinstance(data, list):
+        if data is None:
             return "UNKNOWN"
         mine: list[tuple[int, str]] = []
         for r in data:

@@ -39,7 +39,14 @@ def blocking_state_from_github_style_reviews(
     if not mine:
         return "NOT_BLOCKING"
     mine.sort(key=lambda x: x[0])
-    last_raw = mine[-1][1]
+    last_raw = ""
+    for _rid, raw_state in reversed(mine):
+        if _norm_review_state(raw_state) == "PENDING":
+            continue
+        last_raw = raw_state
+        break
+    else:
+        return "NOT_BLOCKING"
     norm = _norm_review_state(last_raw)
     if norm in (
         "CHANGES_REQUESTED",
@@ -49,7 +56,7 @@ def blocking_state_from_github_style_reviews(
         return "BLOCKING"
     if norm == "APPROVED":
         return "NOT_BLOCKING"
-    if norm in ("COMMENT", "COMMENTED", "DISMISSED", "PENDING", ""):
+    if norm in ("COMMENT", "COMMENTED", "DISMISSED", ""):
         return "NOT_BLOCKING"
     logger.debug("Unknown GitHub-style PR review state for token user: %r", last_raw)
     return "UNKNOWN"

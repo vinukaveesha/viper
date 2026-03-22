@@ -193,6 +193,27 @@ def test_submit_review_decision(mock_client):
 
 
 @patch("code_review.providers.github.httpx.Client")
+def test_get_bot_blocking_state_unknown_when_list_reviews_fails(mock_client):
+    """Failed reviews listing must not be treated as empty (NOT_BLOCKING)."""
+    ok_user = MagicMock()
+    ok_user.headers = {"content-type": "application/json"}
+    ok_user.json.return_value = {"login": "thebot"}
+    ok_user.raise_for_status = MagicMock()
+
+    bad = MagicMock()
+    bad.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "err",
+        request=MagicMock(),
+        response=MagicMock(status_code=503),
+    )
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = [ok_user, bad]
+
+    p = GitHubProvider("https://api.github.com", "tok")
+    assert p.get_bot_blocking_state("owner", "repo", 1) == "UNKNOWN"
+
+
+@patch("code_review.providers.github.httpx.Client")
 def test_get_pr_info(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {

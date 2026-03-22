@@ -400,7 +400,8 @@ class GitHubProvider(ProviderInterface):
             logger.warning("GitHub GET /user failed for bot blocking state: %s", e)
         return None
 
-    def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any]:
+    def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any] | None:
+        """List PR reviews, or ``None`` if the listing failed (caller maps to ``UNKNOWN``)."""
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/reviews"
         out: list[Any] = []
         page = 1
@@ -415,8 +416,17 @@ class GitHubProvider(ProviderInterface):
                     pr_number,
                     e,
                 )
-                return []
-            if not isinstance(data, list) or not data:
+                return None
+            if not isinstance(data, list):
+                logger.warning(
+                    "GitHub list PR reviews unexpected JSON owner=%s repo=%s pr=%s page=%s",
+                    owner,
+                    repo,
+                    pr_number,
+                    page,
+                )
+                return None
+            if not data:
                 break
             out.extend(data)
             if len(data) < 100:
@@ -430,6 +440,8 @@ class GitHubProvider(ProviderInterface):
         if not login:
             return "UNKNOWN"
         reviews = self._github_list_pull_reviews(owner, repo, pr_number)
+        if reviews is None:
+            return "UNKNOWN"
         return blocking_state_from_github_style_reviews(reviews, token_login_lower=login)
 
     def get_bot_attribution_identity(
