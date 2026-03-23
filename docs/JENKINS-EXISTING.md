@@ -71,7 +71,9 @@ The simplest path is to set them **globally**:
 
 - **Manage Jenkins → System → Global properties → Environment variables** → add the variables below.
 
-Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use one job per SCM with the same Jenkinsfile and set each job’s parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md).
+Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use one job per SCM with the same Jenkinsfile and set `SCM_PROVIDER` and `SCM_URL` at the **folder level** (folder configuration), not as job parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md).
+
+If `SCM_PROVIDER` / `SCM_URL` seem to get cleared after a run, this is usually Jenkins reapplying parameter definitions from `Jenkinsfile` when using **Pipeline script from SCM**. Move those values to folder-level environment variables (or global env vars for single-SCM) so they persist.
 
 | Variable | Example (Gitea) | Example (GitHub) |
 |----------|-----------------|------------------|

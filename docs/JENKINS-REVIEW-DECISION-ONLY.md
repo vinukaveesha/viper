@@ -31,6 +31,11 @@ Keep both jobs in the same folder.
 3. Use **New Item** → **Copy from** to create a second job, for example `code-review-comments`.
 4. Keep both jobs in the same folder so they share the folder-level configuration.
 
+Important:
+
+- If the copied job seems to lose `SCM_PROVIDER` or `SCM_URL` after runs, move those values to the folder-level environment configuration (or global env vars for single-SCM setups) instead of relying on job parameter defaults.
+- With **Pipeline script from SCM**, Jenkins can reapply parameter definitions from `docker/jenkins/Jenkinsfile`, so job parameter default values may appear reset.
+
 ### 1.2 Enable review decisions on the new job
 
 On the copied job, set:
