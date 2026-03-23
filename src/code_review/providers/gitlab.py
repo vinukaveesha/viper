@@ -50,6 +50,84 @@ def _project_id(owner: str, repo: str) -> str:
     return quote(f"{owner}/{repo}", safe="")
 
 
+def _gitlab_user_id_or_none(me: Any) -> int | None:
+    if not isinstance(me, dict) or me.get("id") is None:
+        return None
+    return int(me["id"])
+
+
+def _gitlab_mine_mr_reviews_for_user(data: list[Any], my_id: int) -> list[tuple[int, str]]:
+    mine: list[tuple[int, str]] = []
+    for r in data:
+        if not isinstance(r, dict):
+            continue
+        u = r.get("user") or {}
+        if not isinstance(u, dict) or u.get("id") is None:
+            continue
+        if int(u["id"]) != my_id:
+            continue
+        mine.append((int(r.get("id") or 0), str(r.get("state") or "").strip().lower()))
+    return mine
+
+
+def _gitlab_bot_blocking_from_sorted_mine(mine: list[tuple[int, str]]) -> BotBlockingState:
+    if not mine:
+        return "NOT_BLOCKING"
+    mine.sort(key=lambda x: x[0])
+    last = mine[-1][1]
+    if last == "requested_changes":
+        return "BLOCKING"
+    if last == "approved":
+        return "NOT_BLOCKING"
+    return "UNKNOWN"
+
+
+def _gitlab_notes_contain_id(notes: Any, want: str) -> bool:
+    if not isinstance(notes, list):
+        return False
+    for n in notes:
+        if isinstance(n, dict) and str(n.get("id") or "") == want:
+            return True
+    return False
+
+
+def _gitlab_dismissal_entries_from_notes(notes: list[Any]) -> list[ReviewThreadDismissalEntry]:
+    entries: list[ReviewThreadDismissalEntry] = []
+    for n in notes:
+        if not isinstance(n, dict):
+            continue
+        author = n.get("author") if isinstance(n.get("author"), dict) else {}
+        uname = str(author.get("username") or author.get("name") or "")
+        entries.append(
+            ReviewThreadDismissalEntry(
+                comment_id=str(n.get("id") or ""),
+                author_login=uname,
+                body=str(n.get("body") or ""),
+                created_at=str(n.get("created_at") or ""),
+            )
+        )
+    return entries
+
+
+def _gitlab_dismissal_context_for_discussion(
+    disc: dict[str, Any], want: str, pr_number: int
+) -> ReviewThreadDismissalContext | None:
+    did = str(disc.get("id") or "")
+    notes = disc.get("notes") or []
+    if not isinstance(notes, list):
+        return None
+    if not _gitlab_notes_contain_id(notes, want):
+        return None
+    entries = _gitlab_dismissal_entries_from_notes(notes)
+    if len(entries) < 2:
+        return None
+    stable = f"gitlab:discussion:{did}" if did else f"gitlab:discussion:{pr_number}"
+    return ReviewThreadDismissalContext(
+        gate_exclusion_stable_id=stable,
+        entries=entries,
+    )
+
+
 class GitLabProvider(ProviderInterface):
     """GitLab API client for MR diff, file content, and discussion comments."""
 
@@ -375,12 +453,11 @@ class GitLabProvider(ProviderInterface):
 
     def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
         """Use MR reviews API when available; ``requested_changes`` → blocking."""
-        data: list[dict[str, Any]] | None = None
         try:
             me = self._get(f"{self._base_url}/user")
-            if not isinstance(me, dict) or me.get("id") is None:
+            my_id = _gitlab_user_id_or_none(me)
+            if my_id is None:
                 return "UNKNOWN"
-            my_id = int(me["id"])
             data = self._get_mr_reviews_paginated(owner, repo, pr_number)
         except httpx.HTTPStatusError as exc:
             code = exc.response.status_code if exc.response is not None else 0
@@ -405,25 +482,8 @@ class GitLabProvider(ProviderInterface):
             return "UNKNOWN"
         if data is None:
             return "UNKNOWN"
-        mine: list[tuple[int, str]] = []
-        for r in data:
-            if not isinstance(r, dict):
-                continue
-            u = r.get("user") or {}
-            if not isinstance(u, dict) or u.get("id") is None:
-                continue
-            if int(u["id"]) != my_id:
-                continue
-            mine.append((int(r.get("id") or 0), str(r.get("state") or "").strip().lower()))
-        if not mine:
-            return "NOT_BLOCKING"
-        mine.sort(key=lambda x: x[0])
-        last = mine[-1][1]
-        if last == "requested_changes":
-            return "BLOCKING"
-        if last == "approved":
-            return "NOT_BLOCKING"
-        return "UNKNOWN"
+        mine = _gitlab_mine_mr_reviews_for_user(data, my_id)
+        return _gitlab_bot_blocking_from_sorted_mine(mine)
 
     def submit_review_decision(
         self,
@@ -548,9 +608,8 @@ class GitLabProvider(ProviderInterface):
             if not isinstance(disc, dict):
                 continue
             did = str(disc.get("id") or "")
-            for n in disc.get("notes") or []:
-                if isinstance(n, dict) and str(n.get("id") or "") == want:
-                    return did
+            if _gitlab_notes_contain_id(disc.get("notes") or [], want):
+                return did
         return ""
 
     def get_review_thread_dismissal_context(
@@ -577,38 +636,9 @@ class GitLabProvider(ProviderInterface):
         for disc in data:
             if not isinstance(disc, dict):
                 continue
-            did = str(disc.get("id") or "")
-            notes = disc.get("notes") or []
-            if not isinstance(notes, list):
-                continue
-            hit = False
-            for n in notes:
-                if isinstance(n, dict) and str(n.get("id") or "") == want:
-                    hit = True
-                    break
-            if not hit:
-                continue
-            entries: list[ReviewThreadDismissalEntry] = []
-            for n in notes:
-                if not isinstance(n, dict):
-                    continue
-                author = n.get("author") if isinstance(n.get("author"), dict) else {}
-                uname = str(author.get("username") or author.get("name") or "")
-                entries.append(
-                    ReviewThreadDismissalEntry(
-                        comment_id=str(n.get("id") or ""),
-                        author_login=uname,
-                        body=str(n.get("body") or ""),
-                        created_at=str(n.get("created_at") or ""),
-                    )
-                )
-            if len(entries) < 2:
-                return None
-            stable = f"gitlab:discussion:{did}" if did else f"gitlab:discussion:{pr_number}"
-            return ReviewThreadDismissalContext(
-                gate_exclusion_stable_id=stable,
-                entries=entries,
-            )
+            ctx = _gitlab_dismissal_context_for_discussion(disc, want, pr_number)
+            if ctx is not None:
+                return ctx
         return None
 
     def post_review_thread_reply(

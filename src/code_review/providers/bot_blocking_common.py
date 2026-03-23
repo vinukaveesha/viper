@@ -14,15 +14,9 @@ def _norm_review_state(raw: str) -> str:
     return raw.strip().upper().replace(" ", "_").replace("-", "_")
 
 
-def blocking_state_from_github_style_reviews(
-    reviews: list[Any],
-    *,
-    token_login_lower: str,
-) -> BotBlockingState:
-    """Use the latest review authored by *token_login_lower* on this PR/MR.
-
-    GitHub uses ``CHANGES_REQUESTED``; Gitea may use ``REQUEST_CHANGES`` or similar.
-    """
+def _mine_github_style_reviews(
+    reviews: list[Any], token_login_lower: str
+) -> list[tuple[int, str]]:
     mine: list[tuple[int, str]] = []
     for r in reviews:
         if not isinstance(r, dict):
@@ -36,18 +30,21 @@ def blocking_state_from_github_style_reviews(
         rid = int(r.get("id") or 0)
         raw_state = str(r.get("state") or "")
         mine.append((rid, raw_state))
+    return mine
+
+
+def _last_non_pending_review_raw(mine: list[tuple[int, str]]) -> str | None:
     if not mine:
-        return "NOT_BLOCKING"
+        return None
     mine.sort(key=lambda x: x[0])
-    last_raw = ""
     for _rid, raw_state in reversed(mine):
         if _norm_review_state(raw_state) == "PENDING":
             continue
-        last_raw = raw_state
-        break
-    else:
-        return "NOT_BLOCKING"
-    norm = _norm_review_state(last_raw)
+        return raw_state
+    return None
+
+
+def _blocking_from_github_norm(norm: str, last_raw: str) -> BotBlockingState:
     if norm in (
         "CHANGES_REQUESTED",
         "REQUEST_CHANGES",
@@ -60,3 +57,21 @@ def blocking_state_from_github_style_reviews(
         return "NOT_BLOCKING"
     logger.debug("Unknown GitHub-style PR review state for token user: %r", last_raw)
     return "UNKNOWN"
+
+
+def blocking_state_from_github_style_reviews(
+    reviews: list[Any],
+    *,
+    token_login_lower: str,
+) -> BotBlockingState:
+    """Use the latest review authored by *token_login_lower* on this PR/MR.
+
+    GitHub uses ``CHANGES_REQUESTED``; Gitea may use ``REQUEST_CHANGES`` or similar.
+    """
+    mine = _mine_github_style_reviews(reviews, token_login_lower)
+    if not mine:
+        return "NOT_BLOCKING"
+    last_raw = _last_non_pending_review_raw(mine)
+    if last_raw is None:
+        return "NOT_BLOCKING"
+    return _blocking_from_github_norm(_norm_review_state(last_raw), last_raw)

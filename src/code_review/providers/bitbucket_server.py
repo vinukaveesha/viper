@@ -41,6 +41,25 @@ def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> 
     return ""
 
 
+def _bbs_blocking_state_for_one_entry(
+    rev: dict, want_slug_lower: str
+) -> BotBlockingState | None:
+    user = rev.get("user") or {}
+    if not isinstance(user, dict):
+        return None
+    uslug = str(user.get("slug") or "").strip().lower()
+    if uslug != want_slug_lower:
+        return None
+    status = str(rev.get("status") or "").upper()
+    if status == "NEEDS_WORK":
+        return "BLOCKING"
+    if status == "APPROVED":
+        return "NOT_BLOCKING"
+    if rev.get("approved") is True:
+        return "NOT_BLOCKING"
+    return "NOT_BLOCKING"
+
+
 def _bbs_blocking_state_from_user_entries(
     entries: list[Any] | None, want_slug_lower: str
 ) -> BotBlockingState | None:
@@ -48,20 +67,9 @@ def _bbs_blocking_state_from_user_entries(
     for rev in entries or []:
         if not isinstance(rev, dict):
             continue
-        user = rev.get("user") or {}
-        if not isinstance(user, dict):
-            continue
-        uslug = str(user.get("slug") or "").strip().lower()
-        if uslug != want_slug_lower:
-            continue
-        status = str(rev.get("status") or "").upper()
-        if status == "NEEDS_WORK":
-            return "BLOCKING"
-        if status == "APPROVED":
-            return "NOT_BLOCKING"
-        if rev.get("approved") is True:
-            return "NOT_BLOCKING"
-        return "NOT_BLOCKING"
+        hit = _bbs_blocking_state_for_one_entry(rev, want_slug_lower)
+        if hit is not None:
+            return hit
     return None
 
 

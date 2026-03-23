@@ -250,6 +250,69 @@ class GitHubProvider(ProviderInterface):
 
     _THREAD_COMMENTS_FETCH_FIRST: str = "__first_page__"
 
+    @staticmethod
+    def _github_append_thread_comment_dicts_from_nodes(
+        nodes: Any, out: list[dict[str, Any]]
+    ) -> None:
+        if not isinstance(nodes, list):
+            return
+        for c in nodes:
+            if isinstance(c, dict):
+                out.append(c)
+
+    def _github_thread_comments_pagination_start(
+        self,
+        initial_comments: dict[str, Any] | None,
+        out: list[dict[str, Any]],
+    ) -> tuple[bool, str | None]:
+        """(True, _) => pagination finished (return ``out``); (False, cursor) => fetch more."""
+        if not isinstance(initial_comments, dict):
+            return False, self._THREAD_COMMENTS_FETCH_FIRST
+        self._github_append_thread_comment_dicts_from_nodes(
+            initial_comments.get("nodes"), out
+        )
+        page = initial_comments.get("pageInfo") or {}
+        if not (isinstance(page, dict) and page.get("hasNextPage")):
+            return True, None
+        ec = page.get("endCursor")
+        cur = ec if isinstance(ec, str) and ec else None
+        return False, cur
+
+    def _github_thread_comments_merge_next_page(
+        self,
+        gql: str,
+        thread_id: str,
+        fetch_cursor: str | None,
+        out: list[dict[str, Any]],
+        seen_end: set[str],
+    ) -> str | None:
+        """Run one GraphQL page fetch; return next cursor or None to stop."""
+        if fetch_cursor is None:
+            return None
+        variables: dict[str, Any] = {"threadId": thread_id}
+        if fetch_cursor == self._THREAD_COMMENTS_FETCH_FIRST:
+            variables["commentCursor"] = None
+        else:
+            variables["commentCursor"] = fetch_cursor
+        data = self._graphql(gql, variables)
+        node = data.get("node") if isinstance(data, dict) else None
+        if not isinstance(node, dict):
+            return None
+        conn = node.get("comments") or {}
+        if not isinstance(conn, dict):
+            return None
+        self._github_append_thread_comment_dicts_from_nodes(conn.get("nodes"), out)
+        page = conn.get("pageInfo") or {}
+        if not isinstance(page, dict) or not page.get("hasNextPage"):
+            return None
+        ec = page.get("endCursor")
+        if not isinstance(ec, str) or not ec:
+            return None
+        if ec in seen_end:
+            return None
+        seen_end.add(ec)
+        return ec
+
     def _github_expand_thread_comments(
         self,
         thread_id: str,
@@ -266,54 +329,18 @@ class GitHubProvider(ProviderInterface):
             else self._THREAD_COMMENTS_PAGE_GQL
         )
         out: list[dict[str, Any]] = []
-        fetch_cursor: str | None = self._THREAD_COMMENTS_FETCH_FIRST
-
-        if isinstance(initial_comments, dict):
-            nodes = initial_comments.get("nodes")
-            if isinstance(nodes, list):
-                for c in nodes:
-                    if isinstance(c, dict):
-                        out.append(c)
-            page = initial_comments.get("pageInfo") or {}
-            if isinstance(page, dict) and page.get("hasNextPage"):
-                ec = page.get("endCursor")
-                fetch_cursor = ec if isinstance(ec, str) and ec else None
-            else:
-                return out
-        else:
-            fetch_cursor = self._THREAD_COMMENTS_FETCH_FIRST
-
+        done, fetch_cursor = self._github_thread_comments_pagination_start(
+            initial_comments, out
+        )
+        if done:
+            return out
         seen_end: set[str] = set()
         for _ in range(500):
+            fetch_cursor = self._github_thread_comments_merge_next_page(
+                gql, thread_id, fetch_cursor, out, seen_end
+            )
             if fetch_cursor is None:
                 break
-            variables: dict[str, Any] = {"threadId": thread_id}
-            if fetch_cursor == self._THREAD_COMMENTS_FETCH_FIRST:
-                variables["commentCursor"] = None
-            else:
-                variables["commentCursor"] = fetch_cursor
-            data = self._graphql(gql, variables)
-            node = data.get("node") if isinstance(data, dict) else None
-            if not isinstance(node, dict):
-                break
-            conn = node.get("comments") or {}
-            if not isinstance(conn, dict):
-                break
-            batch = conn.get("nodes")
-            if isinstance(batch, list):
-                for c in batch:
-                    if isinstance(c, dict):
-                        out.append(c)
-            page = conn.get("pageInfo") or {}
-            if not isinstance(page, dict) or not page.get("hasNextPage"):
-                break
-            ec = page.get("endCursor")
-            if not isinstance(ec, str) or not ec:
-                break
-            if ec in seen_end:
-                break
-            seen_end.add(ec)
-            fetch_cursor = ec
         return out
 
     def _github_thread_node_to_unresolved_item(
@@ -592,6 +619,26 @@ class GitHubProvider(ProviderInterface):
             entries=entries,
         )
 
+    def _github_dismissal_context_in_thread_nodes(
+        self, nodes: list[Any], want_id: int
+    ) -> ReviewThreadDismissalContext | None:
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            tid = str(node.get("id") or "")
+            if not tid:
+                continue
+            cw = node.get("comments") if isinstance(node.get("comments"), dict) else None
+            expanded = self._github_expand_thread_comments(tid, cw, gate_mode=False)
+            for c in expanded:
+                if not isinstance(c, dict):
+                    continue
+                if int(c.get("databaseId") or 0) == want_id:
+                    return self._github_build_dismissal_context_from_comment_nodes(
+                        tid, expanded
+                    )
+        return None
+
     def get_review_thread_dismissal_context(
         self,
         owner: str,
@@ -622,21 +669,11 @@ class GitHubProvider(ProviderInterface):
                 rt = self._github_graphql_review_threads_container(data)
                 if rt is None:
                     break
-                for node in rt.get("nodes") or []:
-                    if not isinstance(node, dict):
-                        continue
-                    tid = str(node.get("id") or "")
-                    if not tid:
-                        continue
-                    cw = node.get("comments") if isinstance(node.get("comments"), dict) else None
-                    expanded = self._github_expand_thread_comments(tid, cw, gate_mode=False)
-                    for c in expanded:
-                        if not isinstance(c, dict):
-                            continue
-                        if int(c.get("databaseId") or 0) == want_id:
-                            return self._github_build_dismissal_context_from_comment_nodes(
-                                tid, expanded
-                            )
+                hit = self._github_dismissal_context_in_thread_nodes(
+                    rt.get("nodes") or [], want_id
+                )
+                if hit is not None:
+                    return hit
                 cursor = self._github_review_threads_advance_cursor(
                     rt, seen_end_cursors, owner, repo, pr_number
                 )

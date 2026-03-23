@@ -175,32 +175,56 @@ class PRInfo(BaseModel):
     )
 
 
+def _strip_sha_field(value: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ""
+
+
+def _head_sha_from_github_style_head(data: dict) -> str:
+    head = data.get("head")
+    if isinstance(head, dict):
+        return _strip_sha_field(head.get("sha"))
+    return ""
+
+
+def _head_sha_from_diff_refs(data: dict) -> str:
+    diff_refs = data.get("diff_refs") or {}
+    if isinstance(diff_refs, dict):
+        return _strip_sha_field(diff_refs.get("head_sha"))
+    return ""
+
+
+def _head_sha_from_bitbucket_source(data: dict) -> str:
+    source = data.get("source") or {}
+    if not isinstance(source, dict):
+        return ""
+    commit = source.get("commit") or {}
+    if isinstance(commit, dict):
+        return _strip_sha_field(commit.get("hash"))
+    return ""
+
+
+def _head_sha_from_bitbucket_server_from_ref(data: dict) -> str:
+    from_ref = data.get("fromRef") or {}
+    if isinstance(from_ref, dict):
+        return _strip_sha_field(from_ref.get("latestCommit"))
+    return ""
+
+
 def head_sha_from_pr_api_dict(data: dict) -> str:
     """Extract head commit SHA from common PR/MR JSON shapes (GitHub/Gitea, GitLab, Bitbucket)."""
     if not isinstance(data, dict):
         return ""
-    head = data.get("head")
-    if isinstance(head, dict):
-        s = head.get("sha")
-        if isinstance(s, str) and s.strip():
-            return s.strip()
-    diff_refs = data.get("diff_refs") or {}
-    if isinstance(diff_refs, dict):
-        s = diff_refs.get("head_sha")
-        if isinstance(s, str) and s.strip():
-            return s.strip()
-    source = data.get("source") or {}
-    if isinstance(source, dict):
-        commit = source.get("commit") or {}
-        if isinstance(commit, dict):
-            h = commit.get("hash")
-            if isinstance(h, str) and h.strip():
-                return h.strip()
-    from_ref = data.get("fromRef") or {}
-    if isinstance(from_ref, dict):
-        latest = from_ref.get("latestCommit")
-        if isinstance(latest, str) and latest.strip():
-            return latest.strip()
+    for fn in (
+        _head_sha_from_github_style_head,
+        _head_sha_from_diff_refs,
+        _head_sha_from_bitbucket_source,
+        _head_sha_from_bitbucket_server_from_ref,
+    ):
+        s = fn(data)
+        if s:
+            return s
     return ""
 
 

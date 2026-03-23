@@ -36,6 +36,27 @@ logger = logging.getLogger(__name__)
 _BB_PAGINATION_LOOP_MSG = "Bitbucket pagination loop detected (same next URL returned twice): %s"
 
 
+def _bitbucket_cloud_blocking_from_participants(
+    participants: list[Any], my_uuid: str
+) -> BotBlockingState:
+    for p in participants:
+        if not isinstance(p, dict):
+            continue
+        user = p.get("user") or {}
+        if not isinstance(user, dict):
+            continue
+        uid = str(user.get("uuid") or "").strip()
+        if uid != my_uuid:
+            continue
+        st = str(p.get("state") or "").strip().lower().replace(" ", "_")
+        if st in ("changes_requested", "needs_work"):
+            return "BLOCKING"
+        if p.get("approved") is True or st == "approved":
+            return "NOT_BLOCKING"
+        return "UNKNOWN"
+    return "NOT_BLOCKING"
+
+
 class BitbucketProvider(ProviderInterface):
     """Bitbucket Cloud API client for PR diff, file content, and comments."""
 
@@ -318,22 +339,7 @@ class BitbucketProvider(ProviderInterface):
                 e,
             )
             return "UNKNOWN"
-        for p in participants:
-            if not isinstance(p, dict):
-                continue
-            user = p.get("user") or {}
-            if not isinstance(user, dict):
-                continue
-            uid = str(user.get("uuid") or "").strip()
-            if uid != my_uuid:
-                continue
-            st = str(p.get("state") or "").strip().lower().replace(" ", "_")
-            if st in ("changes_requested", "needs_work"):
-                return "BLOCKING"
-            if p.get("approved") is True or st == "approved":
-                return "NOT_BLOCKING"
-            return "UNKNOWN"
-        return "NOT_BLOCKING"
+        return _bitbucket_cloud_blocking_from_participants(participants, my_uuid)
 
     def get_bot_attribution_identity(
         self, owner: str, repo: str, pr_number: int
