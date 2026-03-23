@@ -612,7 +612,7 @@ class GitHubProvider(ProviderInterface):
                     created_at=str(c.get("createdAt") or ""),
                 )
             )
-        if not entries:
+        if len(entries) < 2:
             return None
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"github:thread:{thread_graphql_id}",
