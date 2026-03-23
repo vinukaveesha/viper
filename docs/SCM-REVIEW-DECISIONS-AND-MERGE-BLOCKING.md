@@ -74,7 +74,7 @@ All providers still post **inline comments** and participate in the **quality ga
 
 In **review-decision-only** mode (`CODE_REVIEW_REVIEW_DECISION_ONLY` or `--review-decision-only`), the runner recomputes open high/medium counts from the provider and may submit `APPROVE` / `REQUEST_CHANGES` without running the main review agent. **How reply-based recalculation and optional thread exclusion interact with the gate** is described in **§1 (Quality gate recalculation and replies)**. Map webhook fields into `CODE_REVIEW_EVENT_*` per [Configuration reference](CONFIGURATION-REFERENCE.md) §5 and §5.1.
 
-For a **code-level inventory**, test coverage, and the implementation plan checklist, see **[SCM review decisions — implementation plan](SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md)**.
+For **implementation details** (interfaces, `ReviewOrchestrator`, provider modules), see [Developer guide](DEVELOPER_GUIDE.md). Tests live under `tests/test_runner.py`, `tests/providers/test_review_decision_common.py`, and per-provider `tests/providers/test_*.py`.
 
 ---
 
@@ -152,7 +152,6 @@ The table below maps **UI/API concepts** to **when merge can be blocked**, point
 
 ## 6. Related reading
 
-- [SCM review decisions — implementation plan](SCM-REVIEW-DECISIONS-IMPLEMENTATION-PLAN.md) — what is implemented in code and backlog per provider
 - [Configuration reference](CONFIGURATION-REFERENCE.md) — `SCM_REVIEW_DECISION_*`
 - [Developer guide](DEVELOPER_GUIDE.md) — `ProviderInterface`, extension points
 - [Bitbucket Data Center (Jenkins)](BITBUCKET-DATACENTER.md) — webhook and env for `bitbucket_server`
