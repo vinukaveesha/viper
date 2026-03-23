@@ -2333,6 +2333,12 @@ class ReviewOrchestrator:
                 self._event_context.event_kind,
             )
 
+        skip_result = self._determine_skip_reason(
+            provider, cfg, owner, repo, pr_number, trace_id, start_time, run_handle
+        )
+        if skip_result is not None:
+            return skip_result
+
         skip_early = self._decision_only_try_skip_when_bot_not_blocking(
             provider,
             app_cfg,
@@ -2345,12 +2351,6 @@ class ReviewOrchestrator:
         )
         if skip_early is not None:
             return skip_early
-
-        skip_result = self._determine_skip_reason(
-            provider, cfg, owner, repo, pr_number, trace_id, start_time, run_handle
-        )
-        if skip_result is not None:
-            return skip_result
 
         head_hint = _head_sha_hint_for_decision_only(self._event_context, self.head_sha)
         head_sha = _resolve_head_sha_for_review_decision_submission(

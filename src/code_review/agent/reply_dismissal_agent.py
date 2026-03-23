@@ -56,15 +56,13 @@ def create_reply_dismissal_agent() -> Agent:
 
 def reply_dismissal_verdict_from_llm_text(text: str) -> ReplyDismissalVerdictV1 | None:
     """Parse final LLM text into a validated verdict, or None if parsing/validation fails."""
-    raw = _parse_verdict_json_object(text)
-    if raw is None:
-        return None
-    try:
-        return ReplyDismissalVerdictV1.model_validate(raw)
-    except Exception as e:
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Invalid reply-dismissal payload: %r (%s)", raw, e, exc_info=True)
-        return None
+    for raw in _iter_reply_dismissal_json_candidates(text):
+        try:
+            return ReplyDismissalVerdictV1.model_validate(raw)
+        except Exception as e:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Invalid reply-dismissal payload: %r (%s)", raw, e, exc_info=True)
+    return None
 
 
 def _first_markdown_fence_body(s: str) -> str | None:
@@ -89,8 +87,8 @@ def _first_markdown_fence_body(s: str) -> str | None:
     return s[i:end_fence]
 
 
-def _parse_verdict_json_object(text: str) -> dict | None:
-    """Extract a JSON object from model output (optional ```json fence)."""
+def _iter_reply_dismissal_json_candidates(text: str):
+    """Yield dict candidates: whole-chunk parses first, then every ``{...}`` via raw_decode."""
     s = text.strip()
     chunks: list[str] = []
     fenced = _first_markdown_fence_body(s)
@@ -101,14 +99,15 @@ def _parse_verdict_json_object(text: str) -> dict | None:
         try:
             val = json.loads(chunk)
             if isinstance(val, dict):
-                return val
+                yield val
+                return
         except json.JSONDecodeError:
             continue
-    return _first_json_object_via_raw_decode(s)
+    yield from _iter_json_objects_via_raw_decode(s)
 
 
-def _first_json_object_via_raw_decode(s: str) -> dict | None:
-    """First complete JSON object starting at any ``{`` (avoids first/last-brace slice errors)."""
+def _iter_json_objects_via_raw_decode(s: str):
+    """Every complete JSON object starting at any ``{`` (avoids first/last-brace slice errors)."""
     dec = json.JSONDecoder()
     for i, c in enumerate(s):
         if c != "{":
@@ -118,5 +117,4 @@ def _first_json_object_via_raw_decode(s: str) -> dict | None:
         except json.JSONDecodeError:
             continue
         if isinstance(val, dict):
-            return val
-    return None
+            yield val

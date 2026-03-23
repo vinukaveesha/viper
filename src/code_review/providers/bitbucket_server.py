@@ -794,12 +794,21 @@ class BitbucketServerProvider(ProviderInterface):
             return "UNKNOWN"
         if not isinstance(data, dict):
             return "UNKNOWN"
-        hit = _bbs_blocking_state_from_user_entries(data.get("participants"), want)
-        if hit is not None:
-            return hit
-        hit = _bbs_blocking_state_from_user_entries(data.get("reviewers"), want)
-        if hit is not None:
-            return hit
+        inspected = False
+        participants = data.get("participants")
+        if participants is not None:
+            inspected = True
+            hit = _bbs_blocking_state_from_user_entries(participants, want)
+            if hit is not None:
+                return hit
+        reviewers = data.get("reviewers")
+        if reviewers is not None:
+            inspected = True
+            hit = _bbs_blocking_state_from_user_entries(reviewers, want)
+            if hit is not None:
+                return hit
+        if not inspected:
+            return "UNKNOWN"
         return "NOT_BLOCKING"
 
     def get_bot_attribution_identity(

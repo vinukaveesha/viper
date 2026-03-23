@@ -75,6 +75,16 @@ def test_reply_dismissal_verdict_with_extra_braces_before_object():
     assert v.verdict == "agreed"
 
 
+def test_reply_dismissal_verdict_skips_unrelated_leading_json_object():
+    text = (
+        'Context {"trace_id": "x", "n": 1} then '
+        '{"verdict": "agreed", "reply_text": ""}'
+    )
+    v = reply_dismissal_verdict_from_llm_text(text)
+    assert v is not None
+    assert v.verdict == "agreed"
+
+
 def test_reply_dismissal_verdict_invalid_returns_none():
     assert reply_dismissal_verdict_from_llm_text("not json") is None
     assert reply_dismissal_verdict_from_llm_text('{"verdict": "disagreed"}') is None
