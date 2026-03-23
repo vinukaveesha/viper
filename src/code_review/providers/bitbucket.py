@@ -16,6 +16,7 @@ from code_review.providers.base import (
     ReviewDecision,
     UnresolvedReviewItem,
     _log_pr_info_warning,
+    default_unresolved_review_items_from_comments,
     normalize_diff_anchor_path,
     pr_info_from_api_dict,
 )
@@ -28,6 +29,10 @@ from code_review.providers.http_shortcuts import (
 )
 from code_review.providers.review_decision_common import delete_soft_fail, effective_review_body
 from code_review.providers.safety import truncate_repo_content
+from code_review.schemas.review_thread_dismissal import (
+    ReviewThreadDismissalContext,
+    ReviewThreadDismissalEntry,
+)
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.bitbucket.org/2.0"
@@ -284,9 +289,25 @@ class BitbucketProvider(ProviderInterface):
     def get_unresolved_review_items_for_quality_gate(
         self, owner: str, repo: str, pr_number: int
     ) -> list[UnresolvedReviewItem]:
-        """Bitbucket Cloud: only open PR tasks expose resolved state; comments do not."""
-        url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "tasks")
+        """Bitbucket Cloud: unresolved inline PR comments plus open PR tasks.
+
+        Inline comments use the same ``comment:{id}`` stable ids as the shared default helper
+        so reply-dismissal gate exclusion can match quality-gate items.
+        """
         out: list[UnresolvedReviewItem] = []
+        try:
+            comments = self.get_existing_review_comments(owner, repo, pr_number)
+            out.extend(default_unresolved_review_items_from_comments(comments))
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Cloud PR comments fetch failed for quality gate "
+                "owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+        url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "tasks")
         visited: set[str] = set()
         while url:
             if not self._bitbucket_enter_next_link_page(url, visited):
@@ -311,6 +332,166 @@ class BitbucketProvider(ProviderInterface):
             nxt = data.get("next")
             url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
         return out
+
+    def _bbcloud_list_pr_comment_dicts(self, owner: str, repo: str, pr_number: int) -> list[dict]:
+        """Paginate GET pullrequest comments; return raw dicts (for reply-dismissal threading)."""
+        url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
+        out: list[dict] = []
+        visited: set[str] = set()
+        while url:
+            if not self._bitbucket_enter_next_link_page(url, visited):
+                break
+            try:
+                data = self._get(url)
+            except Exception as e:
+                logger.warning(
+                    "Bitbucket Cloud list comments failed owner=%s repo=%s pr=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
+                )
+                break
+            if not isinstance(data, dict):
+                break
+            for c in data.get("values") or []:
+                if isinstance(c, dict):
+                    out.append(c)
+            nxt = data.get("next")
+            url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
+        return out
+
+    @staticmethod
+    def _bbcloud_parent_id(c: dict) -> str | None:
+        p = c.get("parent")
+        if not isinstance(p, dict):
+            return None
+        if p.get("id") is not None:
+            return str(p["id"])
+        href = p.get("href")
+        if isinstance(href, str) and "/comments/" in href:
+            tail = href.rstrip("/").split("/")[-1]
+            if tail.isdigit():
+                return tail
+        return None
+
+    @staticmethod
+    def _bbcloud_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, str] | None:
+        if not isinstance(c, dict):
+            return None
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            return None
+        parent = BitbucketProvider._bbcloud_parent_id(c)
+        content = c.get("content") if isinstance(c.get("content"), dict) else {}
+        body = str(content.get("raw") or "")
+        user = c.get("user") if isinstance(c.get("user"), dict) else {}
+        login = str(
+            user.get("nickname") or user.get("username") or user.get("display_name") or ""
+        )
+        created = str(c.get("created_on") or "")
+        return (cid, parent, body, login, created)
+
+    @staticmethod
+    def _bbcloud_build_dismissal_context(
+        raw_comments: list[dict], triggered_comment_id: str
+    ) -> ReviewThreadDismissalContext | None:
+        want = (triggered_comment_id or "").strip()
+        if not want:
+            return None
+        by_id: dict[str, dict[str, str | None]] = {}
+        for c in raw_comments:
+            meta = BitbucketProvider._bbcloud_dismissal_meta(c)
+            if not meta:
+                continue
+            cid, parent, body, login, created = meta
+            by_id[cid] = {
+                "parent": parent,
+                "body": body,
+                "login": login,
+                "created": created,
+            }
+        if want not in by_id:
+            return None
+        root = want
+        seen_up: set[str] = set()
+        while root in by_id:
+            par = by_id[root]["parent"]
+            if not par or par not in by_id:
+                break
+            if root in seen_up:
+                break
+            seen_up.add(root)
+            root = par
+        children: dict[str, list[str]] = {}
+        for cid, info in by_id.items():
+            par = info["parent"]
+            if par and par in by_id:
+                children.setdefault(par, []).append(cid)
+        stack = [root]
+        member_ids: list[str] = []
+        seen_d: set[str] = set()
+        while stack:
+            n = stack.pop()
+            if n in seen_d:
+                continue
+            seen_d.add(n)
+            member_ids.append(n)
+            stack.extend(children.get(n, []))
+        member_ids.sort(key=lambda i: (by_id[i]["created"] or "", i))
+        entries: list[ReviewThreadDismissalEntry] = []
+        for cid in member_ids:
+            inf = by_id[cid]
+            entries.append(
+                ReviewThreadDismissalEntry(
+                    comment_id=cid,
+                    author_login=str(inf["login"] or ""),
+                    body=str(inf["body"] or ""),
+                    created_at=str(inf["created"] or ""),
+                )
+            )
+        if len(entries) < 2:
+            return None
+        return ReviewThreadDismissalContext(
+            gate_exclusion_stable_id=f"comment:{root}",
+            entries=entries,
+        )
+
+    def get_review_thread_dismissal_context(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        triggered_comment_id: str,
+    ) -> ReviewThreadDismissalContext | None:
+        try:
+            raw = self._bbcloud_list_pr_comment_dicts(owner, repo, pr_number)
+            return self._bbcloud_build_dismissal_context(raw, triggered_comment_id)
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Cloud get_review_thread_dismissal_context failed "
+                "owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+
+    def post_review_thread_reply(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        reply_to_comment_id: str,
+        body: str,
+    ) -> None:
+        try:
+            pid = int((reply_to_comment_id or "").strip())
+        except ValueError as e:
+            raise ValueError("Bitbucket Cloud reply_to_comment_id must be numeric") from e
+        path = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
+        self._post(path, {"content": {"raw": body}, "parent": {"id": pid}})
 
     def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:
         """Post PR-level comment (no inline)."""
@@ -486,4 +667,6 @@ class BitbucketProvider(ProviderInterface):
             supports_review_decisions=True,
             supports_bot_blocking_state_query=True,
             supports_bot_attribution_identity_query=True,
+            supports_review_thread_dismissal_context=True,
+            supports_review_thread_reply=True,
         )

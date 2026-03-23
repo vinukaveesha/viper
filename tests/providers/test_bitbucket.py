@@ -132,25 +132,71 @@ def test_post_review_comments_multiline_includes_from(mock_client):
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_unresolved_review_items_open_tasks_only(mock_client):
-    """Bitbucket Cloud quality gate uses PR tasks (comments lack resolved state)."""
-    mock_resp = MagicMock()
-    mock_resp.json.return_value = {
-        "values": [
-            {"id": 10, "state": "OPEN", "content": {"raw": "[High] Do this"}},
-            {"id": 11, "state": "RESOLVED", "content": {"raw": "[High] Done"}},
-        ],
-        "next": None,
-    }
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+    """Bitbucket Cloud quality gate merges unresolved inline comments with open PR tasks."""
+
+    def _get_side_effect(url: str, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/pullrequests/5/comments" in u:
+            mock_r.json.return_value = {"values": [], "next": None}
+        elif "/pullrequests/5/tasks" in u:
+            mock_r.json.return_value = {
+                "values": [
+                    {"id": 10, "state": "OPEN", "content": {"raw": "[High] Do this"}},
+                    {"id": 11, "state": "RESOLVED", "content": {"raw": "[High] Done"}},
+                ],
+                "next": None,
+            }
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
     p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
     items = p.get_unresolved_review_items_for_quality_gate("ws", "slug", 5)
     assert len(items) == 1
     assert items[0].kind == "task"
     assert items[0].inferred_severity == "high"
-    call_url = mock_client.return_value.__enter__.return_value.get.call_args[0][0]
-    assert "/pullrequests/5/tasks" in call_url
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_unresolved_review_items_includes_inline_comments_and_tasks(mock_client):
+    def _get_side_effect(url: str, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/pullrequests/3/comments" in u:
+            mock_r.json.return_value = {
+                "values": [
+                    {
+                        "id": 100,
+                        "content": {"raw": "[Medium] fix"},
+                        "inline": {"path": "a.py", "to": 2},
+                    }
+                ],
+                "next": None,
+            }
+        elif "/pullrequests/3/tasks" in u:
+            mock_r.json.return_value = {
+                "values": [{"id": 20, "state": "OPEN", "content": {"raw": "[High] task"}}],
+                "next": None,
+            }
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("ws", "slug", 3)
+    kinds = {i.kind for i in items}
+    assert "inline_comment" in kinds
+    assert "task" in kinds
+    assert any(i.stable_id == "comment:100" for i in items)
+    assert any(i.stable_id.startswith("bbcloud:task:") for i in items)
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
@@ -209,6 +255,75 @@ def test_capabilities():
     caps = p.capabilities()
     assert caps.supports_suggestions is True
     assert caps.supports_review_decisions is True
+    assert caps.supports_review_thread_dismissal_context is True
+    assert caps.supports_review_thread_reply is True
+
+
+def test_bbcloud_build_dismissal_context_thread():
+    raw = [
+        {
+            "id": 1,
+            "content": {"raw": "Bot [High] issue"},
+            "user": {"nickname": "bot"},
+            "created_on": "2025-01-01T10:00:00Z",
+        },
+        {
+            "id": 2,
+            "parent": {"id": 1},
+            "content": {"raw": "Human fixed"},
+            "user": {"nickname": "dev"},
+            "created_on": "2025-01-01T11:00:00Z",
+        },
+    ]
+    ctx = BitbucketProvider._bbcloud_build_dismissal_context(raw, "2")
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:1"
+    assert len(ctx.entries) == 2
+    assert ctx.entries[0].comment_id == "1"
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_review_thread_dismissal_context_paginates_comments(mock_client):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "application/json"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.json.return_value = {
+        "values": [
+            {
+                "id": 5,
+                "content": {"raw": "root"},
+                "user": {"nickname": "a"},
+                "created_on": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": 6,
+                "parent": {"id": 5},
+                "content": {"raw": "reply"},
+                "user": {"nickname": "b"},
+                "created_on": "2025-01-01T11:00:00Z",
+            },
+        ],
+        "next": None,
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_r
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    ctx = p.get_review_thread_dismissal_context("ws", "slug", 1, "6")
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:5"
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_post_review_thread_reply_bitbucket_cloud(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.json.return_value = {"id": 9}
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    p.post_review_thread_reply("ws", "slug", 2, "42", "Still an issue")
+    call = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/pullrequests/2/comments" in call[0][0]
+    assert call[1]["json"]["parent"]["id"] == 42
+    assert call[1]["json"]["content"]["raw"] == "Still an issue"
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")

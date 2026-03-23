@@ -48,7 +48,7 @@ Per-SCM “open” semantics:
 | **GitHub** | Pull request review threads that are not resolved and not outdated (via GraphQL `reviewThreads`; falls back to REST review comments if GraphQL fails). |
 | **Gitea** | Review comments with `resolved=false` from the API (when exposed). |
 | **GitLab** | Merge request discussions with `resolved=false` (thread-level; severity is the max across diff notes in the thread). |
-| **Bitbucket Cloud** | Open PR **tasks** only (inline comments do not expose resolved state in the API). |
+| **Bitbucket Cloud** | Unresolved **inline** PR comments plus open PR **tasks** (inline uses the same unresolved shape as other providers where the API allows). |
 | **Bitbucket Server/DC** | Comments that are not `RESOLVED` plus open PR **tasks**. |
 
 ---

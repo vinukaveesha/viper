@@ -721,6 +721,8 @@ def test_capabilities():
     caps = p.capabilities()
     assert caps.supports_suggestions is True
     assert caps.supports_review_decisions is False
+    assert caps.supports_review_thread_dismissal_context is True
+    assert caps.supports_review_thread_reply is True
 
 
 def test_capabilities_with_participant_slug_enables_review_decisions():
@@ -730,6 +732,77 @@ def test_capabilities_with_participant_slug_enables_review_decisions():
         participant_user_slug="buildbot",
     )
     assert p.capabilities().supports_review_decisions is True
+
+
+def test_bbs_build_dismissal_context_thread():
+    raw = [
+        {"id": 1, "text": "root [High]", "author": {"name": "bot"}, "createdDate": 100},
+        {
+            "id": 2,
+            "text": "reply",
+            "parentComment": {"id": 1},
+            "author": {"name": "dev"},
+            "createdDate": 200,
+        },
+    ]
+    ctx = BitbucketServerProvider._bbs_build_dismissal_context(raw, "2")
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:1"
+    assert len(ctx.entries) == 2
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_review_thread_dismissal_context_server(mock_client):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "application/json"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.json.return_value = {
+        "isLastPage": True,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 10,
+                    "text": "top",
+                    "state": "OPEN",
+                    "author": {"name": "a"},
+                    "createdDate": 1,
+                    "anchor": {"path": "f.java", "line": 1},
+                },
+            },
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 11,
+                    "text": "child",
+                    "state": "OPEN",
+                    "parentComment": {"id": 10},
+                    "author": {"name": "b"},
+                    "createdDate": 2,
+                    "anchor": {"path": "f.java", "line": 1},
+                },
+            },
+        ],
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_r
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:10"
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_post_review_thread_reply_bitbucket_server(mock_client):
+    mock_post = MagicMock()
+    mock_post.raise_for_status = MagicMock()
+    mock_post.content = b""
+    mock_client.return_value.__enter__.return_value.post.return_value = mock_post
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    p.post_review_thread_reply("PROJ", "repo", 3, "99", "Please address")
+    call = mock_client.return_value.__enter__.return_value.post.call_args
+    assert "/pull-requests/3/comments" in call[0][0]
+    assert call[1]["json"]["parent"]["id"] == 99
+    assert call[1]["json"]["text"] == "Please address"
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
