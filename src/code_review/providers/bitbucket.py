@@ -333,32 +333,45 @@ class BitbucketProvider(ProviderInterface):
             url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
         return out
 
+    def _bbcloud_fetch_pr_comments_page(
+        self, owner: str, repo: str, pr_number: int, url: str, visited: set[str]
+    ) -> tuple[list[dict], str | None] | None:
+        """Fetch one comments page. Returns None if the pagination loop should stop."""
+        if not self._bitbucket_enter_next_link_page(url, visited):
+            return None
+        try:
+            data = self._get(url)
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Cloud list comments failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        if not isinstance(data, dict):
+            return None
+        page: list[dict] = []
+        for c in data.get("values") or []:
+            if isinstance(c, dict):
+                page.append(c)
+        nxt = data.get("next")
+        next_url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
+        return page, next_url
+
     def _bbcloud_list_pr_comment_dicts(self, owner: str, repo: str, pr_number: int) -> list[dict]:
         """Paginate GET pullrequest comments; return raw dicts (for reply-dismissal threading)."""
         url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "comments")
         out: list[dict] = []
         visited: set[str] = set()
         while url:
-            if not self._bitbucket_enter_next_link_page(url, visited):
+            chunk = self._bbcloud_fetch_pr_comments_page(owner, repo, pr_number, url, visited)
+            if chunk is None:
                 break
-            try:
-                data = self._get(url)
-            except Exception as e:
-                logger.warning(
-                    "Bitbucket Cloud list comments failed owner=%s repo=%s pr=%s: %s",
-                    owner,
-                    repo,
-                    pr_number,
-                    e,
-                )
-                break
-            if not isinstance(data, dict):
-                break
-            for c in data.get("values") or []:
-                if isinstance(c, dict):
-                    out.append(c)
-            nxt = data.get("next")
-            url = nxt.strip() if isinstance(nxt, str) and nxt.strip() else None
+            page, next_url = chunk
+            out.extend(page)
+            url = next_url
         return out
 
     @staticmethod
@@ -393,12 +406,9 @@ class BitbucketProvider(ProviderInterface):
         return (cid, parent, body, login, created)
 
     @staticmethod
-    def _bbcloud_build_dismissal_context(
-        raw_comments: list[dict], triggered_comment_id: str
-    ) -> ReviewThreadDismissalContext | None:
-        want = (triggered_comment_id or "").strip()
-        if not want:
-            return None
+    def _bbcloud_index_dismissal_by_id(
+        raw_comments: list[dict],
+    ) -> dict[str, dict[str, str | None]]:
         by_id: dict[str, dict[str, str | None]] = {}
         for c in raw_comments:
             meta = BitbucketProvider._bbcloud_dismissal_meta(c)
@@ -411,6 +421,12 @@ class BitbucketProvider(ProviderInterface):
                 "login": login,
                 "created": created,
             }
+        return by_id
+
+    @staticmethod
+    def _bbcloud_thread_root_from_want(
+        by_id: dict[str, dict[str, str | None]], want: str
+    ) -> str | None:
         if want not in by_id:
             return None
         root = want
@@ -423,6 +439,12 @@ class BitbucketProvider(ProviderInterface):
                 break
             seen_up.add(root)
             root = par
+        return root
+
+    @staticmethod
+    def _bbcloud_thread_member_ids_sorted(
+        by_id: dict[str, dict[str, str | None]], root: str
+    ) -> list[str]:
         children: dict[str, list[str]] = {}
         for cid, info in by_id.items():
             par = info["parent"]
@@ -439,6 +461,12 @@ class BitbucketProvider(ProviderInterface):
             member_ids.append(n)
             stack.extend(children.get(n, []))
         member_ids.sort(key=lambda i: (by_id[i]["created"] or "", i))
+        return member_ids
+
+    @staticmethod
+    def _bbcloud_dismissal_entries_from_members(
+        by_id: dict[str, dict[str, str | None]], member_ids: list[str]
+    ) -> list[ReviewThreadDismissalEntry]:
         entries: list[ReviewThreadDismissalEntry] = []
         for cid in member_ids:
             inf = by_id[cid]
@@ -450,6 +478,21 @@ class BitbucketProvider(ProviderInterface):
                     created_at=str(inf["created"] or ""),
                 )
             )
+        return entries
+
+    @staticmethod
+    def _bbcloud_build_dismissal_context(
+        raw_comments: list[dict], triggered_comment_id: str
+    ) -> ReviewThreadDismissalContext | None:
+        want = (triggered_comment_id or "").strip()
+        if not want:
+            return None
+        by_id = BitbucketProvider._bbcloud_index_dismissal_by_id(raw_comments)
+        root = BitbucketProvider._bbcloud_thread_root_from_want(by_id, want)
+        if root is None:
+            return None
+        member_ids = BitbucketProvider._bbcloud_thread_member_ids_sorted(by_id, root)
+        entries = BitbucketProvider._bbcloud_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
         return ReviewThreadDismissalContext(

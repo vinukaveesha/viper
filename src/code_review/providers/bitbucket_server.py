@@ -453,6 +453,34 @@ class BitbucketServerProvider(ProviderInterface):
             return comments, None
         return comments, next_start
 
+    @staticmethod
+    def _bbs_merge_commented_activities_into(by_id: dict[str, dict], data: dict) -> None:
+        for act in data.get("values") or []:
+            if not isinstance(act, dict) or act.get("action") != "COMMENTED":
+                continue
+            c = act.get("comment")
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "").strip()
+            if not cid:
+                continue
+            by_id[cid] = c
+
+    @staticmethod
+    def _bbs_activities_next_start(data: dict, start: int) -> int | None:
+        if data.get("isLastPage", True):
+            return None
+        nxt = data.get("nextPageStart")
+        if nxt is None:
+            return None
+        try:
+            next_start = int(nxt)
+        except (TypeError, ValueError):
+            return None
+        if next_start == start:
+            return None
+        return next_start
+
     def _bbs_list_comment_dicts_from_activities(
         self, owner: str, repo: str, pr_number: int
     ) -> list[dict]:
@@ -474,28 +502,11 @@ class BitbucketServerProvider(ProviderInterface):
                 break
             if not isinstance(data, dict):
                 break
-            for act in data.get("values") or []:
-                if not isinstance(act, dict) or act.get("action") != "COMMENTED":
-                    continue
-                c = act.get("comment")
-                if not isinstance(c, dict):
-                    continue
-                cid = str(c.get("id") or "").strip()
-                if not cid:
-                    continue
-                by_id[cid] = c
-            if data.get("isLastPage", True):
-                break
-            nxt = data.get("nextPageStart")
+            self._bbs_merge_commented_activities_into(by_id, data)
+            nxt = BitbucketServerProvider._bbs_activities_next_start(data, start)
             if nxt is None:
                 break
-            try:
-                next_start = int(nxt)
-            except (TypeError, ValueError):
-                break
-            if next_start == start:
-                break
-            start = next_start
+            start = nxt
         return list(by_id.values())
 
     @staticmethod
@@ -525,12 +536,9 @@ class BitbucketServerProvider(ProviderInterface):
         return (cid, parent, body, login, ts)
 
     @staticmethod
-    def _bbs_build_dismissal_context(
-        raw_comments: list[dict], triggered_comment_id: str
-    ) -> ReviewThreadDismissalContext | None:
-        want = (triggered_comment_id or "").strip()
-        if not want:
-            return None
+    def _bbs_index_dismissal_by_id(
+        raw_comments: list[dict],
+    ) -> dict[str, dict[str, str | None | int]]:
         by_id: dict[str, dict[str, str | None | int]] = {}
         for c in raw_comments:
             meta = BitbucketServerProvider._bbs_dismissal_meta(c)
@@ -543,6 +551,12 @@ class BitbucketServerProvider(ProviderInterface):
                 "login": login,
                 "ts": ts,
             }
+        return by_id
+
+    @staticmethod
+    def _bbs_thread_root_from_want(
+        by_id: dict[str, dict[str, str | None | int]], want: str
+    ) -> str | None:
         if want not in by_id:
             return None
         root = want
@@ -553,6 +567,12 @@ class BitbucketServerProvider(ProviderInterface):
                 break
             seen_up.add(root)
             root = str(par)
+        return root
+
+    @staticmethod
+    def _bbs_thread_member_ids_sorted(
+        by_id: dict[str, dict[str, str | None | int]], root: str
+    ) -> list[str]:
         children: dict[str, list[str]] = {}
         for cid, info in by_id.items():
             par = info["parent"]
@@ -569,6 +589,12 @@ class BitbucketServerProvider(ProviderInterface):
             member_ids.append(n)
             stack.extend(children.get(n, []))
         member_ids.sort(key=lambda i: (int(by_id[i]["ts"]), i))
+        return member_ids
+
+    @staticmethod
+    def _bbs_dismissal_entries_from_members(
+        by_id: dict[str, dict[str, str | None | int]], member_ids: list[str]
+    ) -> list[ReviewThreadDismissalEntry]:
         entries: list[ReviewThreadDismissalEntry] = []
         for cid in member_ids:
             inf = by_id[cid]
@@ -580,6 +606,21 @@ class BitbucketServerProvider(ProviderInterface):
                     created_at=str(inf["ts"]),
                 )
             )
+        return entries
+
+    @staticmethod
+    def _bbs_build_dismissal_context(
+        raw_comments: list[dict], triggered_comment_id: str
+    ) -> ReviewThreadDismissalContext | None:
+        want = (triggered_comment_id or "").strip()
+        if not want:
+            return None
+        by_id = BitbucketServerProvider._bbs_index_dismissal_by_id(raw_comments)
+        root = BitbucketServerProvider._bbs_thread_root_from_want(by_id, want)
+        if root is None:
+            return None
+        member_ids = BitbucketServerProvider._bbs_thread_member_ids_sorted(by_id, root)
+        entries = BitbucketServerProvider._bbs_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
         return ReviewThreadDismissalContext(
