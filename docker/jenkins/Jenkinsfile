@@ -1,7 +1,10 @@
 // Single-SCM: set SCM_PROVIDER and SCM_URL in Manage Jenkins → Global properties → Environment variables.
-// Multi-SCM: use one job per SCM; same Script Path (this file). Set SCM_PROVIDER and SCM_URL on the
-//   folder that contains the job (folder → Configure → Environment variables). Do not use job
-//   parameter defaults—they get overwritten when the script is loaded from SCM.
+// Multi-SCM / Bitbucket folder: set SCM_PROVIDER, SCM_URL, optional LLM_* on the folder via Folder Properties
+//   (plugin). options { withFolderProperties() } exposes them as env (see docs/JENKINS-MULTIPLE-SCMS.md).
+//   Do not use job parameter defaults for SCM/LLM—Jenkins reapplies Jenkinsfile defaults when the script loads.
+//   Generic Webhook Trigger: do not map SCM_URL (or similar) from JSONPath if the value can be empty.
+//   Do not declare pipeline parameters named LLM_PROVIDER / LLM_MODEL / SCM_PROVIDER / SCM_URL — Jenkins
+//   injects parameters into env and would overwrite folder/global env; use *_OVERRIDE parameters instead.
 // Credentials: ID "SCM_TOKEN" always; ID "LLM_API_KEY" required for non-ollama providers.
 // Optional review decisions (global/folder/job env): SCM_REVIEW_DECISION_ENABLED, SCM_REVIEW_DECISION_HIGH_THRESHOLD,
 // SCM_REVIEW_DECISION_MEDIUM_THRESHOLD, SCM_BITBUCKET_SERVER_USER_SLUG (Bitbucket Server/DC only for submit).
@@ -21,16 +24,20 @@
 pipeline {
     agent any
 
+    options {
+        withFolderProperties()
+    }
+
     parameters {
         string(name: 'SCM_OWNER', description: 'Repo owner / project key')
         string(name: 'SCM_REPO', description: 'Repo name / slug')
         string(name: 'SCM_PR_NUM', description: 'PR number / id')
         string(name: 'SCM_HEAD_SHA', description: 'Head commit SHA')
         string(name: 'PR_ACTION', description: 'Webhook action or eventKey')
-        string(name: 'SCM_PROVIDER', defaultValue: '', description: 'SCM provider (optional; for multi-SCM set per-job default here)')
-        string(name: 'SCM_URL', defaultValue: '', description: 'SCM API URL (optional; for multi-SCM set per-job default here)')
-        string(name: 'LLM_PROVIDER', defaultValue: 'gemini', description: 'LLM provider')
-        string(name: 'LLM_MODEL', defaultValue: 'gemini-2.5-flash', description: 'LLM model')
+        string(name: 'SCM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_PROVIDER (set provider via folder/global env; do not use a param named SCM_PROVIDER — it shadows env)')
+        string(name: 'SCM_URL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_URL')
+        string(name: 'LLM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_PROVIDER (folder/global env; LLM_API_KEY credential unchanged)')
+        string(name: 'LLM_MODEL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_MODEL')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name')
         string(name: 'IMAGE_NAME', defaultValue: 'e4c5/code-review-agent:1.0.0', description: 'Container image name (e.g. user/name:tag); must match published image when using container agent. Pinning to a specific version (e.g. :1.2.3) is recommended over :latest.')
     }
@@ -39,9 +46,9 @@ pipeline {
         stage('Code Review') {
             steps {
                 script {
-                    // Per-job SCM (multi-SCM): if this job has parameter defaults set, use them
-                    if (params.SCM_PROVIDER?.trim()) env.SCM_PROVIDER = params.SCM_PROVIDER.trim()
-                    if (params.SCM_URL?.trim()) env.SCM_URL = params.SCM_URL.trim()
+                    // Optional one-off overrides (params must not reuse env names — Jenkins would shadow folder env)
+                    if (params.SCM_PROVIDER_OVERRIDE?.trim()) env.SCM_PROVIDER = params.SCM_PROVIDER_OVERRIDE.trim()
+                    if (params.SCM_URL_OVERRIDE?.trim()) env.SCM_URL = params.SCM_URL_OVERRIDE.trim()
 
                     def image = env.IMAGE_NAME?.trim() ?: params.IMAGE_NAME?.trim() ?: 'code-review-agent'
                     def projectName = env.COMPOSE_PROJECT_NAME ?: params.COMPOSE_PROJECT_NAME
@@ -51,8 +58,9 @@ pipeline {
                     def scmPrNum = params.SCM_PR_NUM ?: env.SCM_PR_NUM
                     def scmHeadSha = params.SCM_HEAD_SHA ?: env.SCM_HEAD_SHA
                     def prAction = params.PR_ACTION ?: env.PR_ACTION
-                    def llmProvider = params.LLM_PROVIDER ?: env.LLM_PROVIDER
-                    def llmModel = params.LLM_MODEL ?: env.LLM_MODEL
+                    def llmProvider = params.LLM_PROVIDER_OVERRIDE?.trim() ?: env.LLM_PROVIDER?.trim() ?: 'gemini'
+                    def llmModel = params.LLM_MODEL_OVERRIDE?.trim() ?: env.LLM_MODEL?.trim() ?: 'gemini-2.5-flash'
+                    echo "Resolved LLM_PROVIDER=${llmProvider} LLM_MODEL=${llmModel} (override params or folder/global env LLM_*)"
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
                     // Optional Bitbucket Server/DC: username slug of SCM_TOKEN user (review decisions); from global/folder/job env
                     def bbServerUserSlug = env.SCM_BITBUCKET_SERVER_USER_SLUG?.trim() ?: ''
