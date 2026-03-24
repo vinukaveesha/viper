@@ -82,6 +82,8 @@ docker tag e4c5/code-review-agent code-review-agent
 
 The second command tags the image as `code-review-agent` so the existing `docker-compose.yml` and Jenkins examples continue to work without changes.
 
+If you prefer to run a pinned remote image instead of the local `code-review-agent` tag, set the Jenkins job’s `IMAGE_NAME` parameter explicitly.
+
 **Option B – Build locally:**
 
 From the repository root:

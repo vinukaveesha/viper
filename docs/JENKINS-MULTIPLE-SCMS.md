@@ -31,8 +31,8 @@ The built-in **Folders** plugin often does not let you edit folder properties. I
 
 | Plugin | Use case | How to set SCM_PROVIDER / SCM_URL |
 |--------|----------|-----------------------------------|
-| **[Environment Injector](https://plugins.jenkins.io/envinject/)** (recommended) | Per-job; no Jenkinsfile change | **Manage Jenkins → Plugins** → install **Environment Injector**. In each job → **Configure** → **Build Environment** → enable **Inject environment variables** → in **Properties Content** add one line per variable, e.g. `SCM_PROVIDER=gitea` and `SCM_URL=https://gitea.example.com`. Save. The pipeline reads these from `env`. |
-| **[Folder Properties](https://plugins.jenkins.io/folder-properties/)** | One place per folder | **Manage Jenkins → Plugins** → install **Folder Properties**. Open the folder → **Configure** → **Folder Properties** (editable) → **Add property** → add `SCM_PROVIDER` and `SCM_URL`. To use them in the pipeline you must add `options { withFolderProperties() }` to the Jenkinsfile (e.g. keep a local copy of the Jenkinsfile with that line in the `pipeline { }` block). |
+| **[Environment Injector](https://plugins.jenkins.io/envinject/)** (recommended) | Per-job; no Jenkinsfile change | **Manage Jenkins → Plugins** → install **Environment Injector**. This adds a **Build Environment** section to the job config. In each job → **Configure** → **Build Environment** → enable **Inject environment variables** → in **Properties Content** add one line per variable, e.g. `SCM_PROVIDER=gitea` and `SCM_URL=https://gitea.example.com`. Save. The pipeline reads these from `env`. |
+| **[Folder Properties](https://plugins.jenkins.io/folder-properties/)** | One place per folder | **Manage Jenkins → Plugins** → install **Folder Properties**. Open the folder → **Configure** → **Folder Properties** (editable) → **Add property** → add `SCM_PROVIDER` and `SCM_URL`. The bundled `docker/jenkins/Jenkinsfile` already includes `options { withFolderProperties() }`, so you do **not** need a local Jenkinsfile copy. |
 
 ---
 
@@ -56,7 +56,7 @@ Each PR triggers only the pipeline for its SCM; credentials and SCM URL are isol
 
 ## 3. Bitbucket Data Center
 
-Same pattern: one folder, one job, **Script Path** `docker/jenkins/Jenkinsfile`. Set **folder** environment variables `SCM_PROVIDER` = `bitbucket`, `SCM_URL` = `https://bitbucket.example.com/rest/api/1.0`. Use the Bitbucket webhook JSONPath and filter from [Bitbucket Data Center](BITBUCKET-DATACENTER.md).
+Same pattern: one folder, one job, **Script Path** `docker/jenkins/Jenkinsfile`. Set **folder** environment variables `SCM_PROVIDER` = `bitbucket_server`, `SCM_URL` = `https://bitbucket.example.com/rest/api/1.0`. Use the Bitbucket webhook JSONPath and filter from [Bitbucket Data Center](BITBUCKET-DATACENTER.md).
 
 ---
 

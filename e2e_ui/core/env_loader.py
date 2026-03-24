@@ -1,8 +1,8 @@
 """Load Jenkins-related secrets from .env.
 
 Variable names in .env match Jenkins credential IDs so the same .env can drive
-both local runs and Playwright scripts that configure Jenkins (e.g. SCM_TOKEN,
-GOOGLE_API_KEY). Optional: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
+both local runs and Playwright scripts that configure Jenkins (for example
+SCM_TOKEN and LLM_API_KEY).
 """
 
 import os
@@ -11,9 +11,14 @@ from pathlib import Path
 # Credential IDs used in Jenkins; values are read from env (after load_dotenv).
 JENKINS_CREDENTIAL_IDS = (
     "SCM_TOKEN",
+    "LLM_API_KEY",
+)
+
+LEGACY_LLM_ENV_KEYS = (
     "GOOGLE_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "OPENROUTER_API_KEY",
 )
 
 
@@ -53,6 +58,12 @@ class EnvLoader:
             val = os.environ.get(cid, "").strip()
             if val:
                 out[cid] = val
+        if "LLM_API_KEY" not in out:
+            for env_key in LEGACY_LLM_ENV_KEYS:
+                legacy_val = os.environ.get(env_key, "").strip()
+                if legacy_val:
+                    out["LLM_API_KEY"] = legacy_val
+                    break
         return out
 
     def get(self, credential_id: str, default: str = "") -> str:

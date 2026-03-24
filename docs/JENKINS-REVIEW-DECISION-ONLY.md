@@ -55,6 +55,7 @@ Examples for `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS`:
 
 - If `PR_ACTION` is the GitHub event name: `pull_request_review_comment` for review-comment replies and deletes, or `issue_comment` for PR conversation comments
 - If `PR_ACTION` is the GitHub action field instead: `created,deleted`
+- GitLab note hooks when `PR_ACTION=$.object_attributes.action`: `create,update`
 - Bitbucket Server / DC (`PR_ACTION=$.eventKey`): `pr:comment:added,pr:comment:edited,pr:comment:deleted`
 - Bitbucket Server / DC (only new comments/replies): `pr:comment:added`
 - Other SCMs: use the exact values your webhook mapping sends into `PR_ACTION`
@@ -81,8 +82,10 @@ In **Generic Webhook Trigger** for the copied comment-events job, configure:
 
 Concrete examples:
 
-- Gitea/GitHub/GitLab when `PR_ACTION=$.action` and you only want comment creates/deletes:
+- Gitea/GitHub when `PR_ACTION=$.action` and you only want comment creates/deletes:
   - Regex: `^(created|deleted)$`
+- GitLab note hooks when `PR_ACTION=$.object_attributes.action`:
+  - Regex: `^(create|update)$`
 - GitHub when `PR_ACTION` is event name (for example `issue_comment` or `pull_request_review_comment`):
   - Regex: `^(issue_comment|pull_request_review_comment)$`
 - Bitbucket Server / DC when `PR_ACTION=$.eventKey`:

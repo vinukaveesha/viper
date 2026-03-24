@@ -39,7 +39,7 @@ def main() -> None:
             folder_name="code-review-gitea",
             post_content_params=GITEA_WEBHOOK_PARAMS,
             filter_text="$PR_ACTION",
-            filter_regex="^(opened|synchronize)$",
+            filter_regex="^(opened|reopened|synchronize|synchronized)$",
         )
 
         # Folder + job for GitHub
@@ -58,7 +58,7 @@ def main() -> None:
             folder_name="code-review-github",
             post_content_params=GITEA_WEBHOOK_PARAMS,
             filter_text="$PR_ACTION",
-            filter_regex="^(opened|synchronize)$",
+            filter_regex="^(opened|reopened|synchronize|synchronized)$",
         )
 
         ui.open_job("code-review", folder_name="code-review-gitea")

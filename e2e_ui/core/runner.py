@@ -87,7 +87,7 @@ def get_credentials() -> dict[str, str]:
     creds = env.get_credentials()
     if not creds:
         print(
-            "No credentials in .env (e.g. SCM_TOKEN, GOOGLE_API_KEY). Add them to run this flow.",
+            "No credentials in .env (for example SCM_TOKEN and LLM_API_KEY). Add them to run this flow.",
             file=sys.stderr,
         )
         sys.exit(1)

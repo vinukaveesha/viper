@@ -39,7 +39,7 @@ pipeline {
         string(name: 'LLM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_PROVIDER (folder/global env; LLM_API_KEY credential unchanged)')
         string(name: 'LLM_MODEL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_MODEL')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name')
-        string(name: 'IMAGE_NAME', defaultValue: 'e4c5/code-review-agent:1.0.0', description: 'Container image name (e.g. user/name:tag); must match published image when using container agent. Pinning to a specific version (e.g. :1.2.3) is recommended over :latest.')
+        string(name: 'IMAGE_NAME', defaultValue: 'code-review-agent', description: 'Container image name (e.g. user/name:tag). Defaults to the local code-review-agent tag used throughout the docs; set a pinned remote image explicitly if you prefer.')
     }
 
     stages {
@@ -79,7 +79,9 @@ pipeline {
                     // Bitbucket Data Center uses pr:* for all PR eventKeys; allow any pr:* when Bitbucket
                     def allowedActions = isBitbucket
                         ? []  // any pr:* allowed; checked below with startsWith('pr:')
-                        : ['opened', 'reopened', 'synchronize', 'synchronized']
+                        : (scmProvider == 'gitlab'
+                            ? ['open', 'reopen', 'update']
+                            : ['opened', 'reopened', 'synchronize', 'synchronized'])
                     def credId = 'SCM_TOKEN'
                     def unresolvedMarker = isBitbucket ? '$.pullRequest' : '$.pull_request'
 
@@ -162,6 +164,17 @@ pipeline {
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD:-}" ] && export SCM_REVIEW_DECISION_MEDIUM_THRESHOLD="$REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD"
                                     export LLM_PROVIDER="$REVIEW_LLM_PROVIDER" LLM_MODEL="$REVIEW_LLM_MODEL" LLM_API_KEY="${LLM_API_KEY:-}"
                                     export CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL"
+                                    export CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}"
+                                    export CODE_REVIEW_REPLY_DISMISSAL_ENABLED="${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}"
+                                    export CODE_REVIEW_EVENT_NAME="${CODE_REVIEW_EVENT_NAME:-}"
+                                    export CODE_REVIEW_EVENT_ACTION="${CODE_REVIEW_EVENT_ACTION:-}"
+                                    export CODE_REVIEW_EVENT_KIND="${CODE_REVIEW_EVENT_KIND:-}"
+                                    export CODE_REVIEW_EVENT_COMMENT_ID="${CODE_REVIEW_EVENT_COMMENT_ID:-}"
+                                    export CODE_REVIEW_EVENT_THREAD_ID="${CODE_REVIEW_EVENT_THREAD_ID:-}"
+                                    export CODE_REVIEW_EVENT_ACTOR_LOGIN="${CODE_REVIEW_EVENT_ACTOR_LOGIN:-}"
+                                    export CODE_REVIEW_EVENT_ACTOR_ID="${CODE_REVIEW_EVENT_ACTOR_ID:-}"
+                                    export CODE_REVIEW_EVENT_HEAD_SHA="${CODE_REVIEW_EVENT_HEAD_SHA:-}"
+                                    export CODE_REVIEW_EVENT_SOURCE="${CODE_REVIEW_EVENT_SOURCE:-}"
                                     code-review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"$RD_EXTRA --print-findings
                                 else
                                     runtime="$CONTAINER_RUNTIME"

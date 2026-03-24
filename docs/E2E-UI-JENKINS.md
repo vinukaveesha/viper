@@ -44,7 +44,7 @@ Credentials used by the scripts (and written into Jenkins) come from the same .e
 
 | Variable | Purpose |
 |----------|---------|
-| `SCM_PROVIDER` | SCM identifier written to Jenkins global env (e.g. `gitea`, `github`, `gitlab`, `bitbucket`). Must match viper. |
+| `SCM_PROVIDER` | SCM identifier written to Jenkins global env (e.g. `gitea`, `github`, `gitlab`, `bitbucket_server`). Must match viper. |
 | `SCM_URL` | SCM base URL written to Jenkins global env. **Use HTTPS in production**; clear-text HTTP is acceptable only for local/dev (e.g. Docker `http://gitea:3000`). |
 
 ### Optional (sensible defaults)
@@ -75,7 +75,7 @@ python -m e2e_ui.run_single_scm
 
 ### 2. Multiple SCMs (one folder + job per SCM)
 
-**What it does:** Configures Jenkins with two folders and two Pipeline jobs, each using **Script Path** `docker/jenkins/Jenkinsfile`, folder-scoped credentials from .env, and webhook trigger. For **different** SCMs (e.g. Gitea vs GitHub), set each job’s **parameter defaults** for `SCM_PROVIDER` and `SCM_URL` in job → Configure → Parameters—see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md). The script does not set those defaults; it sets up the folder/job structure and credentials.
+**What it does:** Configures Jenkins with two folders and two Pipeline jobs, each using **Script Path** `docker/jenkins/Jenkinsfile`, folder-scoped credentials from .env, and webhook trigger. For different SCMs, set **folder-level** `SCM_PROVIDER` and `SCM_URL` values via Folder Properties or equivalent, not job parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md). The script does not set those folder properties; it sets up the folder/job structure and credentials.
 
 **Run:**
 
