@@ -40,7 +40,7 @@ Important:
 
 On the copied job, set:
 
-- `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS` to the comment or thread actions that should run `--review-decision-only`
+- `SCM_REVIEW_DECISION_ENABLED=true` so the gate decision is submitted
 
 Optional:
 
@@ -51,16 +51,9 @@ Optional:
 
 See the [Configuration reference](CONFIGURATION-REFERENCE.md) for definitions and provider-specific notes.
 
-Examples for `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS`:
+No additional routing configuration is needed: the Jenkinsfile automatically detects comment and thread events from `PR_ACTION` and routes them to `--review-decision-only`.
 
-- If `PR_ACTION` is the GitHub event name: `pull_request_review_comment` for review-comment replies and deletes, or `issue_comment` for PR conversation comments
-- If `PR_ACTION` is the GitHub action field instead: `created,deleted`
-- GitLab note hooks when `PR_ACTION=$.object_attributes.action`: `create,update`
-- Bitbucket Server / DC (`PR_ACTION=$.eventKey`): `pr:comment:added,pr:comment:edited,pr:comment:deleted`
-- Bitbucket Server / DC (only new comments/replies): `pr:comment:added`
-- Other SCMs: use the exact values your webhook mapping sends into `PR_ACTION`
-
-For Bitbucket Server / DC, keep full-review PR actions in your webhook filter (for example `^pr:(opened|modified|from_ref_updated)$`) and route comment activity through `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS`.
+For Bitbucket Server / DC, use a GWT webhook filter on the comment-events job so only `pr:comment:*` events trigger it (for example `^pr:comment:(added|deleted)$`). The full-review job handles `pr:opened`, `pr:modified`, and `pr:from_ref_updated`.
 
 ### 1.3 Configure the copied job webhook
 
@@ -96,24 +89,16 @@ For the full-review job, keep the PR lifecycle filter instead (for Bitbucket Ser
 
 ### 1.4 Map review-decision event context
 
-Add these Generic Webhook Trigger parameters when you want structured logs, reply-dismissal, or event-specific behavior:
+Add these Generic Webhook Trigger **Post content parameters** to the comment-events job. `CODE_REVIEW_EVENT_COMMENT_ID` is required for reply-dismissal; the others are used by the bot-reply guard.
 
-| Variable | What to map |
-|----------|-------------|
-| `CODE_REVIEW_EVENT_NAME` | Raw SCM event name |
-| `CODE_REVIEW_EVENT_ACTION` | Event action such as `created`, `deleted`, or provider equivalent |
-| `CODE_REVIEW_EVENT_KIND` | `reply_added`, `comment_deleted`, `thread_resolved`, `thread_outdated`, `scheduled`, or `other` |
-| `CODE_REVIEW_EVENT_COMMENT_ID` | PR review comment id |
-| `CODE_REVIEW_EVENT_THREAD_ID` | Thread or discussion id |
-| `CODE_REVIEW_EVENT_ACTOR_LOGIN` | Username or login |
-| `CODE_REVIEW_EVENT_ACTOR_ID` | Numeric or string actor id |
-| `CODE_REVIEW_EVENT_HEAD_SHA` | Head SHA from the event payload when available |
-| `CODE_REVIEW_EVENT_SOURCE` | Usually `webhook_comment` or `webhook_thread` |
+| Variable | GitHub (`issue_comment` / `pull_request_review_comment`) | GitLab (note hook) | Bitbucket Cloud (`pullrequest:comment_created`) | Bitbucket Server / DC (`pr:comment:added`) |
+|----------|----------------------------------------------------------|--------------------|-------------------------------------------------|--------------------------------------------|
+| `CODE_REVIEW_EVENT_COMMENT_ID` | `$.comment.id` | `$.object_attributes.id` | `$.comment.id` | `$.comment.id` |
+| `CODE_REVIEW_EVENT_ACTOR_LOGIN` | `$.sender.login` | `$.user.username` | `$.actor.nickname` | `$.actor.slug` |
+| `CODE_REVIEW_EVENT_ACTOR_ID` | `$.sender.id` | `$.user.id` | `$.actor.uuid` | `$.actor.id` |
 
-Important:
 
-- For `reply_added` with reply-dismissal enabled, `CODE_REVIEW_EVENT_COMMENT_ID` must be the SCM’s PR review comment id, not some other object id such as a Bitbucket task id.
-- For delete, resolve, or outdated-thread events, set `CODE_REVIEW_EVENT_KIND` accordingly. Those paths recompute from current SCM state and do not run the reply-dismissal LLM.
+`CODE_REVIEW_EVENT_COMMENT_ID` must be the SCM's PR review comment id, not some other object id such as a Bitbucket task id.
 
 See [Configuration reference](CONFIGURATION-REFERENCE.md#51-review-decision-webhook-context-code_review_event_) for the variable definitions.
 
@@ -146,18 +131,19 @@ If you do not want a second job, the existing Jenkins job can handle both full r
 
 1. Keep the current Jenkinsfile: `docker/jenkins/Jenkinsfile`.
 2. Set `SCM_REVIEW_DECISION_ENABLED=true`.
-3. Set `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS` to the comment or thread actions that should run review-decision-only.
-4. Add the optional `CODE_REVIEW_EVENT_*` webhook mappings if you want structured logs or reply-dismissal.
-5. Optionally enable `CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true`.
+3. Add the optional `CODE_REVIEW_EVENT_*` webhook mappings if you want structured logs or reply-dismissal.
+4. Optionally enable `CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true`.
+
+No additional routing configuration is needed. The Jenkinsfile automatically routes comment/thread events (detected from `PR_ACTION`) to `--review-decision-only` and PR lifecycle events to a full review.
 
 ### 2.2 Expand the webhook mapping
 
 Update the existing Generic Webhook Trigger so it can accept both:
 
 - normal PR actions that should run the full review
-- comment or thread actions listed in `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS`
+- comment or thread actions that should run review-decision-only
 
-The Jenkinsfile decides which mode to run based on the `PR_ACTION` value.
+The Jenkinsfile automatically decides which mode to run based on `PR_ACTION`; no extra configuration is needed to indicate which actions are comment events.
 
 ### 2.3 Know the tradeoff
 

@@ -9,14 +9,14 @@
 // Optional review decisions (global/folder/job env): SCM_REVIEW_DECISION_ENABLED, SCM_REVIEW_DECISION_HIGH_THRESHOLD,
 // SCM_REVIEW_DECISION_MEDIUM_THRESHOLD, SCM_BITBUCKET_SERVER_USER_SLUG (Bitbucket Server/DC only for submit).
 // Optional: CODE_REVIEW_LOG_LEVEL on the agent (e.g. DEBUG); default INFO if unset.
-// Comment / thread webhooks → review-decision-only (no LLM): set job or folder env
-//   CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS to a comma-separated list of PR_ACTION values that your
-//   Generic Webhook Trigger maps from the payload (e.g. GitHub: issue_comment,pull_request_review_comment).
-//   When PR_ACTION matches, this pipeline runs `code-review --review-decision-only`; SCM_HEAD_SHA may be
-//   empty (resolved via API). Set SCM_REVIEW_DECISION_ENABLED on the job so submission runs.
-//   Optional: map payload fields into CODE_REVIEW_EVENT_* for audit logs and reply-dismissal context
+// Comment / thread webhooks → review-decision-only (no LLM): no extra config needed.
+//   The pipeline auto-detects comment/thread events from PR_ACTION and routes them to
+//   `code-review --review-decision-only`. PR lifecycle events (opened, synchronize, pr:opened, etc.)
+//   run a full review. See docs/JENKINS-REVIEW-DECISION-ONLY.md §1.4 for the full derivation table.
+//   Set SCM_REVIEW_DECISION_ENABLED on the job so the gate decision is submitted.
+//   Optional: map payload fields into CODE_REVIEW_EVENT_* for reply-dismissal context
 //   (see docs/CONFIGURATION-REFERENCE.md).
-//   Optional: CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true on supported providers for reply_added events
+//   Optional: CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true on supported providers for reply events
 //   (see docs/CONFIGURATION-REFERENCE.md for provider coverage).
 //
 // Self-contained; no load. Pipeline script from SCM (Script Path: docker/jenkins/Jenkinsfile) or paste inline.
@@ -37,7 +37,6 @@ pipeline {
         string(name: 'SCM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_PROVIDER (set provider via folder/global env; do not use a param named SCM_PROVIDER — it shadows env)')
         string(name: 'SCM_URL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_URL')
         string(name: 'LLM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_PROVIDER (folder/global env; LLM_API_KEY credential unchanged)')
-        string(name: 'LLM_MODEL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_MODEL')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name')
         string(name: 'IMAGE_NAME', defaultValue: 'code-review-agent', description: 'Container image name (e.g. user/name:tag). Defaults to the local code-review-agent tag used throughout the docs; set a pinned remote image explicitly if you prefer.')
     }
@@ -59,7 +58,7 @@ pipeline {
                     def scmHeadSha = params.SCM_HEAD_SHA ?: env.SCM_HEAD_SHA
                     def prAction = params.PR_ACTION ?: env.PR_ACTION
                     def llmProvider = params.LLM_PROVIDER_OVERRIDE?.trim() ?: env.LLM_PROVIDER?.trim() ?: 'gemini'
-                    def llmModel = params.LLM_MODEL_OVERRIDE?.trim() ?: env.LLM_MODEL?.trim() ?: 'gemini-2.5-flash'
+                    def llmModel = env.LLM_MODEL?.trim() ?: 'gemini-2.5-flash'
                     echo "Resolved LLM_PROVIDER=${llmProvider} LLM_MODEL=${llmModel} (override params or folder/global env LLM_*)"
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
                     // Optional Bitbucket Server/DC: username slug of SCM_TOKEN user (review decisions); from global/folder/job env
@@ -76,26 +75,47 @@ pipeline {
                     def scmUrl = isBitbucket
                         ? (env.SCM_URL ?: env.SCM_URL_BITBUCKET ?: '')
                         : (env.SCM_URL ?: 'http://gitea:3000')
-                    // Bitbucket Data Center uses pr:* for all PR eventKeys; allow any pr:* when Bitbucket
+                    // Full-review allowed actions per provider. Comment/thread events are auto-detected below.
                     def allowedActions = isBitbucket
-                        ? []  // any pr:* allowed; checked below with startsWith('pr:')
+                        ? ['pr:opened', 'pr:modified', 'pr:from_ref_updated']
                         : (scmProvider == 'gitlab'
                             ? ['open', 'reopen', 'update']
                             : ['opened', 'reopened', 'synchronize', 'synchronized'])
                     def credId = 'SCM_TOKEN'
                     def unresolvedMarker = isBitbucket ? '$.pullRequest' : '$.pull_request'
 
-                    def decisionOnlyCsv = env.CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS?.trim() ?: ''
-                    def decisionOnlyActions = decisionOnlyCsv
-                        ? decisionOnlyCsv.split(',').collect { it.trim() }.findAll { it }
-                        : []
-                    def runDecisionOnly = prAction ? decisionOnlyActions.contains(prAction) : false
+                    // Derive CODE_REVIEW_EVENT_KIND from PR_ACTION to classify this event.
+                    // Explicit GWT mappings (CODE_REVIEW_EVENT_KIND in env) always take precedence.
+                    def effectiveEventKind = env.CODE_REVIEW_EVENT_KIND?.trim() ?: ''
+                    if (!effectiveEventKind && prAction) {
+                        def pa = prAction.toLowerCase()
+                        if (pa.endsWith(':deleted') || pa == 'deleted') {
+                            effectiveEventKind = 'comment_deleted'
+                        } else if (pa.endsWith(':resolved') || pa == 'resolved') {
+                            effectiveEventKind = 'thread_resolved'
+                        } else if (pa.endsWith(':outdated') || pa == 'outdated') {
+                            effectiveEventKind = 'thread_outdated'
+                        } else if (pa in ['pr:comment:added', 'created', 'create',
+                                          'issue_comment', 'pull_request_review_comment']) {
+                            effectiveEventKind = 'reply_added'
+                        } else if (pa.contains('comment') || pa.contains('note')) {
+                            effectiveEventKind = 'other'  // unclassified comment/note activity
+                        }
+                        // PR lifecycle events leave effectiveEventKind empty → full review
+                    }
+
+                    // Non-empty event kind = comment/thread event → decision-only.
+                    // Empty event kind = PR lifecycle event → full review (checked against allowedActions).
+                    def runDecisionOnly = effectiveEventKind as boolean
+                    if (runDecisionOnly) {
+                        echo "Comment/thread event detected: CODE_REVIEW_EVENT_KIND=${effectiveEventKind} → --review-decision-only"
+                    }
 
                     if (prAction && !runDecisionOnly) {
-                        def allowed = isBitbucket ? prAction.startsWith('pr:') : allowedActions.contains(prAction)
+                        def allowed = allowedActions.contains(prAction)
                         if (!allowed) {
                             currentBuild.description = "Skipped PR action: ${prAction}"
-                            echo "Skipping PR action '${prAction}'. Allowed: ${isBitbucket ? 'any pr:* (Bitbucket)' : allowedActions.join(', ')}."
+                            echo "Skipping PR action '${prAction}'. Allowed full-review actions: ${allowedActions.join(', ')}."
                             return
                         }
                     }
@@ -166,14 +186,10 @@ pipeline {
                                     export CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL"
                                     export CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}"
                                     export CODE_REVIEW_REPLY_DISMISSAL_ENABLED="${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}"
-                                    export CODE_REVIEW_EVENT_NAME="${CODE_REVIEW_EVENT_NAME:-}"
-                                    export CODE_REVIEW_EVENT_ACTION="${CODE_REVIEW_EVENT_ACTION:-}"
-                                    export CODE_REVIEW_EVENT_KIND="${CODE_REVIEW_EVENT_KIND:-}"
                                     export CODE_REVIEW_EVENT_COMMENT_ID="${CODE_REVIEW_EVENT_COMMENT_ID:-}"
                                     export CODE_REVIEW_EVENT_THREAD_ID="${CODE_REVIEW_EVENT_THREAD_ID:-}"
                                     export CODE_REVIEW_EVENT_ACTOR_LOGIN="${CODE_REVIEW_EVENT_ACTOR_LOGIN:-}"
                                     export CODE_REVIEW_EVENT_ACTOR_ID="${CODE_REVIEW_EVENT_ACTOR_ID:-}"
-                                    export CODE_REVIEW_EVENT_HEAD_SHA="${CODE_REVIEW_EVENT_HEAD_SHA:-}"
                                     export CODE_REVIEW_EVENT_SOURCE="${CODE_REVIEW_EVENT_SOURCE:-}"
                                     code-review --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"$RD_EXTRA --print-findings
                                 else
@@ -203,14 +219,10 @@ pipeline {
                                         -e CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL" \
                                         -e CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}" \
                                         -e CODE_REVIEW_REPLY_DISMISSAL_ENABLED="${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}" \
-                                        -e CODE_REVIEW_EVENT_NAME="${CODE_REVIEW_EVENT_NAME:-}" \
-                                        -e CODE_REVIEW_EVENT_ACTION="${CODE_REVIEW_EVENT_ACTION:-}" \
-                                        -e CODE_REVIEW_EVENT_KIND="${CODE_REVIEW_EVENT_KIND:-}" \
                                         -e CODE_REVIEW_EVENT_COMMENT_ID="${CODE_REVIEW_EVENT_COMMENT_ID:-}" \
                                         -e CODE_REVIEW_EVENT_THREAD_ID="${CODE_REVIEW_EVENT_THREAD_ID:-}" \
                                         -e CODE_REVIEW_EVENT_ACTOR_LOGIN="${CODE_REVIEW_EVENT_ACTOR_LOGIN:-}" \
                                         -e CODE_REVIEW_EVENT_ACTOR_ID="${CODE_REVIEW_EVENT_ACTOR_ID:-}" \
-                                        -e CODE_REVIEW_EVENT_HEAD_SHA="${CODE_REVIEW_EVENT_HEAD_SHA:-}" \
                                         -e CODE_REVIEW_EVENT_SOURCE="${CODE_REVIEW_EVENT_SOURCE:-}" \
                                         $RD_ENV \
                                         "$REVIEW_IMAGE" --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"$RD_EXTRA --print-findings \

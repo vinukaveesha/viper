@@ -104,34 +104,29 @@ Loaded via `LLMConfig` (`env_prefix="LLM_"`).
 | `CODE_REVIEW_LOG_LEVEL` | `WARNING` | `DEBUG`, `INFO`, `WARNING`, `ERROR` (case-insensitive). |
 | `CODE_REVIEW_INCLUDE_COMMIT_MESSAGES_IN_PROMPT` | `true` | Include a PR commit-message block in the review prompt. |
 | `CODE_REVIEW_REVIEW_DECISION_ONLY` | `false` | When `true` / `1`, skip the LLM and inline posting; only recompute the quality gate and submit a PR review decision (requires `SCM_REVIEW_DECISION_ENABLED` for submission). Same effect as CLI `--review-decision-only`. |
-| `CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING` | `false` | **Review-decision-only:** if non-empty `CODE_REVIEW_EVENT_*` is present and `CODE_REVIEW_EVENT_KIND` is `reply_added`, skip the run when the SCM provider reports the token user is **not** in a blocking review state (`NOT_BLOCKING`). Empty event context or other event kinds always recompute. Providers without `supports_bot_blocking_state_query` never skip on this path. |
-| `CODE_REVIEW_REPLY_DISMISSAL_ENABLED` | `false` | **Review-decision-only:** when `CODE_REVIEW_EVENT_KIND` is `reply_added` and `CODE_REVIEW_EVENT_COMMENT_ID` is set, run the reply-dismissal LLM on the review thread (GitHub, GitLab, Bitbucket Cloud, and Bitbucket Server / DC when `supports_review_thread_dismissal_context`). If the model returns `agreed`, that thread is excluded from quality-gate counts for this run. If `disagreed`, the runner posts a thread reply when the provider supports `supports_review_thread_reply` (unless `--dry-run`). **Gitea** does not implement thread context yet (`skipped_no_capability`). |
+| `CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING` | `false` | **Review-decision-only:** if `CODE_REVIEW_EVENT_COMMENT_ID` is set, skip the run when the SCM provider reports the token user is **not** in a blocking review state (`NOT_BLOCKING`). Empty event context always recomputes. Providers without `supports_bot_blocking_state_query` never skip on this path. |
+| `CODE_REVIEW_REPLY_DISMISSAL_ENABLED` | `false` | **Review-decision-only:** when `CODE_REVIEW_EVENT_COMMENT_ID` is set, run the reply-dismissal LLM on the review thread (GitHub, GitLab, Bitbucket Cloud, and Bitbucket Server / DC when `supports_review_thread_dismissal_context`). If the model returns `agreed`, that thread is excluded from quality-gate counts for this run. If `disagreed`, the runner posts a thread reply when the provider supports `supports_review_thread_reply` (unless `--dry-run`). **Gitea** does not implement thread context yet (`skipped_no_capability`). |
 | `CODE_REVIEW_PRINT_RAW_RESPONSE` | *(unset)* | `1` / `true` / `TRUE` to log the raw LLM final response (debug). |
 | `CODE_REVIEW_SIGNING_KEY` | *(unset)* | If set, HMAC-signs fingerprint markers in posted comments (see §8). |
 
 ### 5.1 Review-decision webhook context (`CODE_REVIEW_EVENT_*`)
 
-Optional. When any of these is non-empty, the runner builds a `ReviewDecisionEventContext` (see `src/code_review/schemas/review_decision_event.py`) for **review-decision-only** runs: structured logging and optional `head_sha` hint (overrides `SCM_HEAD_SHA` / `--head-sha` when set). Map from your webhook payload in CI (Generic Webhook Trigger, GitHub Actions `env`, etc.).
-
-For **comment deleted**, **thread resolved**, or **thread outdated** webhooks, set `CODE_REVIEW_EVENT_KIND` accordingly and run review-decision-only: the gate is recomputed from current SCM state **without** the reply-dismissal LLM. Use `reply_added` when a human replied on a thread and you may enable `CODE_REVIEW_REPLY_DISMISSAL_ENABLED`.
+Optional. When any of these is non-empty, the runner builds a `ReviewDecisionEventContext` (see `src/code_review/schemas/review_decision_event.py`) for **review-decision-only** runs: structured logging and bot-reply guard. Map from your webhook payload in CI (Generic Webhook Trigger, GitHub Actions `env`, etc.).
 
 | Variable | Description |
 |----------|-------------|
-| `CODE_REVIEW_EVENT_NAME` | SCM event name (e.g. GitHub `issue_comment`). |
-| `CODE_REVIEW_EVENT_ACTION` | Sub-action: `created`, `edited`, `deleted`, … |
-| `CODE_REVIEW_EVENT_KIND` | `reply_added` \| `comment_deleted` \| `thread_outdated` \| `thread_resolved` \| `scheduled` \| `other` (invalid values → `other`). |
 | `CODE_REVIEW_EVENT_COMMENT_ID` | Comment id as string. |
-| `CODE_REVIEW_EVENT_THREAD_ID` | Thread / discussion id. |
 | `CODE_REVIEW_EVENT_ACTOR_LOGIN` | Actor username / login. |
 | `CODE_REVIEW_EVENT_ACTOR_ID` | Actor id as string. |
-| `CODE_REVIEW_EVENT_HEAD_SHA` | PR head from payload (optional; used before API lookup). |
-| `CODE_REVIEW_EVENT_SOURCE` | `full_review` \| `webhook_comment` \| `webhook_thread` \| `scheduled` (invalid → `full_review`). |
 
 ### 5.2 Jenkins bundled pipeline (`docker/jenkins/Jenkinsfile`)
 
-| Variable | Description |
-|----------|-------------|
-| `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS` | Comma-separated list of `PR_ACTION` values that should run **`code-review --review-decision-only`** instead of a full review (e.g. `issue_comment,pull_request_review_comment`). When matched, `SCM_HEAD_SHA` may be omitted (resolved via SCM API). Enable `SCM_REVIEW_DECISION_ENABLED` on the job so the decision is submitted. |
+The bundled Jenkinsfile automatically routes events based on `PR_ACTION`:
+
+- **Comment/thread events** (`PR_ACTION` values like `pr:comment:added`, `issue_comment`, `pull_request_review_comment`, etc.) are routed to `code-review --review-decision-only`. `SCM_HEAD_SHA` may be omitted (resolved via SCM API).
+- **PR lifecycle events** (`opened`, `synchronize`, `pr:opened`, `pr:from_ref_updated`, etc.) run a full review.
+
+Set `SCM_REVIEW_DECISION_ENABLED=true` on the job so the quality-gate decision is submitted for both paths.
 
 ---
 

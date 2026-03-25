@@ -94,7 +94,7 @@ This reduces CI surface area, but full reviews and comment-only recalculations w
 
 Use the same references for the concrete mechanics:
 
-- [Configuration reference](CONFIGURATION-REFERENCE.md) for the event variables, reply-dismissal, and `CODE_REVIEW_JENKINS_DECISION_ONLY_ACTIONS`
+- [Configuration reference](CONFIGURATION-REFERENCE.md) for the event variables and reply-dismissal
 - [Jenkins: review-decision-only on comment activity](JENKINS-REVIEW-DECISION-ONLY.md) for Jenkins wiring
 - [GitHub Actions](GITHUB-ACTIONS.md) for event-based workflow triggering
 - [Jenkins (existing)](JENKINS-EXISTING.md) and [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for Jenkins webhook setup
