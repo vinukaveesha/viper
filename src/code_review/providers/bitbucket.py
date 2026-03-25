@@ -107,6 +107,21 @@ class BitbucketProvider(ProviderInterface):
         out = self._get(path)
         return out if isinstance(out, str) else ""
 
+    def get_incremental_pr_diff(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str:
+        """Return unified diff for the incremental compare range ``base_sha..head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_diff(owner, repo, pr_number)
+        spec = f"{base_sha}..{head_sha}"
+        out = self._get(self._path(owner, repo, "diff", spec))
+        return out if isinstance(out, str) else ""
+
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref (Bitbucket src endpoint)."""
         url = self._path(owner, repo, "src", ref, path)
@@ -117,6 +132,24 @@ class BitbucketProvider(ProviderInterface):
     def get_pr_files(self, owner: str, repo: str, pr_number: int) -> list[FileInfo]:
         """Return list of changed files from PR diffstat (paginated)."""
         url: str | None = self._path(owner, repo, "pullrequests", str(pr_number), "diffstat")
+        return self._get_diffstat_files(url)
+
+    def get_incremental_pr_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> list[FileInfo]:
+        """Return files changed in the incremental compare range ``base_sha..head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_files(owner, repo, pr_number)
+        spec = f"{base_sha}..{head_sha}"
+        return self._get_diffstat_files(self._path(owner, repo, "diffstat", spec))
+
+    def _get_diffstat_files(self, url: str | None) -> list[FileInfo]:
+        """Return FileInfo objects from a Bitbucket Cloud diffstat URL."""
         result: list[FileInfo] = []
         visited: set[str] = set()
         while url:
@@ -245,6 +278,7 @@ class BitbucketProvider(ProviderInterface):
                     line=line,
                     body=body,
                     resolved=False,
+                    parent_id=self._bbcloud_parent_id(c),
                 )
             )
 
@@ -253,6 +287,14 @@ class BitbucketProvider(ProviderInterface):
             return comments, None
         stripped = next_url.strip()
         return comments, stripped or None
+
+    @staticmethod
+    def _bbcloud_is_inline_root_unresolved_comment(comment: ReviewComment) -> bool:
+        if comment.resolved:
+            return False
+        if comment.parent_id:
+            return False
+        return bool(comment.path or int(comment.line or 0) > 0)
 
     @staticmethod
     def _bbcloud_open_task_from_value(t: Any, out_len: int) -> UnresolvedReviewItem | None:
@@ -297,7 +339,10 @@ class BitbucketProvider(ProviderInterface):
         out: list[UnresolvedReviewItem] = []
         try:
             comments = self.get_existing_review_comments(owner, repo, pr_number)
-            out.extend(default_unresolved_review_items_from_comments(comments))
+            inline_root_comments = [
+                c for c in comments if self._bbcloud_is_inline_root_unresolved_comment(c)
+            ]
+            out.extend(default_unresolved_review_items_from_comments(inline_root_comments))
         except Exception as e:
             logger.warning(
                 "Bitbucket Cloud PR comments fetch failed for quality gate "

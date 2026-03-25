@@ -10,6 +10,7 @@ import os
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +52,7 @@ from code_review.providers.base import (
     RateLimitError,
     ReviewDecision,
     UnresolvedReviewItem,
+    unified_diff_for_path,
 )
 from code_review.schemas.findings import FindingV1
 from code_review.schemas.reply_dismissal import ReplyDismissalVerdictV1
@@ -227,6 +229,239 @@ def _patch_tokens(text: str) -> set[str]:
     actual diff line it is anchored to.
     """
     return {tok.lower() for tok in re.split(r"\W+", text) if len(tok) >= 3}
+
+
+def _normalize_code_for_comparison(text: str) -> str:
+    """Remove whitespace outside quoted literals so formatting-only changes compare equal."""
+    if not text:
+        return ""
+
+    out: list[str] = []
+    quote_char: str | None = None
+    escaped = False
+
+    for ch in text:
+        if quote_char is not None:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote_char:
+                quote_char = None
+            continue
+
+        if ch in {'"', "'", "`"}:
+            quote_char = ch
+            out.append(ch)
+            continue
+
+        if ch.isspace():
+            continue
+
+        out.append(ch)
+
+    return "".join(out)
+
+
+_SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\bmissing\s+(?:a\s+)?(?:comma|semicolon|colon|parenthesis|paren|bracket|brace|quote)\b",
+        re.I,
+    ),
+    re.compile(r"\bsyntax\s+error\b", re.I),
+    re.compile(r"\b(?:invalid|malformed)\s+(?:\w+\s+)?code\b", re.I),
+    re.compile(r"\b(?:invalid|malformed)\s+(?:annotation|statement|expression)\b", re.I),
+    re.compile(r"\b(?:won['\u2019]?t|will\s+not)\s+compile\b", re.I),
+    re.compile(r"\bcompiler?\s+error\b", re.I),
+)
+
+_QUOTE_DELIMITERS = frozenset({"`", "'", '"'})
+_MISSING_COMMA_BEFORE_FRAGMENT_PATTERN = re.compile(
+    r"\bmissing\s+(?:a\s+)?comma\s+before\s+(?:`([^`]+)`|\"([^\"]+)\"|'([^']+)')",
+    re.I,
+)
+
+
+def _contains_word(text: str, word: str) -> bool:
+    """Return True when word appears delimited by non-word characters."""
+    start = 0
+    while True:
+        index = text.find(word, start)
+        if index == -1:
+            return False
+        before_ok = index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")
+        after_index = index + len(word)
+        after_ok = after_index == len(text) or not (
+            text[after_index].isalnum() or text[after_index] == "_"
+        )
+        if before_ok and after_ok:
+            return True
+        start = index + len(word)
+
+
+def _message_mentions_missing_quoted_fragment_before_or_after(message: str) -> bool:
+    """Detect messages like 'missing `x` before ...' without broad backtracking regexes."""
+    lowered = message.lower()
+    search_from = 0
+    while True:
+        missing_index = lowered.find("missing", search_from)
+        if missing_index == -1:
+            return False
+
+        fragment_start = missing_index + len("missing")
+        while fragment_start < len(message) and message[fragment_start].isspace():
+            fragment_start += 1
+
+        if fragment_start >= len(message) or message[fragment_start] not in _QUOTE_DELIMITERS:
+            search_from = missing_index + len("missing")
+            continue
+
+        delimiter = message[fragment_start]
+        fragment_end = message.find(delimiter, fragment_start + 1)
+        if fragment_end == -1:
+            return False
+
+        trailing_text = lowered[fragment_end + 1 :]
+        if _contains_word(trailing_text, "before") or _contains_word(trailing_text, "after"):
+            return True
+        search_from = fragment_end + 1
+
+
+def _message_describes_syntax_or_missing_token_issue(message: str) -> bool:
+    """True when the finding text claims a token/syntax defect rather than a semantic issue."""
+    if not message or not str(message).strip():
+        return False
+    return any(p.search(message) for p in _SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS) or (
+        _message_mentions_missing_quoted_fragment_before_or_after(message)
+    )
+
+
+def _extract_missing_comma_fragment(message: str) -> str | None:
+    """Extract the cited fragment from messages like 'missing comma before `nullable = false`'."""
+    if not message:
+        return None
+    match = _MISSING_COMMA_BEFORE_FRAGMENT_PATTERN.search(message)
+    if not match:
+        return None
+    for group in match.groups():
+        if group and group.strip():
+            return group.strip()
+    return None
+
+
+def _window_text(lines_map: dict[int, str], line: int, radius: int = 2) -> str:
+    """Join nearby visible diff lines into a small searchable context window."""
+    window_lines = [
+        content
+        for ln, content in sorted(lines_map.items())
+        if line - radius <= ln <= line + radius
+    ]
+    return "\n".join(window_lines)
+
+
+def _non_empty_patch_lines(suggested_patch: str) -> list[str]:
+    """Return stripped non-empty lines from a suggested patch block."""
+    return [ln.strip() for ln in suggested_patch.splitlines() if ln.strip()]
+
+
+def _drop_or_strip_identical_patch_finding(
+    finding: FindingV1,
+    *,
+    actual_content: str,
+    message: str,
+) -> FindingV1 | None:
+    """Drop contradicted syntax findings or strip redundant suggestions."""
+    if not finding.suggested_patch:
+        return finding
+
+    non_empty_lines = _non_empty_patch_lines(finding.suggested_patch)
+    if len(non_empty_lines) != 1:
+        return finding
+
+    matches_current_line = _normalize_code_for_comparison(
+        non_empty_lines[0]
+    ) == _normalize_code_for_comparison(actual_content)
+    if not matches_current_line:
+        return finding
+
+    if _message_describes_syntax_or_missing_token_issue(message):
+        logger.info(
+            "Dropping contradicted syntax/token finding %s:%d: "
+            "suggested patch is identical to current diff line",
+            finding.path,
+            finding.line,
+        )
+        return None
+
+    return finding.model_copy(update={"suggested_patch": None})
+
+
+def _contradicted_missing_comma_fragment(message: str, window_text: str) -> str | None:
+    """Return the contradicted fragment when nearby diff already contains `,<fragment>`."""
+    fragment = _extract_missing_comma_fragment(message)
+    if not fragment:
+        return None
+
+    fragment_patterns = (
+        f", {fragment}",
+        f",{fragment}",
+    )
+    if any(pattern in window_text for pattern in fragment_patterns):
+        return fragment
+    return None
+
+
+def _filter_obviously_contradicted_findings(
+    findings: list[FindingV1],
+    diff_text: str,
+) -> list[FindingV1]:
+    """Drop findings whose own message is directly contradicted by visible diff code.
+
+    This is intentionally conservative and only handles a few high-signal cases:
+    - a syntax/token complaint whose suggested patch is identical to the current line
+    - a message claiming a missing comma before a quoted fragment when the nearby diff
+      already contains `,<fragment>`
+    """
+    if not diff_text or not findings:
+        return findings
+
+    line_index = _build_diff_line_index(diff_text)
+    file_lines = _build_per_file_line_index(diff_text)
+    kept: list[FindingV1] = []
+
+    for f in findings:
+        norm_path = _normalize_path_for_anchor(f.path)
+        actual_content = line_index.get((norm_path, f.line))
+        lines_map = file_lines.get(norm_path, {})
+        if actual_content is None:
+            kept.append(f)
+            continue
+
+        message = f.message or ""
+        window_text = _window_text(lines_map, f.line)
+        f = _drop_or_strip_identical_patch_finding(
+            f,
+            actual_content=actual_content,
+            message=message,
+        )
+        if f is None:
+            continue
+
+        fragment = _contradicted_missing_comma_fragment(message, window_text)
+        if fragment is not None:
+            logger.info(
+                "Dropping contradicted missing-comma finding %s:%d: "
+                "nearby diff already contains comma before %r",
+                f.path,
+                f.line,
+                fragment,
+            )
+            continue
+
+        kept.append(f)
+
+    return kept
 
 
 def _validate_suggested_patches(
@@ -460,13 +695,16 @@ def _build_idempotency_key(
     repo: str,
     pr_number: int,
     head_sha: str,
+    base_sha: str = "",
 ) -> str:
-    """Idempotency key: same key => same run already done for this PR/head/config."""
+    """Idempotency key: same key => same run already done for this PR/range/config."""
+    head_sha = (head_sha or "").strip()
+    base_sha = (base_sha or "").strip()
     config_hash = hashlib.sha256(
         f"{scm_cfg.provider}:{scm_cfg.url}:{llm_cfg.provider}:{llm_cfg.model}".encode()
     ).hexdigest()[:16]
     return (
-        f"{scm_cfg.provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/"
+        f"{scm_cfg.provider}/{owner}/{repo}/pr/{pr_number}/head/{head_sha}/base/{base_sha}/"
         f"agent/{AGENT_VERSION}/config/{config_hash}"
     )
 
@@ -666,6 +904,7 @@ def _post_inline_comments(
     repo: str,
     pr_number: int,
     head_sha: str,
+    incremental_base_sha: str,
     to_post: list[tuple[FindingV1, str]],
     cfg,
     llm_cfg,
@@ -673,7 +912,9 @@ def _post_inline_comments(
 ) -> int:
     """Build inline comments and post each one individually. Returns successful post count."""
     caps = provider.capabilities()
-    run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+    run_id = _build_idempotency_key(
+        cfg, llm_cfg, owner, repo, pr_number, head_sha, incremental_base_sha
+    )
     added_set = _added_lines_in_diff(full_diff) if full_diff else set()
     comments: list[InlineComment] = []
     for f, fp in to_post:
@@ -829,6 +1070,7 @@ def _post_omit_marker_pr_summary_comment(
     cfg,
     llm_cfg,
     head_sha: str,
+    incremental_base_sha: str = "",
     *,
     findings_planned: int,
     successful_inline_posts: int,
@@ -853,7 +1095,9 @@ def _post_omit_marker_pr_summary_comment(
         gate_outcome=gate_outcome,
     )
     if include_run_marker:
-        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+        run_id = _build_idempotency_key(
+            cfg, llm_cfg, owner, repo, pr_number, head_sha, incremental_base_sha
+        )
         use_linkref = getattr(caps, "embed_agent_marker_as_commonmark_linkref", None) is True
         body = format_comment_body_with_marker(
             visible,
@@ -1085,7 +1329,6 @@ def _log_review_decision_event_if_present(ctx: ReviewDecisionEventContext | None
 
 
 def _head_sha_hint_for_decision_only(
-    ctx: ReviewDecisionEventContext | None,
     cli_head_sha: str,
 ) -> str:
     """Return CLI/env head SHA for decision-only runs."""
@@ -1554,14 +1797,18 @@ class ReviewOrchestrator:
         trace_id: str,
         start_time: float,
         run_handle,
+        incremental_base_sha: str = "",
     ) -> list[FindingV1] | None:
         """
-        If we already ran for this PR/head/config (run id in comment marker),
+        If we already ran for this PR/range/config (run id in comment marker),
         emit observability and return []. Otherwise return None (caller continues).
         """
         if not head_sha:
             return None
-        run_id = _build_idempotency_key(cfg, llm_cfg, owner, repo, pr_number, head_sha)
+        incremental_base_sha = incremental_base_sha or self._incremental_base_sha(cfg, head_sha)
+        run_id = _build_idempotency_key(
+            cfg, llm_cfg, owner, repo, pr_number, head_sha, incremental_base_sha
+        )
         if not _idempotency_key_seen_in_comments(existing_dicts, run_id):
             return None
         _duration_ms = (time.perf_counter() - start_time) * 1000
@@ -1569,12 +1816,53 @@ class ReviewOrchestrator:
         observability.finish_run(run_handle, owner, repo, pr_number, 0, 0, 0, _duration_ms / 1000.0)
         return []
 
+    @staticmethod
+    def _incremental_base_sha(cfg, head_sha: str) -> str:
+        """Return a usable incremental review base SHA, else ``""`` for full-PR review."""
+        raw_base_sha = getattr(cfg, "base_sha", "")
+        base_sha = raw_base_sha.strip() if isinstance(raw_base_sha, str) else ""
+        raw_head_sha = head_sha if head_sha else getattr(cfg, "head_sha", "")
+        head_sha = raw_head_sha.strip() if isinstance(raw_head_sha, str) else ""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return ""
+        return base_sha
+
     def _fetch_pr_files_and_diffs(self, provider, owner: str, repo: str, pr_number: int):
-        """Fetch PR file list and full diff from the provider. Returns (files, paths, full_diff)."""
+        """Fetch the full-PR file list and diff.
+
+        Retained as a small compatibility wrapper for tests and helper callers;
+        incremental review flow uses ``_fetch_review_files_and_diffs``.
+        """
         files = provider.get_pr_files(owner, repo, pr_number)
         paths = [f.path for f in files]
         full_diff = provider.get_pr_diff(owner, repo, pr_number)
         return (files, paths, full_diff)
+
+    def _fetch_review_files_and_diffs(
+        self,
+        provider,
+        cfg,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+    ) -> tuple[list[object], list[str], str, str]:
+        """Fetch the file list and diff for the active review scope.
+
+        Returns ``(files, paths, full_diff, incremental_base_sha)`` where
+        ``incremental_base_sha`` is non-empty only when the review was scoped to
+        ``SCM_BASE_SHA..SCM_HEAD_SHA``.
+        """
+        base_sha = self._incremental_base_sha(cfg, head_sha)
+        if base_sha:
+            files = provider.get_incremental_pr_files(owner, repo, pr_number, base_sha, head_sha)
+            paths = [f.path for f in files]
+            full_diff = provider.get_incremental_pr_diff(owner, repo, pr_number, base_sha, head_sha)
+            return (files, paths, full_diff, base_sha)
+        files = provider.get_pr_files(owner, repo, pr_number)
+        paths = [f.path for f in files]
+        full_diff = provider.get_pr_diff(owner, repo, pr_number)
+        return (files, paths, full_diff, "")
 
     def _build_ignore_set_and_filter_files(self, paths: list[str]) -> list[str]:
         """
@@ -1599,13 +1887,14 @@ class ReviewOrchestrator:
         pr_number: int,
         *,
         use_file_by_file: bool = False,
+        disable_tools: bool | None = None,
         context_brief_attached: bool = False,
     ):
         """
         Build the findings-only agent, session service, and ADK Runner.
         Returns (session_id, session_service, runner).
 
-        IMPORTANT: this method must be called AFTER determining use_file_by_file,
+        IMPORTANT: this method must be called AFTER determining the execution mode,
         because the mode directly controls tool and instruction configuration:
 
         - Single-shot mode (use_file_by_file=False): tools are disabled and the
@@ -1621,15 +1910,22 @@ class ReviewOrchestrator:
         - File-by-file mode (use_file_by_file=True): tools are enabled and
           FINDINGS_ONLY_INSTRUCTION is used.  The agent calls get_pr_diff_for_file
           per file, which is the expected workflow.
+
+        - Incremental large-diff mode may still set ``use_file_by_file=True`` but
+          also force ``disable_tools=True`` so each per-file prompt embeds the
+          already-scoped diff slice rather than fetching the file's full PR diff.
         """
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
 
+        disable_tools_effective = (
+            disable_tools if disable_tools is not None else not use_file_by_file
+        )
         agent = create_review_agent(
             provider,
             review_standards,
             findings_only=True,
-            disable_tools=not use_file_by_file,
+            disable_tools=disable_tools_effective,
             context_brief_attached=context_brief_attached,
         )
         session_id = f"{owner}/{repo}/pr-{pr_number}/{uuid.uuid4().hex[:12]}"
@@ -1654,6 +1950,7 @@ class ReviewOrchestrator:
         use_file_by_file: bool,
         full_diff: str = "",
         prompt_suffix: str = "",
+        diff_by_path: dict[str, str] | None = None,
     ) -> list[FindingV1]:
         """
         Run the agent (file-by-file or single shot), parse response into FindingV1 list.
@@ -1664,6 +1961,18 @@ class ReviewOrchestrator:
         JSON parsing or filtering.
         """
         if use_file_by_file and paths:
+            if diff_by_path is not None:
+                return self._run_embedded_file_by_file_mode(
+                    runner,
+                    session_service,
+                    owner,
+                    repo,
+                    pr_number,
+                    head_sha,
+                    paths,
+                    diff_by_path=diff_by_path,
+                    prompt_suffix=prompt_suffix,
+                )
             return self._run_file_by_file_mode(
                 runner,
                 session_service,
@@ -1686,6 +1995,49 @@ class ReviewOrchestrator:
             prompt_suffix=prompt_suffix,
         )
 
+    def _run_embedded_file_by_file_mode(
+        self,
+        runner,
+        session_service,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        head_sha: str,
+        paths: list[str],
+        *,
+        diff_by_path: dict[str, str],
+        prompt_suffix: str = "",
+    ) -> list[FindingV1]:
+        """Review one file at a time using already-scoped embedded diffs (tools disabled)."""
+        def _build_embedded_message(file_path: str) -> str | None:
+            file_diff = diff_by_path.get(file_path, "")
+            if not file_diff:
+                return None
+            head_sha_clause = f" head_sha={head_sha}." if head_sha else ""
+            msg = (
+                "Review exactly one file from this PR. "
+                f"owner={owner}, repo={repo}, pr_number={pr_number}."
+                + head_sha_clause
+                + f' Use path "{file_path}" in every finding. '
+                "The diff below is already scoped to the current review range for this file. "
+                "Output a JSON array of findings for this file only. "
+                "If there are no issues in this file, output exactly []."
+            )
+            annotated = annotate_diff_with_line_numbers(file_diff)
+            return msg + f"\n\nHere is the unified diff for this file:\n```diff\n{annotated}\n```"
+
+        return self._run_per_file_review_loop(
+            runner,
+            session_service,
+            owner,
+            repo,
+            pr_number,
+            paths,
+            build_message=_build_embedded_message,
+            prompt_suffix=prompt_suffix,
+            debug_mode_label="embedded file-by-file",
+        )
+
     def _run_file_by_file_mode(
         self,
         runner,
@@ -1698,9 +2050,7 @@ class ReviewOrchestrator:
         *,
         prompt_suffix: str = "",
     ) -> list[FindingV1]:
-        all_findings: list[FindingV1] = []
-        for file_path in paths:
-            file_session_id = f"{owner}/{repo}/pr-{pr_number}/file/{uuid.uuid4().hex[:12]}"
+        def _build_file_by_file_message(file_path: str) -> str:
             head_sha_clause = f" head_sha={head_sha}." if head_sha else ""
             ref_guidance = (
                 f' When calling get_file_lines for surrounding context, use ref="{head_sha}"'
@@ -1726,11 +2076,46 @@ class ReviewOrchestrator:
                 + f'Use path "{file_path}" in every finding. '
                 "If there are no issues in this file, output exactly []."
             )
+            return msg
+
+        return self._run_per_file_review_loop(
+            runner,
+            session_service,
+            owner,
+            repo,
+            pr_number,
+            paths,
+            build_message=_build_file_by_file_message,
+            prompt_suffix=prompt_suffix,
+            debug_mode_label="file-by-file",
+        )
+
+    def _run_per_file_review_loop(
+        self,
+        runner,
+        session_service,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        paths: list[str],
+        *,
+        build_message: Callable[[str], str | None],
+        prompt_suffix: str,
+        debug_mode_label: str,
+    ) -> list[FindingV1]:
+        """Run isolated per-file review sessions with shared logging and error handling."""
+        all_findings: list[FindingV1] = []
+        for file_path in paths:
+            file_session_id = f"{owner}/{repo}/pr-{pr_number}/file/{uuid.uuid4().hex[:12]}"
+            msg = build_message(file_path)
+            if not msg:
+                continue
             if prompt_suffix:
                 msg = msg + "\n\n" + prompt_suffix
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    "LLM request (file-by-file) session=%s file=%s prompt=%s",
+                    "LLM request (%s) session=%s file=%s prompt=%s",
+                    debug_mode_label,
                     file_session_id,
                     file_path,
                     msg,
@@ -1741,9 +2126,6 @@ class ReviewOrchestrator:
                     runner, session_service, file_session_id, content
                 )
             except AuthenticationError as e:
-                # LLM authentication errors (e.g. HTTP 401 from OpenRouter/OpenAI/etc.)
-                # indicate a misconfigured or missing API key. Treat these as fatal so
-                # CI surfaces them clearly instead of silently skipping all files.
                 logger.error(
                     "LLM authentication failed while reviewing file=%s; aborting run: %s",
                     file_path,
@@ -1854,6 +2236,7 @@ class ReviewOrchestrator:
         repo: str,
         pr_number: int,
         head_sha: str,
+        incremental_base_sha: str,
         dry_run: bool,
         to_post: list[tuple[FindingV1, str]],
         cfg,
@@ -1888,6 +2271,7 @@ class ReviewOrchestrator:
                 repo,
                 pr_number,
                 head_sha,
+                incremental_base_sha,
                 to_post,
                 cfg,
                 llm_cfg,
@@ -1906,6 +2290,7 @@ class ReviewOrchestrator:
                 cfg,
                 llm_cfg,
                 head_sha,
+                incremental_base_sha,
                 findings_planned=planned,
                 successful_inline_posts=count,
                 gate_outcome=gate_outcome,
@@ -2066,13 +2451,21 @@ class ReviewOrchestrator:
         # every posted comment appears inline in the diff view.
         line_filtered = self._filter_findings_to_visible_diff_lines(relocated, full_diff)
 
+        # Guardrail: drop findings whose own message is directly contradicted by the
+        # visible diff, and strip no-op single-line suggestions. This catches a class
+        # of false positives where the model claims a missing token or invalid syntax
+        # even though the shown code already contains the cited token.
+        contradiction_filtered = _filter_obviously_contradicted_findings(
+            line_filtered, full_diff
+        )
+
         # Guardrail: strip suggested_patch from findings where the patch content has no
         # token overlap with the actual diff line it is anchored to.  This catches the
         # common LLM error of hallucinating a patch for a different line of code while
         # naming a visible line (so the line-visibility guard above passes).  Without
         # this guard, the patch would be rendered as a suggestion block replacing the
         # wrong code.  Stripping it degrades gracefully to a plain inline comment.
-        patched = _validate_suggested_patches(line_filtered, full_diff)
+        patched = _validate_suggested_patches(contradiction_filtered, full_diff)
         # Drop findings where the model argued itself out of the issue in the same message.
         return _filter_self_retracted_finding_messages(patched)
 
@@ -2181,6 +2574,83 @@ class ReviewOrchestrator:
             to_post=[],
         )
 
+    def _validate_context_sources_or_raise(
+        self,
+        ctx_cfg,
+        cfg,
+        run_handle,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        start_time: float,
+    ) -> None:
+        """Validate context-aware sources when enabled and finish observability on fatal config."""
+        if not ctx_cfg.enabled:
+            return
+        try:
+            validate_context_aware_sources(ctx_cfg, cfg)
+        except ContextAwareFatalError as e:
+            logger.error("Context-aware review configuration error: %s", e)
+            observability.finish_run(
+                run_handle,
+                owner,
+                repo,
+                pr_number,
+                files_count=0,
+                findings_count=0,
+                posts_count=0,
+                duration_seconds=(time.perf_counter() - start_time),
+            )
+            raise
+
+    @staticmethod
+    def _log_review_scope_fetch(incremental_base_sha: str, head_sha: str, paths: list[str]) -> None:
+        """Emit a concise log line describing the fetched review scope."""
+        if incremental_base_sha:
+            logger.info(
+                "Fetched incremental diff base=%s head=%s, %d file(s) to review",
+                incremental_base_sha[:12],
+                (head_sha or "")[:12],
+                len(paths),
+            )
+            return
+        logger.info("Fetched diff, %d file(s) to review", len(paths))
+
+    @staticmethod
+    def _build_review_execution_mode(
+        full_diff: str,
+        diff_budget: int,
+        incremental_base_sha: str,
+        paths: list[str],
+    ) -> tuple[bool, bool, dict[str, str] | None]:
+        """Return execution mode flags plus an optional embedded per-file diff map."""
+        use_file_by_file = _estimate_tokens(full_diff) > diff_budget
+        use_embedded_file_diffs = bool(incremental_base_sha and use_file_by_file)
+        diff_by_path = (
+            {path: unified_diff_for_path(full_diff, path) for path in paths}
+            if use_embedded_file_diffs
+            else None
+        )
+        return use_file_by_file, use_embedded_file_diffs, diff_by_path
+
+    @staticmethod
+    def _log_review_execution_mode(
+        use_file_by_file: bool,
+        use_embedded_file_diffs: bool,
+        paths: list[str],
+    ) -> None:
+        """Log whether this run is single-shot, tool-based, or embedded file-by-file."""
+        if not use_file_by_file:
+            logger.info("Running agent (single shot)")
+            return
+        if use_embedded_file_diffs:
+            logger.info(
+                "Running agent on %d file(s) (embedded file-by-file, incremental scope)",
+                len(paths),
+            )
+            return
+        logger.info("Running agent on %d file(s) (file-by-file)", len(paths))
+
     def _decision_only_maybe_post_disagreed_thread_reply(
         self,
         provider,
@@ -2208,6 +2678,69 @@ class ReviewOrchestrator:
         except Exception as e:
             logger.warning("post_review_thread_reply failed: %s", e)
 
+    def _reply_dismissal_comment_id_or_none(self, app_cfg) -> str | None:
+        """Return event comment id when reply-dismissal should run, else ``None``."""
+        ctx = self._event_context
+        if app_cfg.reply_dismissal_enabled and ctx is not None and (ctx.comment_id or "").strip():
+            return ctx.comment_id.strip()
+        if app_cfg.reply_dismissal_enabled and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Reply-dismissal not run: requires CODE_REVIEW_EVENT_COMMENT_ID; "
+                "got comment_id=%r ctx_present=%s",
+                ((ctx.comment_id or "").strip() if ctx else "") or "",
+                ctx is not None,
+            )
+        return None
+
+    def _reply_dismissal_precheck(
+        self,
+        provider,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        comment_id: str,
+    ) -> tuple[BotAttributionIdentity, ReviewThreadDismissalContext] | None:
+        """Return bot identity and dismissal context when reply-dismissal can proceed."""
+        ctx = self._event_context
+        if ctx is None:
+            return None
+        bot_id = provider.get_bot_attribution_identity(owner, repo, pr_number)
+        if _reply_added_event_authored_by_bot(ctx, bot_id):
+            observability.record_reply_dismissal_outcome("skipped_bot_author")
+            logger.info(
+                "Reply-dismissal skipped: reply_added actor matches bot "
+                "(actor_login=%r actor_id=%r)",
+                (ctx.actor_login or "").strip(),
+                (ctx.actor_id or "").strip(),
+            )
+            return None
+        caps_rd = provider.capabilities()
+        if not caps_rd.supports_review_thread_dismissal_context:
+            observability.record_reply_dismissal_outcome("skipped_no_capability")
+            return None
+        dctx = provider.get_review_thread_dismissal_context(owner, repo, pr_number, comment_id)
+        if dctx is None or len(dctx.entries) < 2:
+            observability.record_reply_dismissal_outcome("skipped_insufficient_thread")
+            return None
+        return bot_id, dctx
+
+    @staticmethod
+    def _reply_dismissal_parse_verdict(raw_verdict: str) -> ReplyDismissalVerdictV1 | None:
+        """Parse reply-dismissal LLM output and log a helpful truncated warning on failure."""
+        verdict = reply_dismissal_verdict_from_llm_text(raw_verdict)
+        if verdict is not None:
+            return verdict
+        observability.record_reply_dismissal_outcome("parse_failed")
+        snippet = (raw_verdict or "").strip()
+        if len(snippet) > 1500:
+            snippet = snippet[:1500] + "…"
+        logger.warning(
+            "Reply-dismissal LLM output could not be parsed as ReplyDismissalVerdictV1; "
+            "enable DEBUG for full request/response. Raw (truncated): %r",
+            snippet or "(empty)",
+        )
+        return None
+
     def _decision_only_reply_dismissal_excluded_gate_ids(
         self,
         provider,
@@ -2219,44 +2752,13 @@ class ReviewOrchestrator:
         trace_id: str,
     ) -> frozenset[str]:
         """Stable ids to exclude from the quality gate after optional reply-dismissal LLM."""
-        ctx = self._event_context
-        if not (
-            app_cfg.reply_dismissal_enabled
-            and ctx is not None
-            and (ctx.comment_id or "").strip()
-        ):
-            if app_cfg.reply_dismissal_enabled and logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "Reply-dismissal not run: requires CODE_REVIEW_EVENT_COMMENT_ID; "
-                    "got comment_id=%r ctx_present=%s",
-                    ((ctx.comment_id or "").strip() if ctx else "") or "",
-                    ctx is not None,
-                )
+        comment_id = self._reply_dismissal_comment_id_or_none(app_cfg)
+        if comment_id is None:
             return frozenset()
-
-        comment_id = ctx.comment_id.strip()
-        bot_id = provider.get_bot_attribution_identity(owner, repo, pr_number)
-        if _reply_added_event_authored_by_bot(ctx, bot_id):
-            observability.record_reply_dismissal_outcome("skipped_bot_author")
-            logger.info(
-                "Reply-dismissal skipped: reply_added actor matches bot "
-                "(actor_login=%r actor_id=%r)",
-                (ctx.actor_login or "").strip(),
-                (ctx.actor_id or "").strip(),
-            )
+        precheck = self._reply_dismissal_precheck(provider, owner, repo, pr_number, comment_id)
+        if precheck is None:
             return frozenset()
-
-        caps_rd = provider.capabilities()
-        if not caps_rd.supports_review_thread_dismissal_context:
-            observability.record_reply_dismissal_outcome("skipped_no_capability")
-            return frozenset()
-
-        dctx = provider.get_review_thread_dismissal_context(
-            owner, repo, pr_number, comment_id
-        )
-        if dctx is None or len(dctx.entries) < 2:
-            observability.record_reply_dismissal_outcome("skipped_insufficient_thread")
-            return frozenset()
+        bot_id, dctx = precheck
 
         user_msg = _format_reply_dismissal_user_message(dctx, bot_id)
         try:
@@ -2266,17 +2768,8 @@ class ReviewOrchestrator:
             observability.record_reply_dismissal_outcome("llm_error")
             return frozenset()
 
-        verdict = reply_dismissal_verdict_from_llm_text(raw_verdict)
+        verdict = self._reply_dismissal_parse_verdict(raw_verdict)
         if verdict is None:
-            observability.record_reply_dismissal_outcome("parse_failed")
-            snippet = (raw_verdict or "").strip()
-            if len(snippet) > 1500:
-                snippet = snippet[:1500] + "…"
-            logger.warning(
-                "Reply-dismissal LLM output could not be parsed as ReplyDismissalVerdictV1; "
-                "enable DEBUG for full request/response. Raw (truncated): %r",
-                snippet or "(empty)",
-            )
             return frozenset()
 
         logger.info(
@@ -2300,7 +2793,7 @@ class ReviewOrchestrator:
             observability.record_reply_dismissal_outcome("disagreed")
             self._decision_only_maybe_post_disagreed_thread_reply(
                 provider,
-                caps_rd,
+                provider.capabilities(),
                 owner,
                 repo,
                 pr_number,
@@ -2358,7 +2851,7 @@ class ReviewOrchestrator:
         if skip_early is not None:
             return skip_early
 
-        head_hint = _head_sha_hint_for_decision_only(self._event_context, self.head_sha)
+        head_hint = _head_sha_hint_for_decision_only(self.head_sha)
         head_sha = _resolve_head_sha_for_review_decision_submission(
             provider, owner, repo, pr_number, head_hint
         )
@@ -2460,6 +2953,7 @@ class ReviewOrchestrator:
             resolved_body_set,
             resolved_fp_set,
         ) = self._load_existing_comments_and_markers(provider, owner, repo, pr_number)
+        incremental_base_sha = self._incremental_base_sha(cfg, head_sha)
 
         idempotency_result = self._compute_idempotency_and_maybe_short_circuit(
             cfg,
@@ -2472,34 +2966,30 @@ class ReviewOrchestrator:
             trace_id,
             start_time,
             run_handle,
+            incremental_base_sha=incremental_base_sha,
         )
         if idempotency_result is not None:
-            logger.info("Skipping run (idempotent: same head/config already reviewed)")
+            logger.info("Skipping run (idempotent: same review range/config already reviewed)")
             return idempotency_result
 
         ctx_cfg = get_context_aware_config()
-        if ctx_cfg.enabled:
-            try:
-                validate_context_aware_sources(ctx_cfg, cfg)
-            except ContextAwareFatalError as e:
-                logger.error("Context-aware review configuration error: %s", e)
-                observability.finish_run(
-                    run_handle,
-                    owner,
-                    repo,
-                    pr_number,
-                    files_count=0,
-                    findings_count=0,
-                    posts_count=0,
-                    duration_seconds=(time.perf_counter() - start_time),
-                )
-                raise
+        self._validate_context_sources_or_raise(
+            ctx_cfg,
+            cfg,
+            run_handle,
+            owner,
+            repo,
+            pr_number,
+            start_time,
+        )
 
         pr_info_for_metadata = provider.get_pr_info(owner, repo, pr_number)
 
-        _, paths, full_diff = self._fetch_pr_files_and_diffs(provider, owner, repo, pr_number)
+        _, paths, full_diff, incremental_base_sha = self._fetch_review_files_and_diffs(
+            provider, cfg, owner, repo, pr_number, head_sha
+        )
         paths = self._build_ignore_set_and_filter_files(paths)
-        logger.info("Fetched diff, %d file(s) to review", len(paths))
+        self._log_review_scope_fetch(incremental_base_sha, head_sha, paths)
         if not paths:
             logger.info("No files to review, skipping")
             return self._record_observability_and_build_result(
@@ -2544,11 +3034,17 @@ class ReviewOrchestrator:
         if context_brief:
             logger.info("context_aware: distilled context attached to review prompt")
 
-        use_file_by_file = _estimate_tokens(full_diff) > diff_budget
-        if use_file_by_file:
-            logger.info("Running agent on %d file(s) (file-by-file)", len(paths))
-        else:
-            logger.info("Running agent (single shot)")
+        (
+            use_file_by_file,
+            use_embedded_file_diffs,
+            diff_by_path,
+        ) = self._build_review_execution_mode(
+            full_diff,
+            diff_budget,
+            incremental_base_sha,
+            paths,
+        )
+        self._log_review_execution_mode(use_file_by_file, use_embedded_file_diffs, paths)
 
         session_id, session_service, runner = self._create_agent_and_runner(
             provider,
@@ -2557,6 +3053,7 @@ class ReviewOrchestrator:
             repo,
             pr_number,
             use_file_by_file=use_file_by_file,
+            disable_tools=True if use_embedded_file_diffs else None,
             context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
         )
 
@@ -2572,6 +3069,7 @@ class ReviewOrchestrator:
             use_file_by_file,
             full_diff=full_diff,
             prompt_suffix=prompt_suffix,
+            diff_by_path=diff_by_path,
         )
 
         all_findings = self._filter_findings_by_diff_scope(all_findings, paths, full_diff)
@@ -2600,6 +3098,7 @@ class ReviewOrchestrator:
             repo,
             pr_number,
             head_sha,
+            incremental_base_sha,
             dry_run,
             to_post,
             cfg,

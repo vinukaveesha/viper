@@ -27,6 +27,14 @@ class FindingV1(BaseModel):
         default=None,
         description=("e.g. Correctness, Security, Style; use NeedsVerification for uncertainty"),
     )
+    confidence: Literal["high", "medium", "low"] | None = Field(
+        default=None,
+        description="Optional confidence level for how well the visible code supports the claim",
+    )
+    evidence: str | None = Field(
+        default=None,
+        description="Optional short factual justification citing the visible code that supports the finding",
+    )
     anchor: str | None = Field(
         default=None,
         description="Optional anchor text for stable positioning when lines shift",

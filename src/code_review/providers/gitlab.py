@@ -42,6 +42,7 @@ from code_review.schemas.review_thread_dismissal import (
 )
 
 MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
+_COMPARE_FALLBACK_STATUSES = {404, 405, 422}
 logger = logging.getLogger(__name__)
 
 
@@ -220,6 +221,15 @@ class GitLabProvider(ProviderInterface):
     def _put(self, path: str, json: dict) -> Any:
         return http_put_json(path, json, headers=self._headers(), timeout=self._timeout)
 
+    def _incremental_compare_path(
+        self, owner: str, repo: str, base_sha: str, head_sha: str
+    ) -> str:
+        path = self._path(owner, repo, "repository", "compare")
+        return (
+            f"{path}?from={quote(base_sha, safe='')}"
+            f"&to={quote(head_sha, safe='')}&straight=true"
+        )
+
     def _delete(self, path: str) -> None:
         http_delete(path, headers=self._headers(), timeout=self._timeout)
 
@@ -227,6 +237,11 @@ class GitLabProvider(ProviderInterface):
         """Return unified diff by concatenating MR diffs."""
         path = self._path(owner, repo, "merge_requests", str(pr_number), "diffs")
         data = self._get(path)
+        return self._unified_diff_from_diff_entries(data)
+
+    @staticmethod
+    def _unified_diff_from_diff_entries(data: Any) -> str:
+        """Build unified diff text from GitLab diff-entry payloads."""
         if not isinstance(data, list):
             return ""
         parts: list[str] = []
@@ -238,6 +253,38 @@ class GitLabProvider(ProviderInterface):
                 parts.append(f"diff --git a/{old_path} b/{new_path}")
                 parts.append(diff)
         return "\n".join(parts)
+
+    def get_incremental_pr_diff(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str:
+        """Return unified diff for the incremental compare range ``base_sha..head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_diff(owner, repo, pr_number)
+        try:
+            data = self._get(self._incremental_compare_path(owner, repo, base_sha, head_sha))
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code not in _COMPARE_FALLBACK_STATUSES:
+                raise
+            logger.warning(
+                "GitLab incremental compare diff unsupported/invalid owner=%s repo=%s pr=%s "
+                "base=%s head=%s status=%s; falling back to full MR diff",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                status_code,
+            )
+            return self.get_pr_diff(owner, repo, pr_number)
+        if not isinstance(data, dict):
+            return ""
+        return self._unified_diff_from_diff_entries(data.get("diffs"))
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref (raw endpoint)."""
@@ -277,6 +324,10 @@ class GitLabProvider(ProviderInterface):
         """Return list of changed files from MR diffs."""
         path = self._path(owner, repo, "merge_requests", str(pr_number), "diffs")
         data = self._get(path)
+        return self._file_infos_from_diff_entries(data)
+
+    def _file_infos_from_diff_entries(self, data: Any) -> list[FileInfo]:
+        """Return FileInfo objects from GitLab MR/compare diff entries."""
         if not isinstance(data, list):
             return []
         result: list[FileInfo] = []
@@ -297,6 +348,38 @@ class GitLabProvider(ProviderInterface):
                 FileInfo(path=new_path, status=status, additions=additions, deletions=deletions)
             )
         return result
+
+    def get_incremental_pr_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> list[FileInfo]:
+        """Return files changed in the incremental compare range ``base_sha..head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_files(owner, repo, pr_number)
+        try:
+            data = self._get(self._incremental_compare_path(owner, repo, base_sha, head_sha))
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code not in _COMPARE_FALLBACK_STATUSES:
+                raise
+            logger.warning(
+                "GitLab incremental compare files unsupported/invalid owner=%s repo=%s pr=%s "
+                "base=%s head=%s status=%s; falling back to full MR files",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                status_code,
+            )
+            return self.get_pr_files(owner, repo, pr_number)
+        if not isinstance(data, dict):
+            return []
+        return self._file_infos_from_diff_entries(data.get("diffs"))
 
     def _get_mr_diff_refs(self, owner: str, repo: str, pr_number: int) -> dict | None:
         """Fetch MR to get diff_refs (base_sha, head_sha, start_sha) for positioning comments."""

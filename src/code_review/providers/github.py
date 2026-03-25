@@ -459,6 +459,33 @@ class GitHubProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}"
         return self._get_diff(path)
 
+    def get_incremental_pr_diff(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str:
+        """Return unified diff for the incremental compare range ``base_sha...head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_diff(owner, repo, pr_number)
+        path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+        try:
+            return self._get_diff(path)
+        except httpx.HTTPError as e:
+            logger.warning(
+                "GitHub incremental compare diff failed owner=%s repo=%s pr=%s "
+                "base=%s head=%s: %s; falling back to full PR diff",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                e,
+            )
+            return self.get_pr_diff(owner, repo, pr_number)
+
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref; truncated if over max size."""
         api_path = f"/repos/{owner}/{repo}/contents/{path}"
@@ -473,6 +500,36 @@ class GitHubProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
         data = self._get(path, params={"per_page": 100})
         return file_infos_from_pull_file_list(data) if isinstance(data, list) else []
+
+    def get_incremental_pr_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> list[FileInfo]:
+        """Return files changed in the incremental compare range ``base_sha...head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_files(owner, repo, pr_number)
+        path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+        try:
+            data = self._get(path, params={"per_page": 100})
+        except httpx.HTTPError as e:
+            logger.warning(
+                "GitHub incremental compare files failed owner=%s repo=%s pr=%s "
+                "base=%s head=%s: %s; falling back to full PR files",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                e,
+            )
+            return self.get_pr_files(owner, repo, pr_number)
+        if not isinstance(data, dict):
+            return []
+        return file_infos_from_pull_file_list(data.get("files") or [])
 
     def post_review_comments(
         self,

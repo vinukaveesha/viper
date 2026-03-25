@@ -234,6 +234,94 @@ def test_get_pr_diff_returns_text_response_as_is(mock_client):
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_incremental_pr_diff_uses_compare_endpoint(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/Main.java"},
+                "destination": {"toString": "src/Main.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 1,
+                        "sourceSpan": 1,
+                        "destinationLine": 1,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// new comment"}]}],
+                    }
+                ],
+            }
+        ]
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    diff = p.get_incremental_pr_diff("PROJ", "my-repo", 42, "base123", "head456")
+
+    assert "+// new comment" in diff
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert call[0][0].endswith("/compare/diff")
+    assert call[1]["params"] == {"from": "base123", "to": "head456"}
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_incremental_pr_diff_merges_paginated_compare_pages(mock_client):
+    first_resp = MagicMock()
+    first_resp.headers = {"content-type": "application/json"}
+    first_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/First.java"},
+                "destination": {"toString": "src/First.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 1,
+                        "sourceSpan": 1,
+                        "destinationLine": 1,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// first"}]}],
+                    }
+                ],
+            }
+        ],
+        "isLastPage": False,
+        "nextPageStart": 1,
+    }
+    second_resp = MagicMock()
+    second_resp.headers = {"content-type": "application/json"}
+    second_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/Second.java"},
+                "destination": {"toString": "src/Second.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 10,
+                        "sourceSpan": 1,
+                        "destinationLine": 10,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// second"}]}],
+                    }
+                ],
+            }
+        ],
+        "isLastPage": True,
+    }
+    mock_client.return_value.__enter__.return_value.get.side_effect = [first_resp, second_resp]
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    diff = p.get_incremental_pr_diff("PROJ", "my-repo", 42, "base123", "head456")
+
+    assert "+++ b/src/First.java" in diff
+    assert "+++ b/src/Second.java" in diff
+    calls = mock_client.return_value.__enter__.return_value.get.call_args_list
+    assert len(calls) == 2
+    assert calls[0][1]["params"] == {"from": "base123", "to": "head456"}
+    assert calls[1][1]["params"] == {"from": "base123", "to": "head456", "start": 1}
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_pr_files_uses_json_diff(mock_client):
     """get_pr_files correctly extracts files when diff comes back as Bitbucket JSON."""
     mock_resp = MagicMock()
@@ -281,6 +369,39 @@ def test_get_pr_files_uses_json_diff(mock_client):
     paths = [f.path for f in files]
     assert "src/Foo.java" in paths
     assert "src/Bar.java" in paths
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_incremental_pr_files_parse_compare_diff(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/Foo.java"},
+                "destination": {"toString": "src/Foo.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 1,
+                        "sourceSpan": 1,
+                        "destinationLine": 1,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// added"}]}],
+                    }
+                ],
+            }
+        ]
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    files = p.get_incremental_pr_files("PROJ", "my-repo", 42, "base123", "head456")
+
+    assert len(files) == 1
+    assert files[0].path == "src/Foo.java"
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert call[0][0].endswith("/compare/diff")
+    assert call[1]["params"] == {"from": "base123", "to": "head456"}
 
 
 # ---------------------------------------------------------------------------
@@ -789,6 +910,46 @@ def test_get_review_thread_dismissal_context_server(mock_client):
     ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
     assert ctx is not None
     assert ctx.gate_exclusion_stable_id == "comment:10"
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_review_thread_dismissal_context_server_fails_closed_on_pagination_error(mock_client):
+    page1 = MagicMock()
+    page1.headers = {"content-type": "application/json"}
+    page1.raise_for_status = MagicMock()
+    page1.json.return_value = {
+        "isLastPage": False,
+        "nextPageStart": 100,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 11,
+                    "text": "child",
+                    "state": "OPEN",
+                    "parentComment": {"id": 10},
+                    "author": {"name": "b"},
+                    "createdDate": 2,
+                    "anchor": {"path": "f.java", "line": 1},
+                },
+            }
+        ],
+    }
+
+    def _get_side_effect(url, **kwargs):
+        params = kwargs.get("params") or {}
+        if params.get("start") == 0:
+            return page1
+        raise httpx.ReadError("boom")
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
+    assert ctx is None
+    calls = mock_client.return_value.__enter__.return_value.get.call_args_list
+    assert len(calls) == 2
+    assert calls[0][1]["params"] == {"start": 0, "limit": 100}
+    assert calls[1][1]["params"] == {"start": 100, "limit": 100}
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")

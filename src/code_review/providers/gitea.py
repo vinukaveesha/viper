@@ -32,6 +32,7 @@ from code_review.providers.review_decision_common import github_style_pull_revie
 from code_review.providers.safety import truncate_repo_content
 
 logger = logging.getLogger(__name__)
+_COMPARE_FALLBACK_STATUSES = {404, 405, 422}
 
 
 class GiteaProvider(ProviderInterface):
@@ -105,6 +106,36 @@ class GiteaProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}.diff"
         return self._get_text(path)
 
+    def get_incremental_pr_diff(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> str:
+        """Return unified diff for the incremental compare range ``base_sha...head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_diff(owner, repo, pr_number)
+        path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}.diff"
+        try:
+            return self._get_text(path)
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code not in _COMPARE_FALLBACK_STATUSES:
+                raise
+            logger.warning(
+                "Gitea incremental compare diff unsupported/invalid owner=%s repo=%s pr=%s "
+                "base=%s head=%s status=%s; falling back to full PR diff",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                status_code,
+            )
+            return self.get_pr_diff(owner, repo, pr_number)
+
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref; truncated with delimiter if over max size."""
         import base64
@@ -126,6 +157,39 @@ class GiteaProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}/files"
         data = self._get(path)
         return file_infos_from_pull_file_list(data) if isinstance(data, list) else []
+
+    def get_incremental_pr_files(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        base_sha: str,
+        head_sha: str,
+    ) -> list[FileInfo]:
+        """Return files changed in the incremental compare range ``base_sha...head_sha``."""
+        if not base_sha or not head_sha or base_sha == head_sha:
+            return self.get_pr_files(owner, repo, pr_number)
+        path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+        try:
+            data = self._get(path)
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code not in _COMPARE_FALLBACK_STATUSES:
+                raise
+            logger.warning(
+                "Gitea incremental compare files unsupported/invalid owner=%s repo=%s pr=%s "
+                "base=%s head=%s status=%s; falling back to full PR files",
+                owner,
+                repo,
+                pr_number,
+                base_sha,
+                head_sha,
+                status_code,
+            )
+            return self.get_pr_files(owner, repo, pr_number)
+        if not isinstance(data, dict):
+            return []
+        return file_infos_from_pull_file_list(data.get("files") or [])
 
     def post_review_comments(
         self,

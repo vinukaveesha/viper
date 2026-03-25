@@ -41,10 +41,14 @@ def test_finding_v1_optional_fields():
         code="style",
         message="Prefer X.",
         category="Style",
+        confidence="medium",
+        evidence="The visible code uses a less descriptive name.",
         fingerprint_hint="some_identifier",
     )
     assert f.end_line == 7
     assert f.category == "Style"
+    assert f.confidence == "medium"
+    assert f.evidence == "The visible code uses a less descriptive name."
     assert f.fingerprint_hint == "some_identifier"
 
 

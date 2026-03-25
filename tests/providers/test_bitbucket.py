@@ -26,6 +26,21 @@ def test_get_pr_diff(mock_client):
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_incremental_pr_diff_uses_compare_endpoint(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.text = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py"
+    mock_resp.headers = {}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    diff = p.get_incremental_pr_diff("owner", "repo", 1, "base123", "head456")
+
+    assert "diff --git" in diff
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert "/diff/base123..head456" in call[0][0]
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_file_content(mock_client):
     mock_resp = MagicMock()
     mock_resp.text = "print('hello')"
@@ -55,6 +70,24 @@ def test_get_pr_files(mock_client):
     assert len(files) == 2
     assert files[0].path == "foo.py"
     assert files[1].path == "bar.go"
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_incremental_pr_files_uses_diffstat_compare_endpoint(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "values": [{"new": {"path": "foo.py"}, "old": {"path": "foo.py"}, "status": "modified"}]
+    }
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    files = p.get_incremental_pr_files("owner", "repo", 1, "base123", "head456")
+
+    assert len(files) == 1
+    assert files[0].path == "foo.py"
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert "/diffstat/base123..head456" in call[0][0]
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
@@ -200,12 +233,58 @@ def test_get_unresolved_review_items_includes_inline_comments_and_tasks(mock_cli
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_unresolved_review_items_skips_pr_level_and_reply_comments(mock_client):
+    def _get_side_effect(url: str, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/pullrequests/9/comments" in u:
+            mock_r.json.return_value = {
+                "values": [
+                    {
+                        "id": 100,
+                        "content": {"raw": "[Medium] inline root"},
+                        "inline": {"path": "a.py", "to": 2},
+                    },
+                    {
+                        "id": 101,
+                        "content": {"raw": "[High] reply"},
+                        "inline": {"path": "a.py", "to": 2},
+                        "parent": {"id": 100},
+                    },
+                    {
+                        "id": 102,
+                        "content": {"raw": "[Low] PR level"},
+                    },
+                ],
+                "next": None,
+            }
+        elif "/pullrequests/9/tasks" in u:
+            mock_r.json.return_value = {"values": [], "next": None}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("ws", "slug", 9)
+
+    assert [i.stable_id for i in items] == ["comment:100"]
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
 def test_get_existing_review_comments(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
         "values": [
             {"id": 1, "content": {"raw": "[High] Bug"}, "inline": {"path": "foo.py", "to": 10}},
-            {"id": 2, "content": {"raw": "[Low] Nit"}, "inline": {"path": "bar.py", "to": 5}},
+            {
+                "id": 2,
+                "content": {"raw": "[Low] Nit"},
+                "inline": {"path": "bar.py", "to": 5},
+                "parent": {"id": 1},
+            },
         ]
     }
     mock_resp.headers = {"content-type": "application/json"}
@@ -217,6 +296,8 @@ def test_get_existing_review_comments(mock_client):
     assert comments[0].id == "1"
     assert comments[0].path == "foo.py"
     assert comments[0].line == 10
+    assert comments[0].parent_id is None
+    assert comments[1].parent_id == "1"
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")
