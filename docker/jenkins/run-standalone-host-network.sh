@@ -3,7 +3,9 @@
 # (and the code-review agent container) can reach services on the host (e.g. Bitbucket).
 #
 # Usage: from repo root:  ./docker/jenkins/run-standalone-host-network.sh
-# Stop:  podman stop code-review-jenkins   (or docker stop code-review-jenkins)
+# Stop:  podman stop code-review-jenkins-standalone   (or docker stop code-review-jenkins-standalone)
+# Defaults are isolated from docker-compose so Jenkins home, jobs, and build logs
+# do not leak into the compose-managed Jenkins instance.
 # No exports needed: script auto-detects Docker vs Podman and the socket path.
 
 set -euo pipefail
@@ -11,9 +13,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
 IMAGE_NAME="${IMAGE_NAME:-code-review-jenkins}"
-CONTAINER_NAME="${CONTAINER_NAME:-code-review-jenkins}"
-JENKINS_HOME_VOLUME="${JENKINS_HOME_VOLUME:-code-review_jenkins_home}"
-AGENT_NETWORK="${AGENT_NETWORK:-code-review_code-review-net}"
+CONTAINER_NAME="${CONTAINER_NAME:-code-review-jenkins-standalone}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-code-review-standalone}"
+JENKINS_HOME_VOLUME="${JENKINS_HOME_VOLUME:-${COMPOSE_PROJECT_NAME}_jenkins_home}"
+AGENT_NETWORK="${AGENT_NETWORK:-${COMPOSE_PROJECT_NAME}_code-review-net}"
 
 # ---- Auto-detect container runtime and socket ----
 # Prefer podman if available; else docker. Set CONTAINER_RUNTIME and CONTAINER_SOCKET to override.
@@ -24,7 +27,7 @@ else
   CONTAINER_SOCKET=""
 fi
 
-if [[ ( -z "$CONTAINER_RUNTIME" || -z "$CONTAINER_SOCKET" ) && command -v podman &>/dev/null && podman info &>/dev/null ]]; then
+if [[ -z "$CONTAINER_RUNTIME" || -z "$CONTAINER_SOCKET" ]] && command -v podman &>/dev/null && podman info &>/dev/null; then
   CONTAINER_RUNTIME=podman
   CONTAINER_SOCKET="$(podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null)" || true
   if [[ -z "$CONTAINER_SOCKET" || ! -e "$CONTAINER_SOCKET" ]]; then
@@ -33,7 +36,7 @@ if [[ ( -z "$CONTAINER_RUNTIME" || -z "$CONTAINER_SOCKET" ) && command -v podman
   fi
 fi
 
-if [[ ( -z "$CONTAINER_RUNTIME" || -z "$CONTAINER_SOCKET" ) && -e /var/run/docker.sock && command -v docker &>/dev/null && docker info &>/dev/null ]]; then
+if [[ -z "$CONTAINER_RUNTIME" || -z "$CONTAINER_SOCKET" ]] && [[ -e /var/run/docker.sock ]] && command -v docker &>/dev/null && docker info &>/dev/null; then
   CONTAINER_RUNTIME=docker
   CONTAINER_SOCKET=/var/run/docker.sock
 fi
@@ -65,6 +68,8 @@ fi
 
 # ---- Start Jenkins ----
 echo "Starting Jenkins (host network). UI: http://localhost:8080"
+echo "Standalone state volume: $JENKINS_HOME_VOLUME"
+echo "Standalone agent network: $AGENT_NETWORK"
 echo "In Jenkins set SCM_URL to the host IP for Bitbucket (e.g. http://192.168.1.27:7990/rest/api/1.0); Bitbucket must listen on 0.0.0.0."
 echo ""
 
@@ -77,6 +82,7 @@ echo ""
   -e JENKINS_ADMIN_USER=admin \
   -e JENKINS_ADMIN_PASS=admin \
   -e CONTAINER_RUNTIME="$CONTAINER_RUNTIME" \
+  -e COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
   -e USE_INLINE_AGENT="${USE_INLINE_AGENT:-false}" \
   "$IMAGE_NAME"
 
