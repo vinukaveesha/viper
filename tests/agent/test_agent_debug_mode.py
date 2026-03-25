@@ -213,6 +213,14 @@ def test_findings_only_instruction_category_field():
     )
 
 
+def test_findings_only_instruction_mentions_evidence_and_confidence():
+    """FINDINGS_ONLY_INSTRUCTION should bias the model toward evidence-backed findings."""
+    lowered = FINDINGS_ONLY_INSTRUCTION.lower()
+    assert "evidence" in lowered
+    assert "confidence" in lowered
+    assert "reconstruct the" in lowered and "builder" in lowered
+
+
 def test_single_shot_instruction_category_field():
     """SINGLE_SHOT_INSTRUCTION must mention the category field with example values."""
     assert "category" in SINGLE_SHOT_INSTRUCTION, (
@@ -221,6 +229,13 @@ def test_single_shot_instruction_category_field():
     assert "Correctness" in SINGLE_SHOT_INSTRUCTION or "Security" in SINGLE_SHOT_INSTRUCTION, (
         "SINGLE_SHOT_INSTRUCTION must list example category values"
     )
+
+
+def test_single_shot_instruction_prefers_omission_over_weak_speculation():
+    """SINGLE_SHOT_INSTRUCTION should tell the model to omit contradicted or weak findings."""
+    lowered = SINGLE_SHOT_INSTRUCTION.lower()
+    assert "omit the finding" in lowered
+    assert "prefer omission over weak speculation" in lowered
 
 
 def test_instructions_consistent_category_guidance():

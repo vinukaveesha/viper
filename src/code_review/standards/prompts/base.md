@@ -48,6 +48,8 @@ Apply the following **only** when the changed file or the visible hunk is clearl
 - Prefer fewer, high-confidence findings over broad speculation.
 - If confidence is limited, downgrade severity to **[Low]** and/or set `category: NeedsVerification`.
 - You will often see diffs or snippets, though full files may sometimes be provided; do not assume full-file context is never available.
+- When correctness depends on several adjacent builder, template, or string-construction fragments, reconstruct the effective emitted code before claiming syntax or formatting defects.
+- If nearby visible code contradicts the concern, omit the finding rather than posting a weak or speculative comment.
 - Do not claim truncation or syntax errors at file end without explicit evidence (compiler/linter output or a truncation marker).
 - When context is incomplete, describe the risk in shown code and ask for confirmation rather than asserting certainty.
 - Avoid speculative logging-level suggestions (for example, changing `warn`/`error` to `debug`/`info`) unless there is clear evidence of over-logging, duplicated noisy logs, or a documented project policy; be especially conservative in exception/catch paths where higher-severity logs are often intentional.

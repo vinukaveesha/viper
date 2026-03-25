@@ -230,6 +230,126 @@ def _patch_tokens(text: str) -> set[str]:
     return {tok.lower() for tok in re.split(r"\W+", text) if len(tok) >= 3}
 
 
+def _normalize_code_for_comparison(text: str) -> str:
+    """Collapse all whitespace so equivalent one-line code compares equal."""
+    return re.sub(r"\s+", "", text or "")
+
+
+_SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bmissing\s+(?:a\s+)?(?:comma|semicolon|colon|parenthesis|paren|bracket|brace|quote)\b", re.I),
+    re.compile(r"\bmissing\s+[`'\"].+?[`'\"].*\b(?:before|after)\b", re.I),
+    re.compile(r"\bsyntax\s+error\b", re.I),
+    re.compile(r"\b(?:invalid|malformed)\s+(?:\w+\s+)?code\b", re.I),
+    re.compile(r"\b(?:invalid|malformed)\s+(?:annotation|statement|expression)\b", re.I),
+    re.compile(r"\b(?:won['\u2019]?t|will\s+not)\s+compile\b", re.I),
+    re.compile(r"\bcompiler?\s+error\b", re.I),
+)
+
+_MISSING_COMMA_BEFORE_FRAGMENT_PATTERN = re.compile(
+    r"\bmissing\s+(?:a\s+)?comma\s+before\s+(?:`([^`]+)`|\"([^\"]+)\"|'([^']+)')",
+    re.I,
+)
+
+
+def _message_describes_syntax_or_missing_token_issue(message: str) -> bool:
+    """True when the finding text claims a token/syntax defect rather than a semantic issue."""
+    if not message or not str(message).strip():
+        return False
+    return any(p.search(message) for p in _SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS)
+
+
+def _extract_missing_comma_fragment(message: str) -> str | None:
+    """Extract the cited fragment from messages like 'missing comma before `nullable = false`'."""
+    if not message:
+        return None
+    match = _MISSING_COMMA_BEFORE_FRAGMENT_PATTERN.search(message)
+    if not match:
+        return None
+    for group in match.groups():
+        if group and group.strip():
+            return group.strip()
+    return None
+
+
+def _window_text(lines_map: dict[int, str], line: int, radius: int = 2) -> str:
+    """Join nearby visible diff lines into a small searchable context window."""
+    window_lines = [
+        content
+        for ln, content in sorted(lines_map.items())
+        if line - radius <= ln <= line + radius
+    ]
+    return "\n".join(window_lines)
+
+
+def _filter_obviously_contradicted_findings(
+    findings: list[FindingV1],
+    diff_text: str,
+) -> list[FindingV1]:
+    """Drop findings whose own message is directly contradicted by visible diff code.
+
+    This is intentionally conservative and only handles a few high-signal cases:
+    - a syntax/token complaint whose suggested patch is identical to the current line
+    - a message claiming a missing comma before a quoted fragment when the nearby diff
+      already contains `,<fragment>`
+    """
+    if not diff_text or not findings:
+        return findings
+
+    line_index = _build_diff_line_index(diff_text)
+    file_lines = _build_per_file_line_index(diff_text)
+    kept: list[FindingV1] = []
+
+    for f in findings:
+        norm_path = _normalize_path_for_anchor(f.path)
+        actual_content = line_index.get((norm_path, f.line))
+        lines_map = file_lines.get(norm_path, {})
+        if actual_content is None:
+            kept.append(f)
+            continue
+
+        message = f.message or ""
+        window_text = _window_text(lines_map, f.line)
+
+        if f.suggested_patch:
+            patch_first_line = next(
+                (ln.strip() for ln in f.suggested_patch.splitlines() if ln.strip()),
+                "",
+            )
+            if patch_first_line and (
+                _normalize_code_for_comparison(patch_first_line)
+                == _normalize_code_for_comparison(actual_content)
+            ):
+                if _message_describes_syntax_or_missing_token_issue(message):
+                    logger.info(
+                        "Dropping contradicted syntax/token finding %s:%d: "
+                        "suggested patch is identical to current diff line",
+                        f.path,
+                        f.line,
+                    )
+                    continue
+                f = f.model_copy(update={"suggested_patch": None})
+
+        fragment = _extract_missing_comma_fragment(message)
+        if fragment:
+            fragment_patterns = (
+                f", {fragment}",
+                f",{fragment}",
+            )
+            if any(pattern in window_text for pattern in fragment_patterns):
+                logger.info(
+                    "Dropping contradicted missing-comma finding %s:%d: "
+                    "nearby diff already contains comma before %r",
+                    f.path,
+                    f.line,
+                    fragment,
+                )
+                continue
+
+        kept.append(f)
+
+    return kept
+
+
 def _validate_suggested_patches(
     findings: list[FindingV1],
     diff_text: str,
@@ -2198,13 +2318,21 @@ class ReviewOrchestrator:
         # every posted comment appears inline in the diff view.
         line_filtered = self._filter_findings_to_visible_diff_lines(relocated, full_diff)
 
+        # Guardrail: drop findings whose own message is directly contradicted by the
+        # visible diff, and strip no-op single-line suggestions. This catches a class
+        # of false positives where the model claims a missing token or invalid syntax
+        # even though the shown code already contains the cited token.
+        contradiction_filtered = _filter_obviously_contradicted_findings(
+            line_filtered, full_diff
+        )
+
         # Guardrail: strip suggested_patch from findings where the patch content has no
         # token overlap with the actual diff line it is anchored to.  This catches the
         # common LLM error of hallucinating a patch for a different line of code while
         # naming a visible line (so the line-visibility guard above passes).  Without
         # this guard, the patch would be rendered as a suggestion block replacing the
         # wrong code.  Stripping it degrades gracefully to a plain inline comment.
-        patched = _validate_suggested_patches(line_filtered, full_diff)
+        patched = _validate_suggested_patches(contradiction_filtered, full_diff)
         # Drop findings where the model argued itself out of the issue in the same message.
         return _filter_self_retracted_finding_messages(patched)
 

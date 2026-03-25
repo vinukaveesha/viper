@@ -46,7 +46,8 @@ CRITICAL — Output format: Your final response must be a valid JSON array that 
 Each finding must have: path (str), line (int), severity ("high"|"medium"|"low"|"nit"),
 code (str, e.g. unused-var), and message (str).
 Optional fields: end_line, category (e.g. "Correctness", "Security", "Performance",
-"Maintainability", "Tests", "Style"), anchor, fingerprint_hint,
+"Maintainability", "Tests", "Style"), confidence ("high"|"medium"|"low"), evidence,
+anchor, fingerprint_hint,
 suggested_patch, agent_fix_prompt.
 
 IMPORTANT — Finding messages (decisive, no self-retraction):
@@ -56,6 +57,17 @@ IMPORTANT — Finding messages (decisive, no self-retraction):
 - If you decide there is no real issue after reasoning, omit that finding entirely from the JSON
   array. Do not emit a finding whose message retracts itself, says "false positive", or takes
   back the issue.
+
+IMPORTANT — Evidence and confidence:
+- Prefer including `evidence` and `confidence` for every finding.
+- `evidence` should briefly cite the exact visible code that supports the claim; quote or
+  paraphrase the relevant snippet from the diff or fetched file lines.
+- Before claiming a syntax, annotation, API-shape, or generated-code bug, reconstruct the
+  effective code from adjacent builder / append / template fragments that contribute to it.
+- If nearby visible code contradicts the concern, omit the finding entirely.
+- Prefer omission over weak speculation. If confidence is limited because the visible context is
+  incomplete, either omit the finding or set `confidence` to "low" and use
+  `category: "NeedsVerification"`.
 
 IMPORTANT — anchor field (strongly recommended):
 - Always include an `anchor` field containing a distinctive code snippet (a substring)
@@ -95,7 +107,9 @@ Example (one finding): [
     "severity": "medium",
     "code": "rename-variable",
     "category": "Maintainability",
+    "confidence": "high",
     "message": "Rename variable foo to user_id for clarity.",
+    "evidence": "The assignment uses the generic name foo even though request.user_id is the value.",
     "anchor": "foo = request.user_id",
     "suggested_patch": "user_id = request.user_id"
   }
