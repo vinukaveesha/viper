@@ -42,11 +42,12 @@ def main() -> None:
         webhook_params = WEBHOOK_PARAMS_BY_PROVIDER.get(
             scm_provider, WEBHOOK_PARAMS_BY_PROVIDER["gitea"]
         )
-        filter_regex = (
-            "^pr:(opened|modified|from_ref_updated)$"
-            if scm_provider == "bitbucket_server"
-            else "^(open|opened|synchronize|synchronized|update|updated)$"
-        )
+        if scm_provider == "bitbucket_server":
+            filter_regex = "^pr:(opened|modified|from_ref_updated)$"
+        elif scm_provider == "gitlab":
+            filter_regex = "^(open|reopen|update)$"
+        else:
+            filter_regex = "^(opened|reopened|synchronize|synchronized)$"
         ui.configure_webhook_trigger(
             job_name="code-review",
             post_content_params=webhook_params,

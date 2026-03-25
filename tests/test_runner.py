@@ -536,41 +536,6 @@ def test_run_review_decision_only_skips_agent_and_inline(
     assert provider.submit_review_decision.call_args.kwargs.get("head_sha") == "from-api-sha"
 
 
-@patch("code_review.runner.get_context_window")
-@patch("code_review.runner.get_provider")
-@patch("code_review.runner.get_scm_config")
-def test_run_review_decision_only_prefers_event_context_head_sha(
-    mock_get_scm_config, mock_get_provider, mock_get_context_window
-):
-    """Event context head_sha wins over empty CLI head when resolving submission SHA."""
-    from code_review.runner import run_review
-    from code_review.schemas.review_decision_event import ReviewDecisionEventContext
-
-    provider = _provider_with_review_decisions()
-    provider.get_pr_info = MagicMock(return_value=PRInfo(head_sha="should-not-use"))
-    _wire_standard_runner_mocks(
-        mock_get_scm_config,
-        mock_get_provider,
-        mock_get_context_window,
-        scm=_review_decision_scm_config(),
-        provider=provider,
-    )
-
-    run_review(
-        "o",
-        "r",
-        1,
-        head_sha="",
-        dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(head_sha="from-event"),
-    )
-
-    provider.submit_review_decision.assert_called_once()
-    assert provider.submit_review_decision.call_args.kwargs.get("head_sha") == "from-event"
-    provider.get_pr_info.assert_not_called()
-
-
 @patch("code_review.runner.get_code_review_app_config")
 @patch("code_review.runner.get_context_window")
 @patch("code_review.runner.get_provider")
@@ -611,7 +576,6 @@ def test_run_review_decision_only_skips_when_skip_if_bot_not_blocking_and_reply(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="reply_added",
             comment_id="42",
             source="webhook_comment",
         ),
@@ -661,7 +625,6 @@ def test_run_review_decision_only_skip_opt_in_ignored_when_bot_blocking(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="reply_added",
             comment_id="42",
             source="webhook_comment",
         ),
@@ -709,8 +672,6 @@ def test_run_review_decision_only_skip_opt_in_ignored_for_comment_deleted(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="comment_deleted",
-            comment_id="42",
             source="webhook_comment",
         ),
     )
@@ -947,7 +908,6 @@ def test_run_review_decision_only_reply_dismissal_agreed_excludes_thread(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="reply_added",
             comment_id="11",
             source="webhook_comment",
         ),
@@ -1024,7 +984,6 @@ def test_run_review_decision_only_reply_dismissal_disagreed_posts_reply(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="reply_added",
             comment_id="11",
             source="webhook_comment",
         ),
@@ -1102,7 +1061,6 @@ def test_run_review_decision_only_reply_dismissal_skipped_when_actor_is_bot(
         dry_run=False,
         review_decision_only=True,
         event_context=ReviewDecisionEventContext(
-            event_kind="reply_added",
             comment_id="11",
             source="webhook_comment",
             actor_login="viper-bot",

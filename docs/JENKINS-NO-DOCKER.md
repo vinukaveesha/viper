@@ -66,9 +66,8 @@ On every Jenkins **agent** (or controller, if builds run on the controller) that
 ## 2. Configure Jenkins to use the inline agent
 
 1. **Set the inline flag** so the pipeline never tries to run Docker/Podman:
-   - In the **job**: **Configure** → **Build Environment** → add **Use secret text(s) or file(s)** or **Inject environment variables** and set:
-     - `USE_INLINE_AGENT=true`
-   - Or set it globally: **Manage Jenkins** → **System** → **Global properties** → **Environment variables** → add `USE_INLINE_AGENT=true`.
+   - Preferred: set it globally in **Manage Jenkins → System → Global properties → Environment variables** as `USE_INLINE_AGENT=true`.
+   - If you use folder-scoped settings or a plugin such as **Environment Injector**, set `USE_INLINE_AGENT=true` there instead of relying on job parameters.
 
 2. **SCM and LLM configuration** (when not using Docker Compose):
    - The inline path reads `SCM_PROVIDER` and `SCM_URL` from the environment. Set them on the job or globally so they match your SCM (e.g. Gitea, GitHub, GitLab).

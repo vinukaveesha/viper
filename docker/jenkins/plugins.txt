@@ -1,5 +1,8 @@
 workflow-aggregator
 credentials
 credentials-binding
+plain-credentials
 git
 generic-webhook-trigger
+cloudbees-folder
+folder-properties

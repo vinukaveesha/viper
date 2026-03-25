@@ -27,6 +27,10 @@ from code_review.providers.base import (
     normalize_diff_anchor_path,
 )
 from code_review.providers.safety import truncate_repo_content
+from code_review.schemas.review_thread_dismissal import (
+    ReviewThreadDismissalContext,
+    ReviewThreadDismissalEntry,
+)
 
 logger = logging.getLogger("code_review")
 
@@ -449,6 +453,217 @@ class BitbucketServerProvider(ProviderInterface):
             return comments, None
         return comments, next_start
 
+    @staticmethod
+    def _bbs_merge_commented_activities_into(by_id: dict[str, dict], data: dict) -> None:
+        for act in data.get("values") or []:
+            if not isinstance(act, dict) or act.get("action") != "COMMENTED":
+                continue
+            c = act.get("comment")
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or "").strip()
+            if not cid:
+                continue
+            by_id[cid] = c
+
+    @staticmethod
+    def _bbs_activities_next_start(data: dict, start: int) -> int | None:
+        if data.get("isLastPage", True):
+            return None
+        nxt = data.get("nextPageStart")
+        if nxt is None:
+            return None
+        try:
+            next_start = int(nxt)
+        except (TypeError, ValueError):
+            return None
+        if next_start == start:
+            return None
+        return next_start
+
+    def _bbs_list_comment_dicts_from_activities(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[dict]:
+        """Collect unique PR comment dicts from paginated activities (COMMENTED)."""
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "activities")
+        by_id: dict[str, dict] = {}
+        start = 0
+        for _ in range(500):
+            try:
+                data = self._get(path, params={"start": start, "limit": 100})
+            except Exception as e:
+                logger.warning(
+                    "Bitbucket Server activities fetch for dismissal owner=%s repo=%s pr=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
+                )
+                break
+            if not isinstance(data, dict):
+                break
+            self._bbs_merge_commented_activities_into(by_id, data)
+            nxt = BitbucketServerProvider._bbs_activities_next_start(data, start)
+            if nxt is None:
+                break
+            start = nxt
+        return list(by_id.values())
+
+    @staticmethod
+    def _bbs_comment_parent_id(c: dict) -> str | None:
+        for key in ("parentComment", "parent"):
+            p = c.get(key)
+            if isinstance(p, dict) and p.get("id") is not None:
+                return str(p["id"])
+        return None
+
+    @staticmethod
+    def _bbs_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, int] | None:
+        if not isinstance(c, dict):
+            return None
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            return None
+        parent = BitbucketServerProvider._bbs_comment_parent_id(c)
+        body = str(c.get("text") or c.get("body") or "")
+        author = c.get("author") if isinstance(c.get("author"), dict) else {}
+        login = str(author.get("name") or author.get("slug") or author.get("username") or "")
+        cd = c.get("createdDate")
+        try:
+            ts = int(cd) if cd is not None else 0
+        except (TypeError, ValueError):
+            ts = 0
+        return (cid, parent, body, login, ts)
+
+    @staticmethod
+    def _bbs_index_dismissal_by_id(
+        raw_comments: list[dict],
+    ) -> dict[str, dict[str, str | None | int]]:
+        by_id: dict[str, dict[str, str | None | int]] = {}
+        for c in raw_comments:
+            meta = BitbucketServerProvider._bbs_dismissal_meta(c)
+            if not meta:
+                continue
+            cid, parent, body, login, ts = meta
+            by_id[cid] = {
+                "parent": parent,
+                "body": body,
+                "login": login,
+                "ts": ts,
+            }
+        return by_id
+
+    @staticmethod
+    def _bbs_thread_root_from_want(
+        by_id: dict[str, dict[str, str | None | int]], want: str
+    ) -> str | None:
+        if want not in by_id:
+            return None
+        root = want
+        seen_up: set[str] = set()
+        while root in by_id:
+            par = by_id[root]["parent"]
+            if not par or str(par) not in by_id or root in seen_up:
+                break
+            seen_up.add(root)
+            root = str(par)
+        return root
+
+    @staticmethod
+    def _bbs_thread_member_ids_sorted(
+        by_id: dict[str, dict[str, str | None | int]], root: str
+    ) -> list[str]:
+        children: dict[str, list[str]] = {}
+        for cid, info in by_id.items():
+            par = info["parent"]
+            if par and str(par) in by_id:
+                children.setdefault(str(par), []).append(cid)
+        stack = [root]
+        member_ids: list[str] = []
+        seen_d: set[str] = set()
+        while stack:
+            n = stack.pop()
+            if n in seen_d:
+                continue
+            seen_d.add(n)
+            member_ids.append(n)
+            stack.extend(children.get(n, []))
+        member_ids.sort(key=lambda i: (int(by_id[i]["ts"]), i))
+        return member_ids
+
+    @staticmethod
+    def _bbs_dismissal_entries_from_members(
+        by_id: dict[str, dict[str, str | None | int]], member_ids: list[str]
+    ) -> list[ReviewThreadDismissalEntry]:
+        entries: list[ReviewThreadDismissalEntry] = []
+        for cid in member_ids:
+            inf = by_id[cid]
+            entries.append(
+                ReviewThreadDismissalEntry(
+                    comment_id=cid,
+                    author_login=str(inf["login"] or ""),
+                    body=str(inf["body"] or ""),
+                    created_at=str(inf["ts"]),
+                )
+            )
+        return entries
+
+    @staticmethod
+    def _bbs_build_dismissal_context(
+        raw_comments: list[dict], triggered_comment_id: str
+    ) -> ReviewThreadDismissalContext | None:
+        want = (triggered_comment_id or "").strip()
+        if not want:
+            return None
+        by_id = BitbucketServerProvider._bbs_index_dismissal_by_id(raw_comments)
+        root = BitbucketServerProvider._bbs_thread_root_from_want(by_id, want)
+        if root is None:
+            return None
+        member_ids = BitbucketServerProvider._bbs_thread_member_ids_sorted(by_id, root)
+        entries = BitbucketServerProvider._bbs_dismissal_entries_from_members(by_id, member_ids)
+        if len(entries) < 2:
+            return None
+        return ReviewThreadDismissalContext(
+            gate_exclusion_stable_id=f"comment:{root}",
+            entries=entries,
+        )
+
+    def get_review_thread_dismissal_context(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        triggered_comment_id: str,
+    ) -> ReviewThreadDismissalContext | None:
+        try:
+            raw = self._bbs_list_comment_dicts_from_activities(owner, repo, pr_number)
+            return self._bbs_build_dismissal_context(raw, triggered_comment_id)
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server get_review_thread_dismissal_context failed "
+                "owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+
+    def post_review_thread_reply(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        reply_to_comment_id: str,
+        body: str,
+    ) -> None:
+        try:
+            pid = int((reply_to_comment_id or "").strip())
+        except ValueError as e:
+            raise ValueError("Bitbucket Server reply_to_comment_id must be numeric") from e
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
+        self._post(path, {"text": body, "parent": {"id": pid}})
+
     def get_existing_review_comments(
         self, owner: str, repo: str, pr_number: int
     ) -> list[ReviewComment]:
@@ -859,4 +1074,6 @@ class BitbucketServerProvider(ProviderInterface):
             supports_review_decisions=bool(self._participant_user_slug),
             supports_bot_blocking_state_query=bool(self._participant_user_slug),
             supports_bot_attribution_identity_query=bool(self._participant_user_slug),
+            supports_review_thread_dismissal_context=True,
+            supports_review_thread_reply=True,
         )

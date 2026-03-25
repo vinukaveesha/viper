@@ -1075,12 +1075,9 @@ def _log_review_decision_event_if_present(ctx: ReviewDecisionEventContext | None
     if ctx is None or not ctx.has_audit_fields():
         return
     logger.info(
-        "review_decision_event_context kind=%s source=%s name=%s action=%s "
+        "review_decision_event_context source=%s "
         "comment_id=%s thread_id=%s actor_login=%s",
-        ctx.event_kind,
         ctx.source,
-        ctx.event_name,
-        ctx.event_action,
         ctx.comment_id,
         ctx.thread_id,
         ctx.actor_login,
@@ -1091,11 +1088,7 @@ def _head_sha_hint_for_decision_only(
     ctx: ReviewDecisionEventContext | None,
     cli_head_sha: str,
 ) -> str:
-    """Prefer explicit head from event payload, then CLI/env head, before provider lookup."""
-    if ctx is not None:
-        from_event = (ctx.head_sha or "").strip()
-        if from_event:
-            return from_event
+    """Return CLI/env head SHA for decision-only runs."""
     return (cli_head_sha or "").strip()
 
 
@@ -1115,6 +1108,10 @@ def _maybe_submit_review_decision(
     *gate_outcome* must match the omit-marker PR summary snapshot when both run in the same pass.
     """
     if not bool(getattr(cfg, "review_decision_enabled", False)):
+        logger.info(
+            "Skipping PR review decision submission: SCM_REVIEW_DECISION_ENABLED is false "
+            "(enable to push the computed gate to the SCM).",
+        )
         return
 
     decision = gate_outcome.decision
@@ -1395,6 +1392,12 @@ def _run_reply_dismissal_llm(user_message: str) -> str:
         session_service=session_service,
     )
     session_id = f"reply-dismissal/{uuid.uuid4().hex[:12]}"
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "LLM request (reply-dismissal) session=%s prompt=%s",
+            session_id,
+            user_message,
+        )
     content = types.Content(role="user", parts=[types.Part(text=user_message)])
     return _run_agent_and_collect_response(runner, session_service, session_id, content)
 
@@ -2163,7 +2166,7 @@ class ReviewOrchestrator:
         logger.info(
             "Review-decision-only: skipping quality gate (bot not blocking; "
             "CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING=1, "
-            "event_kind=reply_added)."
+            "comment_id present)."
         )
         return self._record_observability_and_build_result(
             trace_id,
@@ -2220,9 +2223,15 @@ class ReviewOrchestrator:
         if not (
             app_cfg.reply_dismissal_enabled
             and ctx is not None
-            and ctx.event_kind == "reply_added"
             and (ctx.comment_id or "").strip()
         ):
+            if app_cfg.reply_dismissal_enabled and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "Reply-dismissal not run: requires CODE_REVIEW_EVENT_COMMENT_ID; "
+                    "got comment_id=%r ctx_present=%s",
+                    ((ctx.comment_id or "").strip() if ctx else "") or "",
+                    ctx is not None,
+                )
             return frozenset()
 
         comment_id = ctx.comment_id.strip()
@@ -2260,6 +2269,14 @@ class ReviewOrchestrator:
         verdict = reply_dismissal_verdict_from_llm_text(raw_verdict)
         if verdict is None:
             observability.record_reply_dismissal_outcome("parse_failed")
+            snippet = (raw_verdict or "").strip()
+            if len(snippet) > 1500:
+                snippet = snippet[:1500] + "…"
+            logger.warning(
+                "Reply-dismissal LLM output could not be parsed as ReplyDismissalVerdictV1; "
+                "enable DEBUG for full request/response. Raw (truncated): %r",
+                snippet or "(empty)",
+            )
             return frozenset()
 
         logger.info(
@@ -2321,17 +2338,6 @@ class ReviewOrchestrator:
         _log_review_decision_event_if_present(self._event_context)
 
         app_cfg = get_code_review_app_config()
-        if (
-            self._event_context is not None
-            and self._event_context.has_audit_fields()
-            and self._event_context.event_kind
-            in ("comment_deleted", "thread_resolved", "thread_outdated", "scheduled")
-        ):
-            logger.info(
-                "Review-decision-only: event_kind=%s — recomputing gate from SCM state only "
-                "(no reply-dismissal LLM)",
-                self._event_context.event_kind,
-            )
 
         skip_result = self._determine_skip_reason(
             provider, cfg, owner, repo, pr_number, trace_id, start_time, run_handle
@@ -2374,6 +2380,12 @@ class ReviewOrchestrator:
             [],
             cfg,
             excluded_gate_stable_ids=excluded_gate if excluded_gate else None,
+        )
+        logger.info(
+            "Review-decision-only quality gate: open_high=%d open_medium=%d => decision=%s",
+            gate_outcome.high_count,
+            gate_outcome.medium_count,
+            gate_outcome.decision,
         )
         _maybe_submit_review_decision(
             provider,

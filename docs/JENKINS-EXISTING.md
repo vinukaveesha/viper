@@ -71,7 +71,9 @@ The simplest path is to set them **globally**:
 
 - **Manage Jenkins → System → Global properties → Environment variables** → add the variables below.
 
-Pipeline jobs do not have a “Build Environment” section in the job configuration UI (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use one job per SCM with the same Jenkinsfile and set each job’s parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md).
+Pipeline jobs do not have a “Build Environment” section in the job configuration UI by default (unlike Freestyle jobs). For the single-SCM setup, use the **global** variables above. The pipeline (`Script Path`: `docker/jenkins/Jenkinsfile`) is designed for one set of global SCM/LLM env vars. For **multiple SCMs**, use one job per SCM with the same Jenkinsfile and set `SCM_PROVIDER` and `SCM_URL` at the **folder level** (folder configuration), not as job parameter defaults; see [Jenkins with multiple SCMs](JENKINS-MULTIPLE-SCMS.md).
+
+If `SCM_PROVIDER` / `SCM_URL` seem to get cleared after a run, this is usually Jenkins reapplying parameter definitions from `Jenkinsfile` when using **Pipeline script from SCM**. Move those values to folder-level environment variables (or global env vars for single-SCM) so they persist.
 
 | Variable | Example (Gitea) | Example (GitHub) |
 |----------|-----------------|------------------|
@@ -86,6 +88,8 @@ LLM (optional): set `LLM_PROVIDER` and `LLM_MODEL` to override defaults (e.g. `L
 
 **Auto PR review decisions** (optional): set the same global/folder/job env vars the app reads (see [Configuration reference](CONFIGURATION-REFERENCE.md#2-scm-scm_)): `SCM_REVIEW_DECISION_ENABLED` (e.g. `true`), `SCM_REVIEW_DECISION_HIGH_THRESHOLD`, `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD`, and for **Bitbucket Server/DC only** `SCM_BITBUCKET_SERVER_USER_SLUG`. The Jenkinsfile forwards these into the agent container or inline `code-review` run; omit a variable in Jenkins to keep the app default for that setting.
 
+For a dedicated Jenkins setup that recomputes the quality gate after comment or thread activity without running the full review agent, see [Jenkins: review-decision-only on comment activity](JENKINS-REVIEW-DECISION-ONLY.md).
+
 ---
 
 ## 4. Webhooks so PRs trigger the job
@@ -95,18 +99,40 @@ To run the review when a PR is opened or updated, use the **Generic Webhook Trig
 1. Install **Generic Webhook Trigger** if not already installed: **Manage Jenkins → Plugins**.
 2. In your pipeline job: **Configure → Build Triggers** → enable **Generic Webhook Trigger**.
 3. **Post content parameters**: add the variables and JSONPath expressions for your SCM (see below).
-4. **Optional filter**: Variable `$PR_ACTION`, Regexp `^(opened|synchronize|synchronized)$` (Gitea/GitHub/GitLab) so only open/sync triggers a build.
+4. **Optional filter**: Variable `$PR_ACTION`, with a regex that matches your SCM’s PR-open/update actions.
 5. Copy the **Webhook URL** from the trigger section and configure it in your SCM (repo **Settings → Webhooks**).
 
-### Gitea / GitHub / GitLab (similar payloads)
+### Gitea / GitHub
 
 | Variable | Expression (JSONPath) |
 |----------|------------------------|
-| `SCM_OWNER` | `$.pull_request.base.repo.owner.login` (GitHub/GitLab) or Gitea equivalent |
+| `SCM_OWNER` | `$.pull_request.base.repo.owner.login` |
 | `SCM_REPO` | `$.pull_request.base.repo.name` |
 | `SCM_PR_NUM` | `$.pull_request.number` |
 | `SCM_HEAD_SHA` | `$.pull_request.head.sha` |
 | `PR_ACTION` | `$.action` |
+
+Suggested filter:
+
+- Text: `$PR_ACTION`
+- Regex: `^(opened|reopened|synchronize|synchronized)$`
+
+### GitLab
+
+GitLab merge request webhooks use `object_attributes.*` fields instead of GitHub-style `pull_request.*`.
+
+| Variable | Expression (JSONPath) |
+|----------|------------------------|
+| `SCM_OWNER` | Your project namespace field from the webhook payload, for example `$.project.namespace` |
+| `SCM_REPO` | Your project path/slug field from the webhook payload, for example `$.project.path` |
+| `SCM_PR_NUM` | `$.object_attributes.iid` |
+| `SCM_HEAD_SHA` | `$.object_attributes.last_commit.id` |
+| `PR_ACTION` | `$.object_attributes.action` |
+
+Suggested filter:
+
+- Text: `$PR_ACTION`
+- Regex: `^(open|reopen|update)$`
 
 If your SCM is **Bitbucket Data Center**, see [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for the JSONPath expressions and filter (different webhook payload).
 
@@ -118,7 +144,7 @@ The Jenkinsfile can run the agent in two ways:
 
 | Mode | When to use | What you need |
 |------|--------------|---------------|
-| **Container** | Jenkins agents have Docker or Podman | Agent image on the node: `docker pull e4c5/code-review-agent` and tag as `code-review-agent`, or build from repo: `docker build -t code-review-agent -f docker/Dockerfile.agent .` |
+| **Container** | Jenkins agents have Docker or Podman | Agent image on the node: `docker pull e4c5/code-review-agent && docker tag e4c5/code-review-agent code-review-agent`, or build from repo: `docker build -t code-review-agent -f docker/Dockerfile.agent .`. If you prefer a pinned remote tag, set `IMAGE_NAME` explicitly on the job. |
 | **Inline (no container)** | No Docker/Podman on agents, or you prefer not to use it | Install the `code-review` CLI on each agent that runs the job and set **`USE_INLINE_AGENT=true`** (job or global env). See [Jenkins without Docker](JENKINS-NO-DOCKER.md). |
 
 If you don’t set `USE_INLINE_AGENT=true` and the node has no Docker/Podman, the build will fail; the Jenkinsfile suggests setting `USE_INLINE_AGENT=true` and points to the docs.
@@ -135,6 +161,7 @@ See [Using a new version of the review tool when code changes](JENKINS-UPDATING-
 
 - **Existing Jenkins**: Add one Pipeline job (Script Path: `docker/jenkins/Jenkinsfile`), credentials `SCM_TOKEN` and `LLM_API_KEY`, and SCM/LLM env vars.
 - **Webhooks**: Use Generic Webhook Trigger and your SCM’s webhook UI; if your SCM is Bitbucket Data Center, see [Bitbucket Data Center](BITBUCKET-DATACENTER.md).
+- **Comment-triggered recalculation**: See [Jenkins: review-decision-only on comment activity](JENKINS-REVIEW-DECISION-ONLY.md).
 - **Execution**: Use the prebuilt image (or build it) on agents with Docker/Podman, or install the CLI and set `USE_INLINE_AGENT=true` as in [Jenkins without Docker](JENKINS-NO-DOCKER.md).
 - **After code changes**: See [Using a new version when code changes](JENKINS-UPDATING-AGENT.md).
 

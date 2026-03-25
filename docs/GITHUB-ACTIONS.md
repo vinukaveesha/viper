@@ -373,10 +373,6 @@ Example container invocation (adapt `SCM_PR_NUM` / `SCM_HEAD_SHA` to your event 
       -e SCM_PROVIDER -e SCM_URL -e SCM_TOKEN \
       -e SCM_OWNER -e SCM_REPO -e SCM_PR_NUM \
       -e SCM_REVIEW_DECISION_ENABLED=true \
-      -e CODE_REVIEW_EVENT_NAME="${{ github.event_name }}" \
-      -e CODE_REVIEW_EVENT_ACTION="${{ github.event.action }}" \
-      -e CODE_REVIEW_EVENT_KIND=reply_added \
-      -e CODE_REVIEW_EVENT_SOURCE=webhook_comment \
       "$IMAGE" review \
       --owner "$SCM_OWNER" --repo "$SCM_REPO" --pr "$SCM_PR_NUM" \
       --review-decision-only

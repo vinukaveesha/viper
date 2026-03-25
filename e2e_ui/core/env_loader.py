@@ -1,8 +1,8 @@
 """Load Jenkins-related secrets from .env.
 
 Variable names in .env match Jenkins credential IDs so the same .env can drive
-both local runs and Playwright scripts that configure Jenkins (e.g. SCM_TOKEN,
-GOOGLE_API_KEY). Optional: OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
+both local runs and Playwright scripts that configure Jenkins (for example
+SCM_TOKEN and LLM_API_KEY).
 """
 
 import os
@@ -11,9 +11,7 @@ from pathlib import Path
 # Credential IDs used in Jenkins; values are read from env (after load_dotenv).
 JENKINS_CREDENTIAL_IDS = (
     "SCM_TOKEN",
-    "GOOGLE_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
+    "LLM_API_KEY",
 )
 
 

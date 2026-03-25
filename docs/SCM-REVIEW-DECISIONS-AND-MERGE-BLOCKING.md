@@ -1,158 +1,110 @@
 # SCM review decisions and merge blocking
 
-This document explains how **automatic PR/MR review outcomes** from the code review agent relate to **whether a change can actually be merged** on each supported SCM. It complements the env vars `SCM_REVIEW_DECISION_*` (see [Configuration reference](CONFIGURATION-REFERENCE.md)) and the README summary of the quality gate.
+Viper can submit a **PR-level review outcome** from the bot—**`APPROVE`** or **`REQUEST_CHANGES`**—based on how many **open** high- and medium-severity review signals still apply to the PR. For per-host definitions of “open”, see **Auto review decision** in [README.md](../README.md).
+
+Each run **recomputes** those counts and may change the outcome. A **full** review after new commits does that automatically; for **discussion-only** changes (replies, deleted comments, resolved or outdated threads), the same gate logic runs in a lighter **review-decision-only** mode, typically triggered from CI or webhooks once you have configured it (**§2**).
+
+**Merge blocking** is decided by your SCM’s branch protection and merge checks, not by the API call alone.
 
 ---
 
-## 1. What the runner does
+## 1. Concepts and recalculation
 
-When `SCM_REVIEW_DECISION_ENABLED=true`, the runner may submit a **PR-level review** after posting inline comments:
+This section describes **runtime behaviour** only: what the runner does and when counts refresh. **§2** is where Viper settings, SCM host settings, env vars, and CLI flags are documented; the full variable list is in the [Configuration reference](CONFIGURATION-REFERENCE.md).
 
-| Submitted event | Meaning in this tool |
-|-----------------|----------------------|
-| `APPROVE` | “OK to merge” from the bot’s perspective (open high/medium counts are below your thresholds). |
-| `REQUEST_CHANGES` | “Not OK” — equivalent to asking for fixes before merge, in GitHub/Gitea vocabulary. |
+### 1.1 What a “review decision” is in Viper
 
-Counts are based on **aggregated open** high/medium signals (this run plus unresolved items already on the PR, as implemented per provider). Details: `README.md` (Auto review decision) and `_maybe_submit_review_decision` in `src/code_review/runner.py`.
+When automatic review decisions are **enabled** (a Viper setting—**§2**), the runner can submit a **PR-level** outcome after it knows how many **open** high- and medium-severity signals apply to the PR (see [README.md](../README.md) for how “open” is defined per SCM).
 
-**Important:** Submitting `APPROVE` or `REQUEST_CHANGES` via API **does not by itself change merge permissions**. The **merge button** (or equivalent) is only constrained when the **repository or branch** is configured to require reviews, approvals, or merge checks. Admins and users with bypass permissions may still merge unless the SCM is configured to forbid that.
+| Submitted outcome | Meaning here |
+|-------------------|--------------|
+| **`APPROVE`** | From the bot’s perspective, open high/medium counts are **below** the configured cutoffs — OK to merge in terms of this gate. |
+| **`REQUEST_CHANGES`** | Counts meet or exceed those cutoffs — not OK until those signals are addressed, in the same sense as GitHub’s “request changes”. |
 
-### Re-runs after the PR is updated
+How aggressive those cutoffs are is **configurable** in **§2**; this section does not define default or recommended values.
 
-When PR authors push new commits to address comments, the agent re-runs automatically (the idempotency key changes with the new `head_sha`). The runner computes fresh high/medium counts and may submit a **different** decision from the previous run. State-transition behaviour per provider:
+### 1.2 Merge blocking comes from the SCM, not from the API alone
 
-| Provider | Transition handling |
-|----------|---------------------|
-| **GitHub / Gitea** | A new review object is posted; the previous one becomes outdated. GitHub skips outdated threads when counting unresolved signals. |
-| **GitLab** | When submitting `REQUEST_CHANGES`, `DELETE .../approve` is called first (soft-fail 404) so the bot cannot simultaneously hold an approval *and* a request-changes note on the same MR. |
-| **Bitbucket Cloud** | Before writing the new state the opposite endpoint is cleared (`DELETE /request-changes` before approving; `DELETE /approve` before requesting changes). A 404 on the DELETE is silently ignored. |
-| **Bitbucket Server** | `PUT .../participants/{slug}` replaces the status in place; transitions are inherently idempotent. |
+Submitting **`APPROVE`** or **`REQUEST_CHANGES`** over the API **does not by itself** turn merge on or off. Whether the merge button (or equivalent) is blocked depends on **your repository / branch settings**: protected branches, required reviews, approval rules, merge checks, and your **plan/tier** on hosts like GitLab or Bitbucket Cloud. People with **bypass** rights may still merge unless you disable that in policy.
 
-### Quality gate recalculation and replies (review-decision-only)
+Treat Viper’s decision as **input** into that native model: the bot’s identity and its approve / needs-work state must be recognized under the host’s rules if you want merges to follow this gate. Aligning SCM branch rules with that intent is part of **§2**.
 
-The **full** review run (default agent flow) recomputes the gate from **unresolved review items on the PR** plus any **new** findings it is about to post, then may submit `APPROVE` / `REQUEST_CHANGES`. That path does **not** use reply-dismissal.
+### 1.3 Recalculation after code updates (new commits)
 
-**Review-decision-only** (`CODE_REVIEW_REVIEW_DECISION_ONLY` or `--review-decision-only`) skips the main review agent and inline posting. It still loads **open** high/medium signals from the SCM (same aggregation rules as the README quality gate), applies your thresholds, and submits a review decision when `SCM_REVIEW_DECISION_ENABLED=true`. Operators typically trigger this mode from **webhooks or scheduled jobs** when a PR’s discussion state changes, and optionally pass **`CODE_REVIEW_EVENT_*`** so logs (and some behaviours below) know what happened.
+On a **normal** review run, the runner recomputes counts from **unresolved review items** the provider returns for the PR **plus** any **new** findings it is about to post (deduped). Then it may submit **`APPROVE`** / **`REQUEST_CHANGES`**.
 
-| Trigger (typical) | What gets counted | Reply-dismissal LLM |
-|-------------------|-------------------|---------------------|
-| `CODE_REVIEW_EVENT_KIND` unset / empty context | All unresolved gate items from the provider | No |
-| `comment_deleted`, `thread_resolved`, `thread_outdated`, `scheduled`, … | All unresolved items reflecting **current** SCM state after that event | No |
-| `reply_added` | Same, **unless** reply-dismissal applies (next rows) | Only if enabled and conditions match |
+When authors **push new commits**, CI typically reruns the full job; the idempotency key changes with the new **`head_sha`**, counts are fresh, and the submitted decision may change. How the SCM **replaces** an older bot review varies:
 
-**Optional reply-dismissal** (`CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true`) runs **only** in review-decision-only when **`CODE_REVIEW_EVENT_KIND=reply_added`** and **`CODE_REVIEW_EVENT_COMMENT_ID`** identifies the new reply. It is implemented only where the provider exposes review-thread context (**GitHub** and **GitLab** today). On other providers, reply-added jobs still **recompute** the gate from the SCM, but the dismissal step is skipped (see metrics / logs: `skipped_no_capability`).
+| Provider | Notes |
+|----------|--------|
+| **GitHub / Gitea** | A new review is posted; older ones can become outdated. GitHub’s gate counts skip outdated threads. |
+| **GitLab** | Before **`REQUEST_CHANGES`**, an existing bot **approve** is cleared (`DELETE .../approve`, 404 ignored) so the bot is not both approved and requesting changes. |
+| **Bitbucket Cloud** | Opposite state is cleared first (`DELETE` approve or request-changes); 404 ignored. |
+| **Bitbucket Server / DC** | Participant status is updated in place (`PUT .../participants/{slug}`). |
 
-What happens when reply-dismissal runs:
+The push path does **not** run **reply-dismissal**; that optional behaviour exists only on **review-decision-only** runs when someone replies (**§1.4**).
 
-1. **Bot replies are ignored** — if the webhook actor matches the bot identity used for posting, the dismissal path is skipped so the job does not classify the bot’s own comments (`skipped_bot_author` in metrics / structured logs).
-2. **Thread context** — the runner loads the review thread (bot comment plus human replies). If the payload does not yield a usable thread, exclusion is not applied (`skipped_insufficient_thread`).
-3. **LLM verdict** — a small, tool-free model classifies whether the human reply **adequately addresses** the review comment (`agreed` vs `disagreed`). On **LLM or parse failure**, no thread is excluded; counts stay conservative (`llm_error` / `parse_failed`).
-4. **`agreed`** — for **this invocation only**, the thread’s stable id is **omitted** when counting open high/medium. The runner then submits `APPROVE` / `REQUEST_CHANGES` using those reduced counts. This exclusion is **not** persisted as SCM state: a later decision-only run without a successful `agreed` path will count that thread again if it is still unresolved on the SCM. Authors should still **resolve or address** threads in the native UI when your process expects the SCM to be the source of truth.
-5. **`disagreed`** — counts are **not** reduced; if the provider supports thread replies, the runner may post a short follow-up on that thread (unless `--dry-run`).
+### 1.4 Recalculation when someone replies on a thread
 
-**Optional early exit:** `CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING` applies to **`reply_added`** when event context is present: if the provider reports the token user is **not** in a blocking review state, the job can skip recomputation entirely (providers without blocking-state query never skip on this path). Use this to avoid noise when the bot is no longer “requesting changes” in the SCM’s model.
+After comment activity, you can run the tool in **review-decision-only** mode so it skips the main review agent: less work and fewer tokens than a full review. **§2** describes how to hook that up from webhooks or CI.
 
-Configuration details and env names: [Configuration reference](CONFIGURATION-REFERENCE.md) §5 and §5.1. Prometheus label **`outcome`** on `code_review_reply_dismissal_total` reflects which path ran (`agreed`, `disagreed`, skips, errors).
+When the triggering event is a **reply on a thread**, decision-only still reloads **open** high/medium signals from the SCM and may submit **`APPROVE`** or **`REQUEST_CHANGES`**. If the outcome does not change after a human reply, the host usually still reports the same unresolved items—for example **Bitbucket Cloud** still counts **open inline comments and open tasks** until they are resolved in the UI; **Bitbucket Server / DC** is the same for comments plus tasks. Replies are not ignored; the SCM state simply has not changed yet.
 
----
+**Optional reply-dismissal.** If turned on in configuration (**§2**), an extra step can load the **PR review-comment** thread, run a small LLM, and—if it judges the reply sufficient—**omit that thread from counts for this run only** (nothing is written back to the SCM as “resolved”). If it judges the reply insufficient, the runner may post a brief follow-up **on that comment thread** where the API allows.
 
-## 2. What this codebase implements today
+Implemented for **GitHub**, **GitLab**, **Bitbucket Cloud**, and **Bitbucket Server / DC**. For **Bitbucket**, threading and exclusion apply to **inline pull request comments** (parent / reply links in the REST model). The quality gate uses **`comment:{root_comment_id}`** for those items so the excluded id matches what the gate counts. **Gitea** does not implement this path yet (`skipped_no_capability`); recalculation still uses full SCM-derived counts.
 
-`ProviderInterface.submit_review_decision` and `ProviderCapabilities.supports_review_decisions` gate whether the runner calls the SCM.
+**Requirement:** the webhook / event must supply the **comment** id of the new reply (or any comment in the thread, depending on your mapping)—not e.g. a **Bitbucket PR task** id. If the id does not resolve to a comment thread with at least two messages, the dismissal step is skipped (`skipped_insufficient_thread`) while decision-only recalculation still runs.
 
-| Provider (`SCM_PROVIDER`) | Submits `APPROVE` / `REQUEST_CHANGES`? |
-|---------------------------|----------------------------------------|
-| `github` | Yes (`POST .../pulls/{id}/reviews` with `event`). |
-| `gitea` | Yes (same-style review API; unsupported or old servers may return 404/405 — handled in code). |
-| `gitlab` | Yes — `POST .../merge_requests/:iid/approve` (optional `sha`); `REQUEST_CHANGES` first calls `DELETE .../approve` (soft-fail) then posts an MR note + `/submit_review requested_changes` (needs a pending review on some GitLab versions). |
-| `bitbucket` (Cloud) | Yes — `POST .../pullrequests/{id}/approve` and `.../request-changes`; prior conflicting state is cleared before the new state is written (see §1 re-run table). |
-| `bitbucket_server` (Data Center / Server) | Yes when **`SCM_BITBUCKET_SERVER_USER_SLUG`** is set — `PUT .../pull-requests/{id}/participants/{slug}?version=…` with `APPROVED` / `NEEDS_WORK`. If unset, capability is false and the runner skips submission. |
+### 1.5 Recalculation when comments are deleted or threads change
 
-All providers still post **inline comments** and participate in the **quality gate counts** as documented in the README.
-
-### Review-decision-only, reply-dismissal, and thread events
-
-In **review-decision-only** mode (`CODE_REVIEW_REVIEW_DECISION_ONLY` or `--review-decision-only`), the runner recomputes open high/medium counts from the provider and may submit `APPROVE` / `REQUEST_CHANGES` without running the main review agent. **How reply-based recalculation and optional thread exclusion interact with the gate** is described in **§1 (Quality gate recalculation and replies)**. Map webhook fields into `CODE_REVIEW_EVENT_*` per [Configuration reference](CONFIGURATION-REFERENCE.md) §5 and §5.1.
-
-For **implementation details** (interfaces, `ReviewOrchestrator`, provider modules), see [Developer guide](DEVELOPER_GUIDE.md). Tests live under `tests/test_runner.py`, `tests/providers/test_review_decision_common.py`, and per-provider `tests/providers/test_*.py`.
+For **deleted comments**, **resolved** or **outdated** threads, **scheduled** jobs, or **no specific event**, a decision-only run recomputes from the **provider’s view of unresolved items** only. No reply-dismissal LLM runs. After a delete or resolve, the SCM usually drops that signal from “open” counts; the next run may then submit **`APPROVE`** instead of **`REQUEST_CHANGES`**. How webhook payloads map to these runs is **§2**.
 
 ---
 
-## 3. Per-SCM: native model, merge blocking, and configuration
+## 2. Setup
 
-The table below maps **UI/API concepts** to **when merge can be blocked**, points to **official documentation**, and states **Viper’s** auto-decision support.
+This section covers the two supported ways to run comment-driven recalculation without duplicating configuration or CI setup details from other guides.
 
-### 3.1 GitHub
+For variables and flags, see the [Configuration reference](CONFIGURATION-REFERENCE.md). For job creation and webhook wiring, see [GitHub Actions](GITHUB-ACTIONS.md), [Jenkins (existing)](JENKINS-EXISTING.md), and [Bitbucket Data Center](BITBUCKET-DATACENTER.md). Merge blocking still depends on your SCM’s native branch protection or merge-check configuration.
 
-| Topic | Detail |
-|-------|--------|
-| **Reviewer outcomes** | **Comment**, **Approve**, **Request changes** ([About pull request reviews](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews)). |
-| **Blocking merge** | Enable **branch protection** → **Require pull request reviews before merging**. If someone (including a bot) submits **Request changes**, the PR typically **cannot merge** until that review is addressed or **dismissed** by someone allowed to do so ([About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)). |
-| **Stricter enforcement** | Optionally **Do not allow bypassing the above settings** so admins and roles with bypass cannot skip rules without policy change. |
-| **Viper** | Can submit `APPROVE` / `REQUEST_CHANGES` when enabled. Ensure the token identity is treated as a valid reviewer under your rules (e.g. counts toward required approvals if you rely on the bot’s approval). |
+### 2.1 Recommended: a separate comment-events job
 
-### 3.2 Gitea
+Create a second workflow or pipeline job for **discussion-only** events such as replies, deletions, resolves, outdated threads, or scheduled recalculation. Keep the original full-review job for new commits unchanged.
 
-| Topic | Detail |
-|-------|--------|
-| **Review API** | Pull request reviews use events aligned with GitHub-style **`APPROVE`** / **`REQUEST_CHANGES`** (see Gitea API for your version). |
-| **Blocking merge** | **Settings → Branches** → protected branch rules: enable **Block merge on rejected reviews** so a requested-changes state blocks merge; combine with **required approvals** and other options as needed ([Protected branches](https://docs.gitea.com/usage/access-control/protected-branches)). |
-| **Admin bypass** | Optionally **Administrators must follow branch protection rules** so admins cannot use **Force merge** to skip protections. |
-| **Viper** | Can submit `APPROVE` / `REQUEST_CHANGES` when the server supports the endpoint (older or minimal builds may reject the call). |
+For Jenkins, prefer putting the full-review job and the comment-events job in the same folder. That keeps the two pipelines easy to track while still sharing the folder-level configuration.
 
-### 3.3 GitLab
+The comment-events job should run **review-decision-only** mode, pass webhook context through **`CODE_REVIEW_EVENT_*`**, and enable **`SCM_REVIEW_DECISION_ENABLED`** so the quality gate can be recomputed without running the full review agent. If reply-dismissal is required for human replies, also enable **`CODE_REVIEW_REPLY_DISMISSAL_ENABLED`** on this job.
 
-| Topic | Detail |
-|-------|--------|
-| **Approvals** | **Approve** satisfies **approval rules** when configured. **Required** approval rules that block merge are a **Premium / Ultimate** (and correct project) concern; on **Free**, approvals exist but do not enforce the same merge barrier ([Merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)). |
-| **Request changes** | Reviewers can **Request changes**; **blocking the MR** until that is cleared is documented under **Prevent merge when you request changes** on [Merge request reviews](https://docs.gitlab.com/ee/user/project/merge_requests/reviews/) (tier and settings apply). Maintainers may **bypass** that check when permitted. |
-| **API** | Approvals use the [Merge request approvals API](https://docs.gitlab.com/ee/api/merge_request_approvals.html) (e.g. `POST .../approve`). **Request changes** is part of the MR review flow, not the same endpoint family as GitHub’s single `event` field. |
-| **Viper** | Calls `POST .../approve` (optional `sha`) and posts an MR note with `/submit_review requested_changes` for `REQUEST_CHANGES` (quick action may require a pending review on some GitLab versions). |
+This approach keeps full reviews and comment-only recalculation in separate Jenkins jobs, which makes it easier to track volume and behavior for each path independently.
 
-### 3.4 Bitbucket Cloud
+Use the existing setup guides for the concrete wiring:
 
-| Topic | Detail |
-|-------|--------|
-| **Merge checks** | Repository **branch restrictions** and **merge checks** can require minimum approvals, **no “Changes requested”** from reviewers, no unresolved tasks, successful builds, etc. ([Suggest or require checks before a merge](https://support.atlassian.com/bitbucket-cloud/docs/suggest-or-require-checks-before-a-merge/)). |
-| **Enforcement vs warning** | **Prevent a merge with unresolved merge checks** is tied to **Bitbucket Cloud Premium** for full enforcement; lower tiers may **warn** but still allow merge in some setups — confirm your plan and settings. |
-| **Viper** | Uses Cloud `approve` and `request-changes` REST endpoints when `SCM_REVIEW_DECISION_ENABLED` is on. |
+- [Configuration reference](CONFIGURATION-REFERENCE.md), especially review-decision-only and webhook context
+- [Jenkins: review-decision-only on comment activity](JENKINS-REVIEW-DECISION-ONLY.md) for the dedicated second-pipeline setup
+- [GitHub Actions](GITHUB-ACTIONS.md) for a dedicated comment-triggered workflow example
+- [Jenkins (existing)](JENKINS-EXISTING.md) for pipeline setup
+- [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for Bitbucket Server / DC webhook mapping
 
-### 3.5 Bitbucket Data Center / Server
+### 2.2 Alternative: reuse the existing pipeline
 
-| Topic | Detail |
-|-------|--------|
-| **“Needs work” and merge checks** | Server uses **merge checks** on the target branch (minimum approvals, **no changes requested** / needs-work style hooks, unresolved tasks, builds, etc.). Atlassian maps the Server hook **`needs-work-merge-check`** to the idea of **no changes requested** when comparing to Cloud concepts ([merge checks comparison KB](https://support.atlassian.com/bitbucket-cloud/kb/merge-checks-comparison-between-bitbucket-server-vs-bitbucket-cloud/)). |
-| **Documentation** | See **Checks for merging pull requests** in [Bitbucket Data Center documentation](https://confluence.atlassian.com/spaces/BitbucketServer/pages/776640039/Checks+for+merging+pull-requests) for the checklist available in your version. |
-| **Bypass** | Project and permission settings determine whether users with elevated access can override failed checks; configure explicitly if you need a hard gate. |
-| **Viper** | Submits participant status via `PUT .../participants/{slug}` when **`SCM_BITBUCKET_SERVER_USER_SLUG`** matches the token user; maps `REQUEST_CHANGES` → `NEEDS_WORK`. |
+If a separate job is not desirable, route comment events through the existing pipeline and switch those runs to **review-decision-only**. The full review path continues to handle code updates, while comment-driven runs skip the main review agent and only recompute the gate.
+
+This reduces CI surface area, but full reviews and comment-only recalculations will then share the same queue, logs, and job counts.
+
+Use the same references for the concrete mechanics:
+
+- [Configuration reference](CONFIGURATION-REFERENCE.md) for the event variables and reply-dismissal
+- [Jenkins: review-decision-only on comment activity](JENKINS-REVIEW-DECISION-ONLY.md) for Jenkins wiring
+- [GitHub Actions](GITHUB-ACTIONS.md) for event-based workflow triggering
+- [Jenkins (existing)](JENKINS-EXISTING.md) and [Bitbucket Data Center](BITBUCKET-DATACENTER.md) for Jenkins webhook setup
+
+Use **`--dry-run`** when validating either approach.
 
 ---
 
-## 4. Summary matrix
+## Related reading
 
-| SCM | Merge blocked by “not OK” review state? | Typical non-default setup | Viper auto `APPROVE` / `REQUEST_CHANGES` |
-|-----|----------------------------------------|---------------------------|----------------------------------------|
-| **GitHub** | Yes, with branch protection | Required PR reviews + optional no-bypass | Yes |
-| **Gitea** | Yes, if enabled | Protected branch + **Block merge on rejected reviews** (+ optional admin must follow rules) | Yes (if API supported) |
-| **GitLab** | Yes, with tier/settings | Premium+ rules + “prevent merge when request changes” where applicable | Yes (approve REST + request-changes note; see §3.3) |
-| **Bitbucket Cloud** | Yes, if plan/settings require checks | Branch restrictions + required merge checks (Premium for strict prevent) | Yes |
-| **Bitbucket Data Center** | Yes, if merge checks enabled | Branch merge checks including needs-work / no changes requested | Yes when `SCM_BITBUCKET_SERVER_USER_SLUG` is set |
-
----
-
-## 5. Operational checklist
-
-1. **Pick the SCM** row above and enable the **branch / merge-check** settings your policy needs.
-2. **Token permissions:** The integration user’s token must be allowed to **submit** the review outcome you depend on — **`APPROVE` / `REQUEST_CHANGES`** (or each SCM’s native equivalent) — on every provider you use (e.g. **GitHub, Gitea, GitLab, Bitbucket Cloud, Bitbucket Server**). That includes REST scopes for review/approval/participant APIs; on GitLab, MR notes for request-changes; on Bitbucket Server, permission to update the token user’s participant state when **`SCM_BITBUCKET_SERVER_USER_SLUG`** is set. Too-narrow scopes can leave inline comments working while decisions fail.
-3. **Bypass policy:** Decide whether privileged users may merge despite failed reviews or checks, and set that explicitly per SCM — e.g. GitHub **do not allow bypassing** protected-branch rules; Gitea **administrators must follow branch protection rules**; GitLab **prevent merge when you request changes** (tier/settings) and maintainer bypass where applicable; Bitbucket Cloud **prevent merge with unresolved merge checks** vs warn-only (plan-dependent); Bitbucket Server merge checks and who may override them (project/permission settings). Use §3 for your provider’s knobs.
-4. **Tune thresholds:** `SCM_REVIEW_DECISION_HIGH_THRESHOLD` and `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD` control how aggressive `REQUEST_CHANGES` is; start conservative in production.
-5. **Dry run:** Use `--dry-run` to verify counts and logs without posting or submitting decisions.
-
----
-
-## 6. Related reading
-
-- [Configuration reference](CONFIGURATION-REFERENCE.md) — `SCM_REVIEW_DECISION_*`
-- [Developer guide](DEVELOPER_GUIDE.md) — `ProviderInterface`, extension points
-- [Bitbucket Data Center (Jenkins)](BITBUCKET-DATACENTER.md) — webhook and env for `bitbucket_server`
-- `README.md` — Auto review decision and per-SCM “open” semantics for the quality gate
+- [Configuration reference](CONFIGURATION-REFERENCE.md) — all `SCM_REVIEW_DECISION_*` and `CODE_REVIEW_*` variables
+- [Developer guide](DEVELOPER_GUIDE.md) — `ProviderInterface`, `ReviewOrchestrator`, extension points
+- `README.md` — quality gate semantics and per-SCM “open” behaviour

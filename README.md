@@ -40,7 +40,7 @@ Copy `.env.example` to `.env` and fill in the values; that file documents every 
 
 **Auto review decision (optional)** — You can enable automatic PR review decisions on SCMs that support them. Set `SCM_REVIEW_DECISION_ENABLED=true` to submit `REQUEST_CHANGES` when **aggregated open** high/medium signals meet thresholds (`SCM_REVIEW_DECISION_HIGH_THRESHOLD`, `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD`), otherwise submit `APPROVE` (for example when only low/nit remain). Counts combine **net-new findings from this run** with **already-unresolved review items** from the SCM (deduped by fingerprint marker when present). Severity for existing threads is inferred from `[High]` / `[Medium]` / … in comment text where possible. **Merge blocking** depends on each host’s branch protection or merge checks, not on the API call alone; see **[SCM review decisions and merge blocking](docs/SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md)** for GitHub, Gitea, GitLab, Bitbucket Cloud, and Bitbucket Data Center.
 
-**Reply-dismissal (optional, review-decision-only)** — When you run **`--review-decision-only`** with webhook context (`CODE_REVIEW_EVENT_*`) and set **`CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true`**, a reply on a review thread can be classified so **agreed** threads are excluded from the quality gate for that run; **disagreed** may post a follow-up on **GitHub** or **GitLab** only. See [Configuration reference](docs/CONFIGURATION-REFERENCE.md) §5.
+**Reply-dismissal (optional, review-decision-only)** — When you run **`--review-decision-only`** with webhook context (`CODE_REVIEW_EVENT_*`) and set **`CODE_REVIEW_REPLY_DISMISSAL_ENABLED=true`**, a reply on a review thread can be classified so **agreed** threads are excluded from the quality gate for that run; **disagreed** may post a follow-up on **GitHub**, **GitLab**, **Bitbucket Cloud**, or **Bitbucket Server / DC** where supported. See [Configuration reference](docs/CONFIGURATION-REFERENCE.md) §5.
 
 Per-SCM “open” semantics:
 
@@ -49,7 +49,7 @@ Per-SCM “open” semantics:
 | **GitHub** | Pull request review threads that are not resolved and not outdated (via GraphQL `reviewThreads`; falls back to REST review comments if GraphQL fails). |
 | **Gitea** | Review comments with `resolved=false` from the API (when exposed). |
 | **GitLab** | Merge request discussions with `resolved=false` (thread-level; severity is the max across diff notes in the thread). |
-| **Bitbucket Cloud** | Open PR **tasks** only (inline comments do not expose resolved state in the API). |
+| **Bitbucket Cloud** | Unresolved **inline** PR comments plus open PR **tasks** (inline uses the same unresolved shape as other providers where the API allows). |
 | **Bitbucket Server/DC** | Comments that are not `RESOLVED` plus open PR **tasks**. |
 
 ---
