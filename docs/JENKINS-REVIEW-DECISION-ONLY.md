@@ -98,7 +98,6 @@ Add these Generic Webhook Trigger **Post content parameters** to the comment-eve
 | `CODE_REVIEW_EVENT_ACTOR_ID` | `$.sender.id` | `$.user.id` | `$.actor.uuid` | `$.actor.id` |
 
 
-`CODE_REVIEW_EVENT_COMMENT_ID` must be the SCM's PR review comment id, not some other object id such as a Bitbucket task id.
 
 See [Configuration reference](CONFIGURATION-REFERENCE.md#51-review-decision-webhook-context-code_review_event_) for the variable definitions.
 

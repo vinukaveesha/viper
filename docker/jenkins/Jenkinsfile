@@ -184,8 +184,8 @@ pipeline {
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD:-}" ] && export SCM_REVIEW_DECISION_MEDIUM_THRESHOLD="$REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD"
                                     export LLM_PROVIDER="$REVIEW_LLM_PROVIDER" LLM_MODEL="$REVIEW_LLM_MODEL" LLM_API_KEY="${LLM_API_KEY:-}"
                                     export CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL"
-                                    export CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}"
-                                    export CODE_REVIEW_REPLY_DISMISSAL_ENABLED="${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}"
+                                    [ -n "${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}" ] && export CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="$CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING"
+                                    [ -n "${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}" ] && export CODE_REVIEW_REPLY_DISMISSAL_ENABLED="$CODE_REVIEW_REPLY_DISMISSAL_ENABLED"
                                     export CODE_REVIEW_EVENT_COMMENT_ID="${CODE_REVIEW_EVENT_COMMENT_ID:-}"
                                     export CODE_REVIEW_EVENT_THREAD_ID="${CODE_REVIEW_EVENT_THREAD_ID:-}"
                                     export CODE_REVIEW_EVENT_ACTOR_LOGIN="${CODE_REVIEW_EVENT_ACTOR_LOGIN:-}"
@@ -203,6 +203,9 @@ pipeline {
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_ENABLED:-}" ] && RD_ENV="$RD_ENV -e SCM_REVIEW_DECISION_ENABLED=$REVIEW_SCM_REVIEW_DECISION_ENABLED"
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_HIGH_THRESHOLD:-}" ] && RD_ENV="$RD_ENV -e SCM_REVIEW_DECISION_HIGH_THRESHOLD=$REVIEW_SCM_REVIEW_DECISION_HIGH_THRESHOLD"
                                     [ -n "${REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD:-}" ] && RD_ENV="$RD_ENV -e SCM_REVIEW_DECISION_MEDIUM_THRESHOLD=$REVIEW_SCM_REVIEW_DECISION_MEDIUM_THRESHOLD"
+                                    APP_ENV=""
+                                    [ -n "${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}" ] && APP_ENV="$APP_ENV -e CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING=$CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING"
+                                    [ -n "${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}" ] && APP_ENV="$APP_ENV -e CODE_REVIEW_REPLY_DISMISSAL_ENABLED=$CODE_REVIEW_REPLY_DISMISSAL_ENABLED"
                                     "$runtime" run --rm --network "$REVIEW_NETWORK" \
                                         -e SCM_PROVIDER="$REVIEW_SCM_PROVIDER" \
                                         -e SCM_URL="$REVIEW_SCM_URL" \
@@ -217,13 +220,12 @@ pipeline {
                                         -e LLM_API_KEY="${LLM_API_KEY:-}" \
                                         -e PYTHONUNBUFFERED=1 \
                                         -e CODE_REVIEW_LOG_LEVEL="$REVIEW_CODE_REVIEW_LOG_LEVEL" \
-                                        -e CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING="${CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING:-}" \
-                                        -e CODE_REVIEW_REPLY_DISMISSAL_ENABLED="${CODE_REVIEW_REPLY_DISMISSAL_ENABLED:-}" \
                                         -e CODE_REVIEW_EVENT_COMMENT_ID="${CODE_REVIEW_EVENT_COMMENT_ID:-}" \
                                         -e CODE_REVIEW_EVENT_THREAD_ID="${CODE_REVIEW_EVENT_THREAD_ID:-}" \
                                         -e CODE_REVIEW_EVENT_ACTOR_LOGIN="${CODE_REVIEW_EVENT_ACTOR_LOGIN:-}" \
                                         -e CODE_REVIEW_EVENT_ACTOR_ID="${CODE_REVIEW_EVENT_ACTOR_ID:-}" \
                                         -e CODE_REVIEW_EVENT_SOURCE="${CODE_REVIEW_EVENT_SOURCE:-}" \
+                                        $APP_ENV \
                                         $RD_ENV \
                                         "$REVIEW_IMAGE" --owner "$REVIEW_SCM_OWNER" --repo "$REVIEW_SCM_REPO" --pr "$REVIEW_SCM_PR_NUM" --head-sha "$REVIEW_SCM_HEAD_SHA"$RD_EXTRA --print-findings \
                                     || { echo "HINT: Podman issues? Set USE_INLINE_AGENT=true (docs/QUICKSTART.md)."; exit 1; }
