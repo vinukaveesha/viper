@@ -399,6 +399,9 @@ def test_get_incremental_pr_files_parse_compare_diff(mock_client):
 
     assert len(files) == 1
     assert files[0].path == "src/Foo.java"
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert call[0][0].endswith("/compare/diff")
+    assert call[1]["params"] == {"from": "base123", "to": "head456"}
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +946,10 @@ def test_get_review_thread_dismissal_context_server_fails_closed_on_pagination_e
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
     assert ctx is None
+    calls = mock_client.return_value.__enter__.return_value.get.call_args_list
+    assert len(calls) == 2
+    assert calls[0][1]["params"] == {"start": 0, "limit": 100}
+    assert calls[1][1]["params"] == {"start": 100, "limit": 100}
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")

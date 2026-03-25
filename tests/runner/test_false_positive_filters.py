@@ -72,6 +72,26 @@ def test_identical_patch_is_stripped_for_non_syntax_message():
     assert result[0].suggested_patch is None
 
 
+def test_syntax_patch_with_different_string_literal_spacing_is_not_dropped():
+    diff_text = """\
+diff --git a/src/main/java/Example.java b/src/main/java/Example.java
+--- a/src/main/java/Example.java
++++ b/src/main/java/Example.java
+@@ -10,1 +10,1 @@
++logger.info("user deleted");
+"""
+    finding = _finding(
+        line=10,
+        message='This string literal is malformed and will not compile.',
+        suggested_patch='logger.info("userdeleted");',
+    )
+
+    result = _filter_obviously_contradicted_findings([finding], diff_text)
+
+    assert len(result) == 1
+    assert result[0] == finding
+
+
 def test_message_describes_missing_quoted_fragment_before_keyword():
     assert _message_describes_syntax_or_missing_token_issue(
         'The statement is missing ")" before "{" and will not compile.'

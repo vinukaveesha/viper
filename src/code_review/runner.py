@@ -231,8 +231,36 @@ def _patch_tokens(text: str) -> set[str]:
 
 
 def _normalize_code_for_comparison(text: str) -> str:
-    """Collapse all whitespace so equivalent one-line code compares equal."""
-    return re.sub(r"\s+", "", text or "")
+    """Remove whitespace outside quoted literals so formatting-only changes compare equal."""
+    if not text:
+        return ""
+
+    out: list[str] = []
+    quote_char: str | None = None
+    escaped = False
+
+    for ch in text:
+        if quote_char is not None:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote_char:
+                quote_char = None
+            continue
+
+        if ch in {'"', "'", "`"}:
+            quote_char = ch
+            out.append(ch)
+            continue
+
+        if ch.isspace():
+            continue
+
+        out.append(ch)
+
+    return "".join(out)
 
 
 _SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1754,7 +1782,8 @@ class ReviewOrchestrator:
         """Return a usable incremental review base SHA, else ``""`` for full-PR review."""
         raw_base_sha = getattr(cfg, "base_sha", "")
         base_sha = raw_base_sha.strip() if isinstance(raw_base_sha, str) else ""
-        head_sha = (head_sha or "").strip()
+        raw_head_sha = head_sha if head_sha else getattr(cfg, "head_sha", "")
+        head_sha = raw_head_sha.strip() if isinstance(raw_head_sha, str) else ""
         if not base_sha or not head_sha or base_sha == head_sha:
             return ""
         return base_sha

@@ -334,6 +334,14 @@ def test_compute_idempotency_and_maybe_short_circuit_uses_incremental_base_in_ke
 #            _detect_languages_for_files ---
 
 
+def test_incremental_base_sha_uses_cfg_head_sha_when_parameter_missing():
+    cfg = MagicMock(base_sha="base123", head_sha="head456")
+
+    result = ReviewOrchestrator._incremental_base_sha(cfg, "")
+
+    assert result == "base123"
+
+
 def test_fetch_pr_files_and_diffs_returns_files_paths_and_full_diff():
     """_fetch_pr_files_and_diffs returns (files, paths, full_diff) from provider."""
     from code_review.providers.base import FileInfo
