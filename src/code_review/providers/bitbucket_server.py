@@ -250,6 +250,56 @@ class BitbucketServerProvider(ProviderInterface):
             r.raise_for_status()
             return r.json() if r.content else None
 
+    @staticmethod
+    def _next_diff_page_start(data: dict[str, Any], current_start: int) -> int | None:
+        if bool(data.get("isLastPage", True)):
+            return None
+        nxt = data.get("nextPageStart")
+        if nxt is None:
+            return None
+        try:
+            next_start = int(nxt)
+        except (TypeError, ValueError):
+            return None
+        if next_start == current_start:
+            return None
+        return next_start
+
+    def _merge_paginated_diff_pages(
+        self,
+        path: str,
+        first_page: dict[str, Any],
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        merged = dict(first_page)
+        merged["diffs"] = list(first_page.get("diffs") or [])
+        page_params = dict(params or {})
+        try:
+            start = int(page_params.get("start", 0) or 0)
+        except (TypeError, ValueError):
+            start = 0
+        for _ in range(500):
+            start = self._next_diff_page_start(first_page, start)
+            if start is None:
+                break
+            page_params["start"] = start
+            first_page = self._get(path, params=page_params)
+            if not isinstance(first_page, dict):
+                break
+            merged["diffs"].extend(first_page.get("diffs") or [])
+        return merged
+
+    def _get_unified_diff(self, path: str, params: dict[str, Any] | None = None) -> str:
+        out = self._get(path, params=params)
+        if isinstance(out, str):
+            return out
+        if isinstance(out, dict) and "diffs" in out:
+            return _bitbucket_json_diff_to_unified(
+                self._merge_paginated_diff_pages(path, out, params=params)
+            )
+        return ""
+
     def get_pr_diff(self, owner: str, repo: str, pr_number: int) -> str:
         """Return unified diff for the PR (.diff endpoint).
 
@@ -260,12 +310,7 @@ class BitbucketServerProvider(ProviderInterface):
         parse it normally.
         """
         path = self._path(owner, repo, "pull-requests", str(pr_number), "diff")
-        out = self._get(path)
-        if isinstance(out, str):
-            return out
-        if isinstance(out, dict) and "diffs" in out:
-            return _bitbucket_json_diff_to_unified(out)
-        return ""
+        return self._get_unified_diff(path)
 
     def get_incremental_pr_diff(
         self,
@@ -279,12 +324,7 @@ class BitbucketServerProvider(ProviderInterface):
         if not base_sha or not head_sha or base_sha == head_sha:
             return self.get_pr_diff(owner, repo, pr_number)
         path = self._path(owner, repo, "compare", "diff")
-        out = self._get(path, params={"from": base_sha, "to": head_sha})
-        if isinstance(out, str):
-            return out
-        if isinstance(out, dict) and "diffs" in out:
-            return _bitbucket_json_diff_to_unified(out)
-        return ""
+        return self._get_unified_diff(path, params={"from": base_sha, "to": head_sha})
 
     def get_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
         """Return file content at ref (raw endpoint with at=ref)."""

@@ -266,6 +266,62 @@ def test_get_incremental_pr_diff_uses_compare_endpoint(mock_client):
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_incremental_pr_diff_merges_paginated_compare_pages(mock_client):
+    first_resp = MagicMock()
+    first_resp.headers = {"content-type": "application/json"}
+    first_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/First.java"},
+                "destination": {"toString": "src/First.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 1,
+                        "sourceSpan": 1,
+                        "destinationLine": 1,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// first"}]}],
+                    }
+                ],
+            }
+        ],
+        "isLastPage": False,
+        "nextPageStart": 1,
+    }
+    second_resp = MagicMock()
+    second_resp.headers = {"content-type": "application/json"}
+    second_resp.json.return_value = {
+        "diffs": [
+            {
+                "source": {"toString": "src/Second.java"},
+                "destination": {"toString": "src/Second.java"},
+                "hunks": [
+                    {
+                        "sourceLine": 10,
+                        "sourceSpan": 1,
+                        "destinationLine": 10,
+                        "destinationSpan": 2,
+                        "segments": [{"type": "ADDED", "lines": [{"line": "// second"}]}],
+                    }
+                ],
+            }
+        ],
+        "isLastPage": True,
+    }
+    mock_client.return_value.__enter__.return_value.get.side_effect = [first_resp, second_resp]
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    diff = p.get_incremental_pr_diff("PROJ", "my-repo", 42, "base123", "head456")
+
+    assert "+++ b/src/First.java" in diff
+    assert "+++ b/src/Second.java" in diff
+    calls = mock_client.return_value.__enter__.return_value.get.call_args_list
+    assert len(calls) == 2
+    assert calls[0][1]["params"] == {"from": "base123", "to": "head456"}
+    assert calls[1][1]["params"] == {"from": "base123", "to": "head456", "start": 1}
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_pr_files_uses_json_diff(mock_client):
     """get_pr_files correctly extracts files when diff comes back as Bitbucket JSON."""
     mock_resp = MagicMock()
