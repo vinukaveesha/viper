@@ -521,7 +521,7 @@ class BitbucketServerProvider(ProviderInterface):
 
     def _bbs_list_comment_dicts_from_activities(
         self, owner: str, repo: str, pr_number: int
-    ) -> list[dict]:
+    ) -> list[dict] | None:
         """Collect unique PR comment dicts from paginated activities (COMMENTED)."""
         path = self._path(owner, repo, "pull-requests", str(pr_number), "activities")
         by_id: dict[str, dict] = {}
@@ -537,9 +537,9 @@ class BitbucketServerProvider(ProviderInterface):
                     pr_number,
                     e,
                 )
-                break
+                return None
             if not isinstance(data, dict):
-                break
+                return None
             self._bbs_merge_commented_activities_into(by_id, data)
             nxt = BitbucketServerProvider._bbs_activities_next_start(data, start)
             if nxt is None:
@@ -675,6 +675,8 @@ class BitbucketServerProvider(ProviderInterface):
     ) -> ReviewThreadDismissalContext | None:
         try:
             raw = self._bbs_list_comment_dicts_from_activities(owner, repo, pr_number)
+            if raw is None:
+                return None
             return self._bbs_build_dismissal_context(raw, triggered_comment_id)
         except Exception as e:
             logger.warning(

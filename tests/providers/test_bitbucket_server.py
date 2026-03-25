@@ -854,6 +854,42 @@ def test_get_review_thread_dismissal_context_server(mock_client):
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_review_thread_dismissal_context_server_fails_closed_on_pagination_error(mock_client):
+    page1 = MagicMock()
+    page1.headers = {"content-type": "application/json"}
+    page1.raise_for_status = MagicMock()
+    page1.json.return_value = {
+        "isLastPage": False,
+        "nextPageStart": 100,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 11,
+                    "text": "child",
+                    "state": "OPEN",
+                    "parentComment": {"id": 10},
+                    "author": {"name": "b"},
+                    "createdDate": 2,
+                    "anchor": {"path": "f.java", "line": 1},
+                },
+            }
+        ],
+    }
+
+    def _get_side_effect(url, **kwargs):
+        params = kwargs.get("params") or {}
+        if params.get("start") == 0:
+            return page1
+        raise httpx.ReadError("boom")
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
+    assert ctx is None
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_post_review_thread_reply_bitbucket_server(mock_client):
     mock_post = MagicMock()
     mock_post.raise_for_status = MagicMock()

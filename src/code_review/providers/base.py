@@ -327,6 +327,7 @@ class ReviewComment(BaseModel):
     line: int
     body: str
     resolved: bool = False
+    parent_id: str | None = None
 
 
 ReviewItemKind = Literal["inline_comment", "discussion_thread", "task"]
