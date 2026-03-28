@@ -560,16 +560,13 @@ class BitbucketServerProvider(ProviderInterface):
                 else:
                     raise
 
-    def _comment_from_activity(self, act: dict) -> ReviewComment | None:
-        """Parse one activity entry into a ReviewComment if it is a COMMENTED action."""
-        if not isinstance(act, dict) or act.get("action") != "COMMENTED":
-            return None
-        c = act.get("comment")
+    @staticmethod
+    def _bbs_review_comment_from_comment_dict(c: dict) -> ReviewComment | None:
         if not isinstance(c, dict):
             return None
         anchor = c.get("anchor")
         if not isinstance(anchor, dict):
-            anchor = act.get("commentAnchor") if isinstance(act.get("commentAnchor"), dict) else {}
+            anchor = {}
         author = c.get("author") if isinstance(c.get("author"), dict) else {}
         comment_for_status = dict(c)
         if anchor and not isinstance(comment_for_status.get("anchor"), dict):
@@ -580,11 +577,25 @@ class BitbucketServerProvider(ProviderInterface):
             line=int(anchor.get("line", 0) or 0),
             body=c.get("text") or "",
             resolved=bool(c.get("state") == "RESOLVED"),
-            outdated=self._bbs_comment_is_outdated(comment_for_status),
-            parent_id=self._bbs_comment_parent_id(c),
+            outdated=BitbucketServerProvider._bbs_comment_is_outdated(comment_for_status),
+            parent_id=BitbucketServerProvider._bbs_comment_parent_id(c),
             author_login=str(author.get("name") or author.get("slug") or author.get("username") or ""),
             created_at=str(c.get("createdDate") or ""),
         )
+
+    def _comment_from_activity(self, act: dict) -> ReviewComment | None:
+        """Parse one activity entry into a ReviewComment if it is a COMMENTED action."""
+        if not isinstance(act, dict) or act.get("action") != "COMMENTED":
+            return None
+        c = act.get("comment")
+        if not isinstance(c, dict):
+            return None
+        comment = dict(c)
+        if not isinstance(comment.get("anchor"), dict):
+            activity_anchor = act.get("commentAnchor")
+            if isinstance(activity_anchor, dict):
+                comment["anchor"] = activity_anchor
+        return self._bbs_review_comment_from_comment_dict(comment)
 
     @staticmethod
     def _bbs_comment_is_outdated(comment: dict[str, Any]) -> bool:
@@ -912,18 +923,39 @@ class BitbucketServerProvider(ProviderInterface):
         The GET .../comments endpoint may return 404 on some Server/DC versions; activities
         with action COMMENTED are the supported way to list comments.
         """
+        existing, _ = self._bbs_collect_activity_review_comments(owner, repo, pr_number)
+        return existing
+
+    def _bbs_collect_activity_review_comments(
+        self, owner: str, repo: str, pr_number: int
+    ) -> tuple[list[ReviewComment], list[ReviewComment]]:
+        """Return flat activity comments plus a merged recursive view of nested replies.
+
+        The first list mirrors the flat activity entries used by ``get_existing_review_comments``.
+        The second list includes replies nested under ``comment.comments`` so reply-dismissal
+        persistence can see accepted-thread replies Bitbucket only exposes recursively.
+        """
         path = self._path(owner, repo, "pull-requests", str(pr_number), "activities")
         result: list[ReviewComment] = []
+        merged_recursive_by_id: dict[str, dict] = {}
         start = 0
         max_pages = 500  # safeguard against infinite loop
         for _ in range(max_pages):
             data = self._get(path, params={"start": start, "limit": 100})
             comments, next_start = self._comments_from_activities_page(data)
             result.extend(comments)
+            if isinstance(data, dict):
+                self._bbs_merge_commented_activities_into(merged_recursive_by_id, data)
             if next_start is None or next_start == start:
                 break
             start = next_start
-        return result
+        merged_recursive = [
+            comment
+            for raw_comment in merged_recursive_by_id.values()
+            if (comment := self._bbs_review_comment_from_comment_dict(raw_comment)) is not None
+        ]
+        merged_recursive.sort(key=self._bbs_comment_order_key)
+        return result, merged_recursive
 
     @staticmethod
     def _bbs_append_open_task_for_quality_gate(t: Any, items: list[UnresolvedReviewItem]) -> None:
@@ -1054,7 +1086,11 @@ class BitbucketServerProvider(ProviderInterface):
     ) -> list[UnresolvedReviewItem]:
         """Unresolved inline comments (non-RESOLVED) plus open PR tasks."""
         try:
-            existing = self.get_existing_review_comments(owner, repo, pr_number)
+            existing, merged_recursive_comments = self._bbs_collect_activity_review_comments(
+                owner,
+                repo,
+                pr_number,
+            )
         except Exception as e:
             logger.warning(
                 "Bitbucket Server PR activities fetch failed for quality gate "
@@ -1065,8 +1101,9 @@ class BitbucketServerProvider(ProviderInterface):
                 e,
             )
             existing = []
+            merged_recursive_comments = []
         dismissed_stable_ids = self._bbs_persisted_dismissed_root_ids(
-            existing,
+            merged_recursive_comments,
             self.get_bot_attribution_identity(owner, repo, pr_number),
         )
         by_id = {str(c.id or "").strip(): c for c in existing if (c.id or "").strip()}

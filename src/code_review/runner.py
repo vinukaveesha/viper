@@ -2978,6 +2978,15 @@ class ReviewOrchestrator:
             )
         except Exception as e:
             logger.warning("resolve_review_thread failed: %s", e)
+            self._decision_only_maybe_post_agreed_thread_reply(
+                provider,
+                caps_rd,
+                owner,
+                repo,
+                pr_number,
+                dry_run,
+                comment_id,
+            )
 
     def _reply_dismissal_comment_id_or_none(self, app_cfg) -> str | None:
         """Return event comment id when reply-dismissal should run, else ``None``."""
