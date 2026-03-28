@@ -983,6 +983,8 @@ def test_get_review_thread_dismissal_context_server_with_nested_activity_comment
     ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
     assert ctx is not None
     assert ctx.gate_exclusion_stable_id == "comment:10"
+    assert ctx.path == "f.java"
+    assert ctx.line == 1
     assert [e.comment_id for e in ctx.entries] == ["10", "11"]
 
 

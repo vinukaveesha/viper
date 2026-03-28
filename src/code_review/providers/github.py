@@ -666,11 +666,20 @@ class GitHubProvider(ProviderInterface):
         if not thread_graphql_id or not cnodes:
             return None
         entries: list[ReviewThreadDismissalEntry] = []
+        path = ""
+        line = 0
         for c in cnodes:
             if not isinstance(c, dict):
                 continue
             auth = c.get("author") if isinstance(c.get("author"), dict) else {}
             login = str((auth or {}).get("login") or "")
+            if not path:
+                path = str(c.get("path") or "")
+            if not line:
+                try:
+                    line = int(c.get("line") or 0)
+                except (TypeError, ValueError):
+                    line = 0
             entries.append(
                 ReviewThreadDismissalEntry(
                     comment_id=str(c.get("databaseId") or ""),
@@ -684,6 +693,8 @@ class GitHubProvider(ProviderInterface):
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"github:thread:{thread_graphql_id}",
             thread_id=thread_graphql_id,
+            path=path,
+            line=line,
             entries=entries,
         )
 

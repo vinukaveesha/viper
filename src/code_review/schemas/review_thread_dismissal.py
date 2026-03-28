@@ -27,4 +27,12 @@ class ReviewThreadDismissalContext(BaseModel):
         default="",
         description="Provider thread/discussion id when the SCM supports resolving the thread",
     )
+    path: str = Field(
+        default="",
+        description="Best-effort anchored file path for the review thread when available",
+    )
+    line: int = Field(
+        default=0,
+        description="Best-effort anchored new-file line number for the thread when available",
+    )
     entries: list[ReviewThreadDismissalEntry] = Field(default_factory=list)

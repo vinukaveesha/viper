@@ -437,7 +437,19 @@ class BitbucketProvider(ProviderInterface):
         return None
 
     @staticmethod
-    def _bbcloud_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, str] | None:
+    def _bbcloud_inline_path_line(c: dict) -> tuple[str, int]:
+        inline = c.get("inline") if isinstance(c.get("inline"), dict) else {}
+        path = str(inline.get("path") or "")
+        try:
+            line = int(inline.get("to") or inline.get("from") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        return path, line
+
+    @staticmethod
+    def _bbcloud_dismissal_meta(
+        c: dict,
+    ) -> tuple[str, str | None, str, str, str, str, int] | None:
         if not isinstance(c, dict):
             return None
         cid = str(c.get("id") or "").strip()
@@ -451,29 +463,32 @@ class BitbucketProvider(ProviderInterface):
             user.get("nickname") or user.get("username") or user.get("display_name") or ""
         )
         created = str(c.get("created_on") or "")
-        return (cid, parent, body, login, created)
+        path, line = BitbucketProvider._bbcloud_inline_path_line(c)
+        return (cid, parent, body, login, created, path, line)
 
     @staticmethod
     def _bbcloud_index_dismissal_by_id(
         raw_comments: list[dict],
-    ) -> dict[str, dict[str, str | None]]:
-        by_id: dict[str, dict[str, str | None]] = {}
+    ) -> dict[str, dict[str, str | int | None]]:
+        by_id: dict[str, dict[str, str | int | None]] = {}
         for c in raw_comments:
             meta = BitbucketProvider._bbcloud_dismissal_meta(c)
             if not meta:
                 continue
-            cid, parent, body, login, created = meta
+            cid, parent, body, login, created, path, line = meta
             by_id[cid] = {
                 "parent": parent,
                 "body": body,
                 "login": login,
                 "created": created,
+                "path": path,
+                "line": line,
             }
         return by_id
 
     @staticmethod
     def _bbcloud_thread_root_from_want(
-        by_id: dict[str, dict[str, str | None]], want: str
+        by_id: dict[str, dict[str, str | int | None]], want: str
     ) -> str | None:
         if want not in by_id:
             return None
@@ -491,7 +506,7 @@ class BitbucketProvider(ProviderInterface):
 
     @staticmethod
     def _bbcloud_thread_member_ids_sorted(
-        by_id: dict[str, dict[str, str | None]], root: str
+        by_id: dict[str, dict[str, str | int | None]], root: str
     ) -> list[str]:
         children: dict[str, list[str]] = {}
         for cid, info in by_id.items():
@@ -513,7 +528,7 @@ class BitbucketProvider(ProviderInterface):
 
     @staticmethod
     def _bbcloud_dismissal_entries_from_members(
-        by_id: dict[str, dict[str, str | None]], member_ids: list[str]
+        by_id: dict[str, dict[str, str | int | None]], member_ids: list[str]
     ) -> list[ReviewThreadDismissalEntry]:
         entries: list[ReviewThreadDismissalEntry] = []
         for cid in member_ids:
@@ -543,8 +558,11 @@ class BitbucketProvider(ProviderInterface):
         entries = BitbucketProvider._bbcloud_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
+        root_meta = by_id.get(root) or {}
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"comment:{root}",
+            path=str(root_meta.get("path") or ""),
+            line=int(root_meta.get("line") or 0),
             entries=entries,
         )
 

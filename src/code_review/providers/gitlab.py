@@ -122,10 +122,27 @@ def _gitlab_dismissal_context_for_discussion(
     entries = _gitlab_dismissal_entries_from_notes(notes)
     if len(entries) < 2:
         return None
+    path_str = ""
+    line_no = 0
+    for n in notes:
+        if not isinstance(n, dict):
+            continue
+        pos = n.get("position") if isinstance(n.get("position"), dict) else {}
+        if not path_str:
+            path_str = str(pos.get("new_path") or pos.get("old_path") or "")
+        if not line_no:
+            try:
+                line_no = int(pos.get("new_line") or pos.get("old_line") or 0)
+            except (TypeError, ValueError):
+                line_no = 0
+        if path_str and line_no:
+            break
     stable = f"gitlab:discussion:{did}" if did else f"gitlab:discussion:{pr_number}"
     return ReviewThreadDismissalContext(
         gate_exclusion_stable_id=stable,
         thread_id=did,
+        path=path_str,
+        line=line_no,
         entries=entries,
     )
 

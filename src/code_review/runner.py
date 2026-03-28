@@ -43,6 +43,7 @@ from code_review.diff.parser import (
     iter_new_lines,
     parse_unified_diff,
 )
+from code_review.diff.position import get_diff_hunk_for_line
 from code_review.formatters.comment import finding_to_comment_body
 from code_review.models import get_context_window
 from code_review.providers import get_provider
@@ -1608,23 +1609,107 @@ def _reply_added_event_authored_by_bot(
     return _event_actor_matches_bot_uuid_fragments(actor_id, actor_login, bot)
 
 
-def _format_reply_dismissal_user_message(
+def _reply_dismissal_entry_is_bot_authored(
+    author_login: str,
+    bot: BotAttributionIdentity,
+) -> bool:
+    """Best-effort match for thread entries, which usually expose only a login/slug-like field."""
+    actor_login = (author_login or "").strip()
+    if not actor_login or not bot.is_resolved():
+        return False
+    if _event_actor_matches_bot_login(actor_login, bot):
+        return True
+    if _event_actor_matches_bot_slug(actor_login, bot):
+        return True
+    return _event_actor_matches_bot_uuid_fragments("", actor_login, bot)
+
+
+def _reply_dismissal_original_comment_id(
     ctx: ReviewThreadDismissalContext,
     bot: BotAttributionIdentity,
 ) -> str:
+    """Prefer the first bot-authored entry; otherwise fall back to the first thread entry."""
+    for ent in ctx.entries:
+        if _reply_dismissal_entry_is_bot_authored(ent.author_login, bot):
+            return (ent.comment_id or "").strip()
+    if ctx.entries:
+        return (ctx.entries[0].comment_id or "").strip()
+    return ""
+
+
+def _reply_dismissal_diff_context_for_thread(
+    full_diff: str,
+    ctx: ReviewThreadDismissalContext,
+) -> str:
+    """Return an annotated diff snippet for the thread's anchored file/line when available."""
+    path = (ctx.path or "").strip()
+    if not full_diff or not path:
+        return ""
+    line = int(ctx.line or 0)
+    diff_text = get_diff_hunk_for_line(full_diff, path, line) if line > 0 else None
+    if not diff_text:
+        diff_text = unified_diff_for_path(full_diff, path)
+    diff_text = (diff_text or "").strip()
+    if not diff_text:
+        return ""
+    annotated = annotate_diff_with_line_numbers(diff_text)
+    if len(annotated) > 12_000:
+        annotated = annotated[:11_999] + "…"
+    lines = [
+        "",
+        "Relevant PR diff context:",
+        f"Anchored file: {path}",
+    ]
+    if line > 0:
+        lines.append(f"Anchored line: {line}")
+    lines.extend(
+        [
+            "",
+            "```diff",
+            annotated,
+            "```",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_reply_dismissal_user_message(
+    ctx: ReviewThreadDismissalContext,
+    bot: BotAttributionIdentity,
+    triggering_comment_id: str,
+    diff_context: str = "",
+) -> str:
     """Build the user message for the reply-dismissal agent."""
     who = (bot.login or bot.slug or bot.id_str or bot.uuid or "").strip() or "(unknown)"
+    original_comment_id = _reply_dismissal_original_comment_id(ctx, bot)
+    triggered_comment_id = (triggering_comment_id or "").strip()
     lines = [
         "Classify this single pull-request review thread.",
         f"Automated reviewer identity hint (token user): {who}",
+        f"Original automated review comment id: {original_comment_id or '(unknown)'}",
+        f"Triggering human reply comment id: {triggered_comment_id or '(unknown)'}",
         "",
         "Thread comments in chronological order:",
     ]
     for i, ent in enumerate(ctx.entries, start=1):
         lines.append(f"--- Comment {i} ---")
+        tags: list[str] = []
+        cid = (ent.comment_id or "").strip()
+        if cid and cid == original_comment_id:
+            tags.append("original automated review comment")
+        if cid and cid == triggered_comment_id:
+            tags.append("triggering human reply")
+        if _reply_dismissal_entry_is_bot_authored(ent.author_login, bot):
+            tags.append("bot-authored")
+        if tags:
+            lines.append(f"Role: {', '.join(tags)}")
+        if cid:
+            lines.append(f"Comment id: {cid}")
         lines.append(f"Author: {(ent.author_login or '').strip() or '(unknown)'}")
         lines.append(ent.body or "")
         lines.append("")
+    if diff_context:
+        lines.append(diff_context)
     return "\n".join(lines)
 
 
@@ -2879,13 +2964,30 @@ class ReviewOrchestrator:
         if precheck is None:
             return frozenset()
         bot_id, dctx = precheck
+        diff_context = ""
+        if (dctx.path or "").strip():
+            try:
+                diff_context = _reply_dismissal_diff_context_for_thread(
+                    provider.get_pr_diff(owner, repo, pr_number),
+                    dctx,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Reply-dismissal diff context unavailable for path=%s line=%s: %s",
+                    (dctx.path or "").strip(),
+                    int(dctx.line or 0),
+                    e,
+                )
 
-        user_msg = _format_reply_dismissal_user_message(dctx, bot_id)
+        user_msg = _format_reply_dismissal_user_message(dctx, bot_id, comment_id, diff_context)
         logger.info(
-            "Reply-dismissal sending thread to LLM: comment_id=%s entries=%d stable_id=%s",
+            "Reply-dismissal sending thread to LLM: comment_id=%s entries=%d stable_id=%s path=%s line=%s diff_context=%s",
             comment_id,
             len(dctx.entries),
             dctx.gate_exclusion_stable_id,
+            (dctx.path or "").strip(),
+            int(dctx.line or 0),
+            "yes" if diff_context else "no",
         )
         try:
             raw_verdict = _run_reply_dismissal_llm(user_msg)

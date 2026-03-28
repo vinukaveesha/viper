@@ -120,6 +120,141 @@ def _patch_adk_runner(mock_runner_instance: MagicMock):
         yield
 
 
+def test_format_reply_dismissal_user_message_marks_original_and_triggering_comments():
+    from code_review.runner import _format_reply_dismissal_user_message
+    from code_review.schemas.review_thread_dismissal import (
+        ReviewThreadDismissalContext,
+        ReviewThreadDismissalEntry,
+    )
+
+    msg = _format_reply_dismissal_user_message(
+        ReviewThreadDismissalContext(
+            gate_exclusion_stable_id="comment:10",
+            entries=[
+                ReviewThreadDismissalEntry(
+                    comment_id="10",
+                    author_login="viper",
+                    body="[High] sanitize this",
+                ),
+                ReviewThreadDismissalEntry(
+                    comment_id="11",
+                    author_login="se",
+                    body="we validate it",
+                ),
+                ReviewThreadDismissalEntry(
+                    comment_id="12",
+                    author_login="viper",
+                    body="please address XML escaping specifically",
+                ),
+            ],
+        ),
+        BotAttributionIdentity(login="viper"),
+        "11",
+    )
+
+    assert "Original automated review comment id: 10" in msg
+    assert "Triggering human reply comment id: 11" in msg
+    assert "Role: original automated review comment, bot-authored" in msg
+    assert "Role: triggering human reply" in msg
+    assert "Comment id: 10" in msg
+    assert "Comment id: 11" in msg
+
+
+@patch("code_review.runner.get_code_review_app_config")
+@patch("code_review.runner._run_reply_dismissal_llm")
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
+def test_run_review_decision_only_reply_dismissal_sends_anchored_diff_context(
+    mock_get_scm_config,
+    mock_get_provider,
+    mock_get_context_window,
+    mock_llm,
+    mock_app_cfg,
+):
+    from code_review.runner import run_review
+    from code_review.schemas.review_decision_event import ReviewDecisionEventContext
+    from code_review.schemas.review_thread_dismissal import (
+        ReviewThreadDismissalContext,
+        ReviewThreadDismissalEntry,
+    )
+
+    mock_app_cfg.return_value = MagicMock(
+        review_decision_only_skip_if_bot_not_blocking=False,
+        reply_dismissal_enabled=True,
+    )
+    mock_llm.return_value = '{"verdict": "agreed", "reply_text": ""}'
+
+    caps = ProviderCapabilities(
+        resolvable_comments=False,
+        supports_suggestions=False,
+        supports_review_decisions=True,
+        supports_bot_blocking_state_query=True,
+        supports_bot_attribution_identity_query=True,
+        supports_review_thread_dismissal_context=True,
+        supports_review_thread_reply=True,
+        supports_review_thread_resolution=True,
+    )
+    provider = _provider_with_review_decisions(capabilities=caps)
+    provider.get_pr_info = MagicMock(return_value=PRInfo(head_sha="sha"))
+    provider.get_pr_diff = MagicMock(
+        return_value=(
+            "diff --git a/src/Foo.java b/src/Foo.java\n"
+            "--- a/src/Foo.java\n"
+            "+++ b/src/Foo.java\n"
+            "@@ -4,3 +4,3 @@\n"
+            " context\n"
+            '-old = "unsafe"\n'
+            '+new = escapeXml(input)\n'
+            " tail\n"
+        )
+    )
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(return_value=[])
+    provider.get_review_thread_dismissal_context = MagicMock(
+        return_value=ReviewThreadDismissalContext(
+            gate_exclusion_stable_id="comment:10",
+            path="src/Foo.java",
+            line=5,
+            entries=[
+                ReviewThreadDismissalEntry(
+                    comment_id="10", author_login="viper", body="[High] escape XML input"
+                ),
+                ReviewThreadDismissalEntry(
+                    comment_id="11", author_login="dev", body="done"
+                ),
+            ],
+        )
+    )
+    provider.get_bot_attribution_identity = MagicMock(return_value=BotAttributionIdentity(login="viper"))
+    provider.resolve_review_thread = MagicMock()
+    _wire_standard_runner_mocks(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_context_window,
+        scm=_review_decision_scm_config(),
+        provider=provider,
+    )
+
+    run_review(
+        "o",
+        "r",
+        1,
+        head_sha="sha",
+        dry_run=False,
+        review_decision_only=True,
+        event_context=ReviewDecisionEventContext(
+            comment_id="11",
+            source="webhook_comment",
+        ),
+    )
+
+    prompt = mock_llm.call_args.args[0]
+    assert "Relevant PR diff context:" in prompt
+    assert "Anchored file: src/Foo.java" in prompt
+    assert "Anchored line: 5" in prompt
+    assert "<L5>+new = escapeXml(input)" in prompt
+
+
 def _wire_standard_runner_mocks(
     mock_get_scm_config,
     mock_get_provider,

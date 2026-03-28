@@ -16,13 +16,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REPLY_DISMISSAL_INSTRUCTION = """\
-You classify one pull-request review thread: an automated review comment and a human reply.
+You classify one pull-request review thread.
 
-Your job: decide if the human has adequately addressed the concern raised in the review comment.
+Your job: decide if the triggering human reply adequately addresses the concern raised in the
+original automated review comment.
+
+The thread may contain more than two comments. The user message will identify:
+- the original automated review comment
+- the triggering human reply
+
+Base your verdict on whether the triggering reply, together with any later clarifications in the
+same thread, resolves the original concern.
+
+If relevant PR diff context is provided, use it to ground your judgment. Prefer repository-specific
+evidence from that diff over generic assumptions.
 
 Output rules (critical):
-- Respond with a single JSON object only (no prose before or after).
-- You may wrap it in a markdown ```json code block if you prefer.
+- Respond with a single JSON object only. Do not include markdown fences.
 - Schema:
   - "verdict": "agreed" OR "disagreed"
   - "reply_text": string — required when verdict is "disagreed": a short, professional reply \
@@ -96,14 +106,31 @@ def _iter_reply_dismissal_json_candidates(text: str):
         chunks.append(fenced.strip())
     chunks.append(s)
     for chunk in chunks:
+        yield from _iter_reply_dismissal_chunk_candidates(chunk)
+    yield from _iter_json_objects_via_raw_decode(s)
+
+
+def _iter_reply_dismissal_chunk_candidates(chunk: str):
+    """Yield parsed objects from one chunk, including minimal repair for common LLM escapes."""
+    for candidate in (chunk, _repair_common_llm_json_escapes(chunk)):
+        if candidate is None:
+            continue
         try:
-            val = json.loads(chunk)
-            if isinstance(val, dict):
-                yield val
-                return
+            val = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    yield from _iter_json_objects_via_raw_decode(s)
+        if isinstance(val, dict):
+            yield val
+            return
+
+
+def _repair_common_llm_json_escapes(text: str) -> str | None:
+    """Repair common quasi-JSON escape mistakes without changing valid JSON first-pass behavior."""
+    if "\\'" not in text:
+        return None
+    # In JSON double-quoted strings, apostrophes do not need escaping. Some LLMs still emit
+    # Python-style ``\'`` sequences, which are invalid JSON and would otherwise fail closed.
+    return text.replace("\\'", "'")
 
 
 def _iter_json_objects_via_raw_decode(s: str):

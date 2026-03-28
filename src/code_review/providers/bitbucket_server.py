@@ -647,7 +647,17 @@ class BitbucketServerProvider(ProviderInterface):
         return None
 
     @staticmethod
-    def _bbs_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, int] | None:
+    def _bbs_anchor_path_line(c: dict) -> tuple[str, int]:
+        anchor = c.get("anchor") if isinstance(c.get("anchor"), dict) else {}
+        path = str(anchor.get("path") or "")
+        try:
+            line = int(anchor.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        return path, line
+
+    @staticmethod
+    def _bbs_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, int, str, int] | None:
         if not isinstance(c, dict):
             return None
         cid = str(c.get("id") or "").strip()
@@ -662,7 +672,8 @@ class BitbucketServerProvider(ProviderInterface):
             ts = int(cd) if cd is not None else 0
         except (TypeError, ValueError):
             ts = 0
-        return (cid, parent, body, login, ts)
+        path, line = BitbucketServerProvider._bbs_anchor_path_line(c)
+        return (cid, parent, body, login, ts, path, line)
 
     @staticmethod
     def _bbs_index_dismissal_by_id(
@@ -673,12 +684,14 @@ class BitbucketServerProvider(ProviderInterface):
             meta = BitbucketServerProvider._bbs_dismissal_meta(c)
             if not meta:
                 continue
-            cid, parent, body, login, ts = meta
+            cid, parent, body, login, ts, path, line = meta
             by_id[cid] = {
                 "parent": parent,
                 "body": body,
                 "login": login,
                 "ts": ts,
+                "path": path,
+                "line": line,
             }
         return by_id
 
@@ -752,8 +765,11 @@ class BitbucketServerProvider(ProviderInterface):
         entries = BitbucketServerProvider._bbs_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
+        root_meta = by_id.get(root) or {}
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"comment:{root}",
+            path=str(root_meta.get("path") or ""),
+            line=int(root_meta.get("line") or 0),
             entries=entries,
         )
 
