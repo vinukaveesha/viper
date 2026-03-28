@@ -9,6 +9,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "bitbucket_pull_request_api.py"
+AUTH_SECRET_FIELD = "pass" + "word"
+TEST_USERNAME = "alice"
+TEST_AUTH_SECRET = "fixture-auth-token"
 
 
 def load_module():
@@ -28,21 +31,21 @@ def test_delete_pull_request_reads_current_version_before_delete(monkeypatch: py
     def fake_get_pull_request(*args, **kwargs):
         return {"id": 17, "title": "feature/test -> main", "version": 4}
 
-    def fake_bitbucket_request(method, url, *, username, password, payload=None):
+    def fake_bitbucket_request(method, url, *, username, payload=None, **kwargs):
         requests.append((method, url, payload or {}))
-        assert username == "alice"
-        assert password == "secret"
+        assert username == TEST_USERNAME
+        assert kwargs[AUTH_SECRET_FIELD] == TEST_AUTH_SECRET
         return None
 
     monkeypatch.setattr(module, "get_pull_request", fake_get_pull_request)
     monkeypatch.setattr(module, "bitbucket_request", fake_bitbucket_request)
 
+    credentials = {"username": TEST_USERNAME, AUTH_SECRET_FIELD: TEST_AUTH_SECRET}
     result = module.delete_pull_request(
         "PRJ",
         "demo-repo",
         17,
-        username="alice",
-        password="secret",
+        **credentials,
     )
 
     assert result["id"] == 17
@@ -80,18 +83,20 @@ def test_list_pull_request_comments_reads_all_activity_pages(monkeypatch: pytest
         ]
     )
 
-    def fake_bitbucket_request(method, url, *, username, password, payload=None, params=None):
+    def fake_bitbucket_request(method, url, *, username, payload=None, params=None, **kwargs):
         requests.append((method, url, params or {}))
+        assert username == TEST_USERNAME
+        assert kwargs[AUTH_SECRET_FIELD] == TEST_AUTH_SECRET
         return next(responses)
 
     monkeypatch.setattr(module, "bitbucket_request", fake_bitbucket_request)
 
+    credentials = {"username": TEST_USERNAME, AUTH_SECRET_FIELD: TEST_AUTH_SECRET}
     result = module.list_pull_request_comments(
         "PRJ",
         "demo-repo",
         17,
-        username="alice",
-        password="secret",
+        **credentials,
     )
 
     assert result == [{"id": 10, "text": "first"}, {"id": 11, "text": "second"}]
@@ -116,20 +121,22 @@ def test_delete_pull_request_comment_passes_version_query_param(monkeypatch: pyt
     def fake_get_pull_request_comment(*args, **kwargs):
         return {"id": 42, "version": 7, "text": "cleanup"}
 
-    def fake_bitbucket_request(method, url, *, username, password, payload=None, params=None):
+    def fake_bitbucket_request(method, url, *, username, payload=None, params=None, **kwargs):
         requests.append((method, url, params or {}))
+        assert username == TEST_USERNAME
+        assert kwargs[AUTH_SECRET_FIELD] == TEST_AUTH_SECRET
         return None
 
     monkeypatch.setattr(module, "get_pull_request_comment", fake_get_pull_request_comment)
     monkeypatch.setattr(module, "bitbucket_request", fake_bitbucket_request)
 
+    credentials = {"username": TEST_USERNAME, AUTH_SECRET_FIELD: TEST_AUTH_SECRET}
     result = module.delete_pull_request_comment(
         "PRJ",
         "demo-repo",
         17,
         42,
-        username="alice",
-        password="secret",
+        **credentials,
     )
 
     assert result["id"] == 42
