@@ -107,6 +107,59 @@ def _make_bb_diff(src_path, dst_path, hunks):
     }
 
 
+def _mock_bb_json_response(payload):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "application/json"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.json.return_value = payload
+    return mock_r
+
+
+def _bbs_anchor(path="f.java", line=2, **extra):
+    return {"path": path, "line": line, **extra}
+
+
+def _bbs_comment(
+    comment_id,
+    text,
+    *,
+    state="OPEN",
+    path="f.java",
+    line=2,
+    created_date=None,
+    author_name=None,
+    parent_id=None,
+    properties=None,
+    comments=None,
+    **anchor_extra,
+):
+    comment = {
+        "id": comment_id,
+        "text": text,
+        "state": state,
+        "anchor": _bbs_anchor(path=path, line=line, **anchor_extra),
+    }
+    if created_date is not None:
+        comment["createdDate"] = created_date
+    if author_name is not None:
+        comment["author"] = {"name": author_name}
+    if parent_id is not None:
+        comment["parentComment"] = {"id": parent_id}
+    if properties is not None:
+        comment["properties"] = properties
+    if comments is not None:
+        comment["comments"] = comments
+    return comment
+
+
+def _bbs_commented_activity(comment):
+    return {"action": "COMMENTED", "comment": comment}
+
+
+def _bbs_page(*values):
+    return {"isLastPage": True, "values": list(values)}
+
+
 def test_bitbucket_json_diff_to_unified_modified_file():
     """A modified file with CONTEXT, ADDED and REMOVED segments converts correctly."""
     data = _make_bb_diff(
@@ -650,40 +703,24 @@ def test_get_unresolved_review_items_skips_applied_suggestion_comments(mock_clie
     """Applied suggestions must not keep Bitbucket Server quality gate in NEEDS_WORK."""
 
     def _get_side_effect(url: str, params=None, **kwargs):
-        mock_r = MagicMock()
-        mock_r.headers = {"content-type": "application/json"}
-        mock_r.raise_for_status = MagicMock()
         u = str(url)
         if "/activities" in u:
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 482,
-                            "text": "[High] already applied",
-                            "state": "OPEN",
-                            "properties": {"suggestionState": "APPLIED"},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 483,
-                            "text": "[Medium] still active",
-                            "state": "OPEN",
-                            "anchor": {"path": "f.java", "line": 4},
-                        },
-                    },
-                ],
-            }
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            482,
+                            "[High] already applied",
+                            properties={"suggestionState": "APPLIED"},
+                        )
+                    ),
+                    _bbs_commented_activity(_bbs_comment(483, "[Medium] still active", line=4)),
+                )
+            )
         elif "/tasks" in u:
-            mock_r.json.return_value = {"isLastPage": True, "values": []}
+            return _mock_bb_json_response(_bbs_page())
         else:
-            mock_r.json.return_value = {}
-        return mock_r
+            return _mock_bb_json_response({})
 
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
@@ -700,43 +737,25 @@ def test_get_unresolved_review_items_uses_comments_endpoint_state_when_activitie
     """A richer /comments payload should clear the gate even if /activities is stale."""
 
     def _get_side_effect(url: str, params=None, **kwargs):
-        mock_r = MagicMock()
-        mock_r.headers = {"content-type": "application/json"}
-        mock_r.raise_for_status = MagicMock()
         u = str(url)
         if "/activities" in u:
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 482,
-                            "text": "[High] already applied",
-                            "state": "OPEN",
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    }
-                ],
-            }
+            return _mock_bb_json_response(
+                _bbs_page(_bbs_commented_activity(_bbs_comment(482, "[High] already applied")))
+            )
         elif u.endswith("/comments"):
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "id": 482,
-                        "text": "[High] already applied",
-                        "state": "OPEN",
-                        "properties": {"suggestionState": "APPLIED"},
-                        "anchor": {"path": "f.java", "line": 2},
-                    }
-                ],
-            }
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_comment(
+                        482,
+                        "[High] already applied",
+                        properties={"suggestionState": "APPLIED"},
+                    )
+                )
+            )
         elif "/tasks" in u:
-            mock_r.json.return_value = {"isLastPage": True, "values": []}
+            return _mock_bb_json_response(_bbs_page())
         else:
-            mock_r.json.return_value = {}
-        return mock_r
+            return _mock_bb_json_response({})
 
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
@@ -748,23 +767,13 @@ def test_get_unresolved_review_items_uses_comments_endpoint_state_when_activitie
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_client):
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {
-        "isLastPage": True,
-        "values": [
-            {
-                "action": "COMMENTED",
-                "comment": {
-                    "id": 1,
-                    "text": "Applied",
-                    "state": "OPEN",
-                    "anchor": {"path": "src/Foo.java", "line": 5, "orphaned": True},
-                },
-            }
-        ],
-    }
-    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+    mock_client.return_value.__enter__.return_value.get.return_value = _mock_bb_json_response(
+        _bbs_page(
+            _bbs_commented_activity(
+                _bbs_comment(1, "Applied", path="src/Foo.java", line=5, orphaned=True)
+            )
+        )
+    )
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     comments = p.get_existing_review_comments("PROJ", "my-repo", 42)
@@ -776,56 +785,42 @@ def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_clie
 @patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_unresolved_review_items_skips_threads_with_latest_accepted_bot_reply(mock_client):
     def _get_side_effect(url: str, params=None, **kwargs):
-        mock_r = MagicMock()
-        mock_r.headers = {"content-type": "application/json"}
-        mock_r.raise_for_status = MagicMock()
         u = str(url)
         if "/activities" in u:
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 1,
-                            "text": "[High] original issue",
-                            "state": "OPEN",
-                            "createdDate": 1,
-                            "author": {"name": "viper"},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 2,
-                            "text": "fixed now",
-                            "state": "OPEN",
-                            "createdDate": 2,
-                            "author": {"name": "dev"},
-                            "parentComment": {"id": 1},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 3,
-                            "text": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
-                            "state": "OPEN",
-                            "createdDate": 3,
-                            "author": {"name": "viper"},
-                            "parentComment": {"id": 2},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                ],
-            }
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            1,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            2,
+                            "fixed now",
+                            created_date=2,
+                            author_name="dev",
+                            parent_id=1,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            3,
+                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                            created_date=3,
+                            author_name="viper",
+                            parent_id=2,
+                        )
+                    ),
+                )
+            )
         elif "/tasks" in u:
-            mock_r.json.return_value = {"isLastPage": True, "values": []}
+            return _mock_bb_json_response(_bbs_page())
         else:
-            mock_r.json.return_value = {}
-        return mock_r
+            return _mock_bb_json_response({})
 
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
@@ -841,53 +836,41 @@ def test_get_unresolved_review_items_skips_threads_with_nested_accepted_bot_repl
     mock_client,
 ):
     def _get_side_effect(url: str, params=None, **kwargs):
-        mock_r = MagicMock()
-        mock_r.headers = {"content-type": "application/json"}
-        mock_r.raise_for_status = MagicMock()
         u = str(url)
         if "/activities" in u:
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 10,
-                            "text": "[High] original issue",
-                            "state": "OPEN",
-                            "createdDate": 1,
-                            "author": {"name": "viper"},
-                            "anchor": {"path": "f.java", "line": 2},
-                            "comments": [
-                                {
-                                    "id": 11,
-                                    "text": "fixed now",
-                                    "state": "OPEN",
-                                    "createdDate": 2,
-                                    "author": {"name": "dev"},
-                                    "anchor": {"path": "f.java", "line": 2},
-                                    "comments": [
-                                        {
-                                            "id": 12,
-                                            "text": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
-                                            "state": "OPEN",
-                                            "createdDate": 3,
-                                            "author": {"name": "viper"},
-                                            "anchor": {"path": "f.java", "line": 2},
-                                            "comments": [],
-                                        }
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            10,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                            comments=[
+                                _bbs_comment(
+                                    11,
+                                    "fixed now",
+                                    created_date=2,
+                                    author_name="dev",
+                                    comments=[
+                                        _bbs_comment(
+                                            12,
+                                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                                            created_date=3,
+                                            author_name="viper",
+                                            comments=[],
+                                        )
                                     ],
-                                }
+                                )
                             ],
-                        },
-                    }
-                ],
-            }
+                        )
+                    )
+                )
+            )
         elif "/tasks" in u:
-            mock_r.json.return_value = {"isLastPage": True, "values": []}
+            return _mock_bb_json_response(_bbs_page())
         else:
-            mock_r.json.return_value = {}
-        return mock_r
+            return _mock_bb_json_response({})
 
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
@@ -903,56 +886,42 @@ def test_get_unresolved_review_items_skips_dismissed_thread_when_activity_order_
     mock_client,
 ):
     def _get_side_effect(url: str, params=None, **kwargs):
-        mock_r = MagicMock()
-        mock_r.headers = {"content-type": "application/json"}
-        mock_r.raise_for_status = MagicMock()
         u = str(url)
         if "/activities" in u:
-            mock_r.json.return_value = {
-                "isLastPage": True,
-                "values": [
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 3,
-                            "text": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
-                            "state": "OPEN",
-                            "createdDate": 3,
-                            "author": {"name": "viper"},
-                            "parentComment": {"id": 2},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 2,
-                            "text": "fixed now",
-                            "state": "OPEN",
-                            "createdDate": 2,
-                            "author": {"name": "dev"},
-                            "parentComment": {"id": 1},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                    {
-                        "action": "COMMENTED",
-                        "comment": {
-                            "id": 1,
-                            "text": "[High] original issue",
-                            "state": "OPEN",
-                            "createdDate": 1,
-                            "author": {"name": "viper"},
-                            "anchor": {"path": "f.java", "line": 2},
-                        },
-                    },
-                ],
-            }
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            3,
+                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                            created_date=3,
+                            author_name="viper",
+                            parent_id=2,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            2,
+                            "fixed now",
+                            created_date=2,
+                            author_name="dev",
+                            parent_id=1,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            1,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                        )
+                    ),
+                )
+            )
         elif "/tasks" in u:
-            mock_r.json.return_value = {"isLastPage": True, "values": []}
+            return _mock_bb_json_response(_bbs_page())
         else:
-            mock_r.json.return_value = {}
-        return mock_r
+            return _mock_bb_json_response({})
 
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
