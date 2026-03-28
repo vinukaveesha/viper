@@ -2968,7 +2968,7 @@ class ReviewOrchestrator:
         if (dctx.path or "").strip():
             try:
                 diff_context = _reply_dismissal_diff_context_for_thread(
-                    provider.get_pr_diff(owner, repo, pr_number),
+                    provider.get_pr_diff_for_file(owner, repo, pr_number, dctx.path),
                     dctx,
                 )
             except Exception as e:

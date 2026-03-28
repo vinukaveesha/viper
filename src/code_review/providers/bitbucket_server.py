@@ -320,6 +320,38 @@ class BitbucketServerProvider(ProviderInterface):
         path = self._path(owner, repo, "pull-requests", str(pr_number), "diff")
         return self._get_unified_diff(path)
 
+    def get_pr_diff_for_file(self, owner: str, repo: str, pr_number: int, path: str) -> str:
+        """Return a single-file unified diff with bounded context when possible.
+
+        Bitbucket Server/DC exposes ``/diff/{path}``, which is substantially lighter than
+        downloading the full PR diff and slicing it client-side. Keep context small because
+        reply-dismissal only needs nearby evidence for one review thread.
+        """
+        wanted_path = (path or "").strip()
+        if not wanted_path:
+            return ""
+        api_path = self._path(
+            owner,
+            repo,
+            "pull-requests",
+            str(pr_number),
+            "diff",
+            quote(wanted_path, safe=""),
+        )
+        try:
+            return self._get_unified_diff(api_path, params={"contextLines": 12})
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server single-file diff failed owner=%s repo=%s pr=%s path=%s: %s; "
+                "falling back to full PR diff slice",
+                owner,
+                repo,
+                pr_number,
+                wanted_path,
+                e,
+            )
+            return super().get_pr_diff_for_file(owner, repo, pr_number, wanted_path)
+
     def get_incremental_pr_diff(
         self,
         owner: str,

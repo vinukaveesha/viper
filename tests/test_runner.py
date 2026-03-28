@@ -197,7 +197,7 @@ def test_run_review_decision_only_reply_dismissal_sends_anchored_diff_context(
     )
     provider = _provider_with_review_decisions(capabilities=caps)
     provider.get_pr_info = MagicMock(return_value=PRInfo(head_sha="sha"))
-    provider.get_pr_diff = MagicMock(
+    provider.get_pr_diff_for_file = MagicMock(
         return_value=(
             "diff --git a/src/Foo.java b/src/Foo.java\n"
             "--- a/src/Foo.java\n"
@@ -253,6 +253,8 @@ def test_run_review_decision_only_reply_dismissal_sends_anchored_diff_context(
     assert "Anchored file: src/Foo.java" in prompt
     assert "Anchored line: 5" in prompt
     assert "<L5>+new = escapeXml(input)" in prompt
+    provider.get_pr_diff_for_file.assert_called_once_with("o", "r", 1, "src/Foo.java")
+    assert not provider.get_pr_diff.called
 
 
 def _wire_standard_runner_mocks(

@@ -19,6 +19,23 @@ def test_get_provider_bitbucket_server():
     assert isinstance(p, BitbucketServerProvider)
 
 
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_pr_diff_for_file_uses_single_file_endpoint(mock_client):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "text/plain"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.text = "@@ -1,1 +1,1 @@\n-old\n+new\n"
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_r
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "@@ -1,1 +1,1 @@" in diff_text
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert "/pull-requests/7/diff/src%2FFoo.java" in call[0][0]
+    assert call[1]["params"] == {"contextLines": 12}
+
+
 # ---------------------------------------------------------------------------
 # _bitbucket_json_diff_to_unified unit tests
 # ---------------------------------------------------------------------------
