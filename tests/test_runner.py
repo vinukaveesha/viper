@@ -1005,6 +1005,102 @@ def test_omit_marker_pr_summary_meets_expectations_when_review_decisions_disable
 @patch("code_review.runner.get_context_window")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
+def test_run_review_decision_only_reply_dismissal_skips_llm_when_scm_already_addressed(
+    mock_get_scm_config,
+    mock_get_provider,
+    mock_get_context_window,
+    mock_llm,
+    mock_app_cfg,
+):
+    from code_review.runner import run_review
+    from code_review.schemas.review_decision_event import ReviewDecisionEventContext
+    from code_review.schemas.review_thread_dismissal import (
+        ReviewThreadDismissalContext,
+        ReviewThreadDismissalEntry,
+    )
+
+    mock_app_cfg.return_value = MagicMock(
+        review_decision_only_skip_if_bot_not_blocking=False,
+        reply_dismissal_enabled=True,
+    )
+
+    caps = ProviderCapabilities(
+        resolvable_comments=False,
+        supports_suggestions=True,
+        supports_review_decisions=True,
+        supports_bot_blocking_state_query=True,
+        supports_bot_attribution_identity_query=True,
+        supports_review_thread_dismissal_context=True,
+        supports_review_thread_reply=True,
+    )
+    provider = _provider_with_review_decisions(capabilities=caps)
+    provider.get_pr_info = MagicMock(return_value=PRInfo(head_sha="sha"))
+    provider.get_unresolved_review_items_for_quality_gate = MagicMock(
+        return_value=[
+            UnresolvedReviewItem(
+                stable_id="comment:482",
+                thread_id=None,
+                kind="inline_comment",
+                path="a.py",
+                line=104,
+                body="[Medium] apply this",
+                inferred_severity="medium",
+            )
+        ]
+    )
+    provider.get_review_thread_dismissal_context = MagicMock(
+        return_value=ReviewThreadDismissalContext(
+            gate_exclusion_stable_id="comment:482",
+            path="a.py",
+            line=104,
+            scm_already_addressed=True,
+            scm_already_addressed_reason="suggestion_applied",
+            entries=[
+                ReviewThreadDismissalEntry(
+                    comment_id="482", author_login="viper-bot", body="[Medium] apply this"
+                ),
+                ReviewThreadDismissalEntry(comment_id="483", author_login="dev", body="done"),
+            ],
+        )
+    )
+    provider.get_bot_attribution_identity = MagicMock(
+        return_value=BotAttributionIdentity(login="viper-bot")
+    )
+    provider.post_review_thread_reply = MagicMock()
+    provider.resolve_review_thread = MagicMock()
+    _wire_standard_runner_mocks(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_context_window,
+        scm=_review_decision_scm_config(),
+        provider=provider,
+    )
+
+    run_review(
+        "o",
+        "r",
+        1,
+        head_sha="sha",
+        dry_run=False,
+        review_decision_only=True,
+        event_context=ReviewDecisionEventContext(
+            comment_id="483",
+            source="webhook_comment",
+        ),
+    )
+
+    mock_llm.assert_not_called()
+    provider.post_review_thread_reply.assert_not_called()
+    provider.resolve_review_thread.assert_not_called()
+    provider.submit_review_decision.assert_called_once()
+    assert provider.submit_review_decision.call_args.args[3] == "APPROVE"
+
+
+@patch("code_review.runner.get_code_review_app_config")
+@patch("code_review.runner._run_reply_dismissal_llm")
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
 def test_run_review_decision_only_reply_dismissal_agreed_excludes_thread(
     mock_get_scm_config,
     mock_get_provider,

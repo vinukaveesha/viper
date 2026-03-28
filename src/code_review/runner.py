@@ -1672,6 +1672,15 @@ def _reply_dismissal_existing_bot_reply_after_trigger(
     return None
 
 
+def _reply_dismissal_scm_already_addressed_reason(
+    ctx: ReviewThreadDismissalContext,
+) -> str:
+    """Provider-supplied reason when SCM already indicates the concern is addressed."""
+    if not bool(getattr(ctx, "scm_already_addressed", False)):
+        return ""
+    return (getattr(ctx, "scm_already_addressed_reason", "") or "").strip() or "scm_state"
+
+
 def _reply_dismissal_diff_context_for_thread(
     full_diff: str,
     ctx: ReviewThreadDismissalContext,
@@ -3057,6 +3066,17 @@ class ReviewOrchestrator:
         if precheck is None:
             return frozenset()
         bot_id, dctx = precheck
+        scm_reason = _reply_dismissal_scm_already_addressed_reason(dctx)
+        if scm_reason:
+            observability.record_reply_dismissal_outcome("skipped_scm_already_addressed")
+            logger.info(
+                "Reply-dismissal skipped LLM: SCM already indicates thread addressed "
+                "(reason=%s stable_id=%s comment_id=%s)",
+                scm_reason,
+                dctx.gate_exclusion_stable_id,
+                comment_id,
+            )
+            return frozenset({dctx.gate_exclusion_stable_id})
         diff_context = ""
         caps_rd = provider.capabilities()
         if (dctx.path or "").strip() and caps_rd.supports_lightweight_pr_diff_for_file:

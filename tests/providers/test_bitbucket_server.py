@@ -1062,6 +1062,35 @@ def test_bbs_build_dismissal_context_thread():
     assert len(ctx.entries) == 2
 
 
+def test_bbs_build_dismissal_context_marks_suggestion_applied_as_already_addressed():
+    raw = [
+        {
+            "id": 482,
+            "text": "[Medium] apply this",
+            "author": {"name": "viper"},
+            "createdDate": 100,
+            "state": "OPEN",
+            "properties": {"suggestionState": "APPLIED"},
+            "anchor": {"path": "src/Foo.java", "line": 104, "orphaned": True},
+        },
+        {
+            "id": 483,
+            "text": "done",
+            "parentComment": {"id": 482},
+            "author": {"name": "dev"},
+            "createdDate": 200,
+        },
+    ]
+    ctx = BitbucketServerProvider._bbs_build_dismissal_context(raw, "483")
+
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:482"
+    assert ctx.scm_already_addressed is True
+    assert ctx.scm_already_addressed_reason == "suggestion_applied"
+    assert ctx.path == "src/Foo.java"
+    assert ctx.line == 104
+
+
 @patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_review_thread_dismissal_context_server_with_nested_activity_comments(mock_client):
     mock_r = MagicMock()

@@ -35,4 +35,12 @@ class ReviewThreadDismissalContext(BaseModel):
         default=0,
         description="Best-effort anchored new-file line number for the thread when available",
     )
+    scm_already_addressed: bool = Field(
+        default=False,
+        description="Provider already indicates the original concern has been addressed.",
+    )
+    scm_already_addressed_reason: str = Field(
+        default="",
+        description="Best-effort provider-specific reason, for example suggestion_applied.",
+    )
     entries: list[ReviewThreadDismissalEntry] = Field(default_factory=list)

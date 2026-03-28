@@ -635,7 +635,12 @@ class BitbucketServerProvider(ProviderInterface):
             c = act.get("comment")
             if not isinstance(c, dict):
                 continue
-            BitbucketServerProvider._bbs_merge_nested_comment_dicts_into(by_id, c)
+            merged_comment = dict(c)
+            if not isinstance(merged_comment.get("anchor"), dict):
+                activity_anchor = act.get("commentAnchor")
+                if isinstance(activity_anchor, dict):
+                    merged_comment["anchor"] = activity_anchor
+            BitbucketServerProvider._bbs_merge_nested_comment_dicts_into(by_id, merged_comment)
 
     @staticmethod
     def _bbs_activities_next_start(data: dict, start: int) -> int | None:
@@ -699,7 +704,9 @@ class BitbucketServerProvider(ProviderInterface):
         return path, line
 
     @staticmethod
-    def _bbs_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, int, str, int] | None:
+    def _bbs_dismissal_meta(
+        c: dict,
+    ) -> tuple[str, str | None, str, str, int, str, int, str, bool, str] | None:
         if not isinstance(c, dict):
             return None
         cid = str(c.get("id") or "").strip()
@@ -715,18 +722,22 @@ class BitbucketServerProvider(ProviderInterface):
         except (TypeError, ValueError):
             ts = 0
         path, line = BitbucketServerProvider._bbs_anchor_path_line(c)
-        return (cid, parent, body, login, ts, path, line)
+        state = str(c.get("state") or "")
+        outdated = BitbucketServerProvider._bbs_comment_is_outdated(c)
+        props = c.get("properties") if isinstance(c.get("properties"), dict) else {}
+        suggestion_state = str(props.get("suggestionState") or "")
+        return (cid, parent, body, login, ts, path, line, state, outdated, suggestion_state)
 
     @staticmethod
     def _bbs_index_dismissal_by_id(
         raw_comments: list[dict],
-    ) -> dict[str, dict[str, str | None | int]]:
-        by_id: dict[str, dict[str, str | None | int]] = {}
+    ) -> dict[str, dict[str, object]]:
+        by_id: dict[str, dict[str, object]] = {}
         for c in raw_comments:
             meta = BitbucketServerProvider._bbs_dismissal_meta(c)
             if not meta:
                 continue
-            cid, parent, body, login, ts, path, line = meta
+            cid, parent, body, login, ts, path, line, state, outdated, suggestion_state = meta
             by_id[cid] = {
                 "parent": parent,
                 "body": body,
@@ -734,6 +745,9 @@ class BitbucketServerProvider(ProviderInterface):
                 "ts": ts,
                 "path": path,
                 "line": line,
+                "state": state,
+                "outdated": outdated,
+                "suggestion_state": suggestion_state,
             }
         return by_id
 
@@ -808,12 +822,30 @@ class BitbucketServerProvider(ProviderInterface):
         if len(entries) < 2:
             return None
         root_meta = by_id.get(root) or {}
+        already_addressed, addressed_reason = BitbucketServerProvider._bbs_scm_already_addressed(
+            root_meta
+        )
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"comment:{root}",
             path=str(root_meta.get("path") or ""),
             line=int(root_meta.get("line") or 0),
+            scm_already_addressed=already_addressed,
+            scm_already_addressed_reason=addressed_reason,
             entries=entries,
         )
+
+    @staticmethod
+    def _bbs_scm_already_addressed(root_meta: dict[str, object]) -> tuple[bool, str]:
+        """Return whether SCM state already indicates the root concern is addressed."""
+        suggestion_state = str(root_meta.get("suggestion_state") or "").strip().upper()
+        if suggestion_state == "APPLIED":
+            return True, "suggestion_applied"
+        state = str(root_meta.get("state") or "").strip().upper()
+        if state == "RESOLVED":
+            return True, "resolved"
+        if bool(root_meta.get("outdated")):
+            return True, "outdated_or_orphaned"
+        return False, ""
 
     def get_review_thread_dismissal_context(
         self,
