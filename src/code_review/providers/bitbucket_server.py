@@ -571,12 +571,17 @@ class BitbucketServerProvider(ProviderInterface):
         comment_for_status = dict(c)
         if anchor and not isinstance(comment_for_status.get("anchor"), dict):
             comment_for_status["anchor"] = anchor
+        props = c.get("properties") if isinstance(c.get("properties"), dict) else {}
+        suggestion_state = str(props.get("suggestionState") or "").strip().upper()
         return ReviewComment(
             id=str(c.get("id", "")),
             path=anchor.get("path") or "",
             line=int(anchor.get("line", 0) or 0),
             body=c.get("text") or "",
-            resolved=bool(c.get("state") == "RESOLVED"),
+            # Bitbucket keeps applied-suggestion comments OPEN even though the original
+            # concern is already addressed; treat them like resolved for gate purposes.
+            resolved=bool(str(c.get("state") or "").strip().upper() == "RESOLVED")
+            or suggestion_state == "APPLIED",
             outdated=BitbucketServerProvider._bbs_comment_is_outdated(comment_for_status),
             parent_id=BitbucketServerProvider._bbs_comment_parent_id(c),
             author_login=str(author.get("name") or author.get("slug") or author.get("username") or ""),
