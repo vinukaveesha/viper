@@ -115,7 +115,7 @@ def test_main_comment_prints_json_report(
         ],
     )
 
-    assert module.main() == 0
+    assert module.main() is None
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
@@ -200,7 +200,7 @@ def test_main_raw_prints_json_report(
         ],
     )
 
-    assert module.main() == 0
+    assert module.main() is None
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)

@@ -3048,67 +3048,42 @@ class ReviewOrchestrator:
         )
         return None
 
-    def _decision_only_reply_dismissal_excluded_gate_ids(
+    def _reply_dismissal_diff_context(
         self,
         provider,
-        app_cfg,
         owner: str,
         repo: str,
         pr_number: int,
-        dry_run: bool,
-        trace_id: str,
-    ) -> frozenset[str]:
-        """Stable ids to exclude from the quality gate after optional reply-dismissal LLM."""
-        comment_id = self._reply_dismissal_comment_id_or_none(app_cfg)
-        if comment_id is None:
-            return frozenset()
-        precheck = self._reply_dismissal_precheck(provider, owner, repo, pr_number, comment_id)
-        if precheck is None:
-            return frozenset()
-        bot_id, dctx = precheck
-        scm_reason = _reply_dismissal_scm_already_addressed_reason(dctx)
-        if scm_reason:
-            observability.record_reply_dismissal_outcome("skipped_scm_already_addressed")
-            logger.info(
-                "Reply-dismissal skipped LLM: SCM already indicates thread addressed "
-                "(reason=%s stable_id=%s comment_id=%s)",
-                scm_reason,
-                dctx.gate_exclusion_stable_id,
-                comment_id,
+        dctx: ReviewThreadDismissalContext,
+    ) -> str:
+        path = (dctx.path or "").strip()
+        if not path:
+            return ""
+        if not provider.capabilities().supports_lightweight_pr_diff_for_file:
+            return ""
+        try:
+            return _reply_dismissal_diff_context_for_thread(
+                provider.get_pr_diff_for_file(owner, repo, pr_number, path),
+                dctx,
             )
-            return frozenset({dctx.gate_exclusion_stable_id})
-        diff_context = ""
-        caps_rd = provider.capabilities()
-        if (dctx.path or "").strip() and caps_rd.supports_lightweight_pr_diff_for_file:
-            try:
-                diff_context = _reply_dismissal_diff_context_for_thread(
-                    provider.get_pr_diff_for_file(owner, repo, pr_number, dctx.path),
-                    dctx,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Reply-dismissal diff context unavailable for path=%s line=%s: %s",
-                    (dctx.path or "").strip(),
-                    int(dctx.line or 0),
-                    e,
-                )
+        except Exception as e:
+            logger.warning(
+                "Reply-dismissal diff context unavailable for path=%s line=%s: %s",
+                path,
+                int(dctx.line or 0),
+                e,
+            )
+            return ""
 
-        user_msg = _format_reply_dismissal_user_message(dctx, bot_id, comment_id, diff_context)
-        logger.info(
-            "Reply-dismissal sending thread to LLM: comment_id=%s entries=%d stable_id=%s path=%s line=%s diff_context=%s",
-            comment_id,
-            len(dctx.entries),
-            dctx.gate_exclusion_stable_id,
-            (dctx.path or "").strip(),
-            int(dctx.line or 0),
-            "yes" if diff_context else "no",
-        )
+    def _reply_dismissal_run_llm_and_parse(
+        self, user_msg: str
+    ) -> ReplyDismissalVerdictV1 | None:
         try:
             raw_verdict = _run_reply_dismissal_llm(user_msg)
         except Exception as e:
             logger.warning("Reply-dismissal LLM run failed: %s", e)
             observability.record_reply_dismissal_outcome("llm_error")
-            return frozenset()
+            return None
         logger.info(
             "Reply-dismissal LLM completed: response_chars=%d",
             len((raw_verdict or "").strip()),
@@ -3118,20 +3093,19 @@ class ReviewOrchestrator:
                 "Reply-dismissal raw LLM response: %s",
                 _reply_dismissal_response_log_snippet(raw_verdict, limit=4000),
             )
+        return self._reply_dismissal_parse_verdict(raw_verdict)
 
-        verdict = self._reply_dismissal_parse_verdict(raw_verdict)
-        if verdict is None:
-            return frozenset()
-
-        logger.info(
-            "reply_dismissal_verdict trace_id=%s verdict=%s pr=%s/%s#%s",
-            trace_id,
-            verdict.verdict,
-            owner,
-            repo,
-            pr_number,
-        )
-
+    def _reply_dismissal_excluded_gate_ids_from_verdict(
+        self,
+        provider,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        dry_run: bool,
+        comment_id: str,
+        dctx: ReviewThreadDismissalContext,
+        verdict: ReplyDismissalVerdictV1,
+    ) -> frozenset[str]:
         if verdict.verdict == "agreed":
             observability.record_reply_dismissal_outcome("agreed")
             self._decision_only_maybe_resolve_agreed_thread(
@@ -3164,6 +3138,71 @@ class ReviewOrchestrator:
             )
 
         return frozenset()
+
+    def _decision_only_reply_dismissal_excluded_gate_ids(
+        self,
+        provider,
+        app_cfg,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        dry_run: bool,
+        trace_id: str,
+    ) -> frozenset[str]:
+        """Stable ids to exclude from the quality gate after optional reply-dismissal LLM."""
+        comment_id = self._reply_dismissal_comment_id_or_none(app_cfg)
+        if comment_id is None:
+            return frozenset()
+        precheck = self._reply_dismissal_precheck(provider, owner, repo, pr_number, comment_id)
+        if precheck is None:
+            return frozenset()
+        bot_id, dctx = precheck
+        scm_reason = _reply_dismissal_scm_already_addressed_reason(dctx)
+        if scm_reason:
+            observability.record_reply_dismissal_outcome("skipped_scm_already_addressed")
+            logger.info(
+                "Reply-dismissal skipped LLM: SCM already indicates thread addressed "
+                "(reason=%s stable_id=%s comment_id=%s)",
+                scm_reason,
+                dctx.gate_exclusion_stable_id,
+                comment_id,
+            )
+            return frozenset({dctx.gate_exclusion_stable_id})
+        diff_context = self._reply_dismissal_diff_context(
+            provider, owner, repo, pr_number, dctx
+        )
+        user_msg = _format_reply_dismissal_user_message(dctx, bot_id, comment_id, diff_context)
+        logger.info(
+            "Reply-dismissal sending thread to LLM: comment_id=%s entries=%d stable_id=%s path=%s line=%s diff_context=%s",
+            comment_id,
+            len(dctx.entries),
+            dctx.gate_exclusion_stable_id,
+            (dctx.path or "").strip(),
+            int(dctx.line or 0),
+            "yes" if diff_context else "no",
+        )
+        verdict = self._reply_dismissal_run_llm_and_parse(user_msg)
+        if verdict is None:
+            return frozenset()
+
+        logger.info(
+            "reply_dismissal_verdict trace_id=%s verdict=%s pr=%s/%s#%s",
+            trace_id,
+            verdict.verdict,
+            owner,
+            repo,
+            pr_number,
+        )
+        return self._reply_dismissal_excluded_gate_ids_from_verdict(
+            provider,
+            owner,
+            repo,
+            pr_number,
+            dry_run,
+            comment_id,
+            dctx,
+            verdict,
+        )
 
     def _run_review_decision_only(
         self,

@@ -277,7 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
+def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
@@ -295,7 +295,7 @@ def main() -> int:
             password=password,
         )
         print(json.dumps(build_comment_report(comment), indent=2))
-        return 0
+        return
 
     if args.command == "raw":
         report = build_comment_raw_report(
@@ -307,7 +307,7 @@ def main() -> int:
             password=password,
         )
         print(json.dumps(report, indent=2))
-        return 0
+        return
 
     report = build_pr_gate_report(
         args.project_key,
@@ -317,7 +317,6 @@ def main() -> int:
         password=password,
     )
     print(json.dumps(report, indent=2))
-    return 0
 
 
 if __name__ == "__main__":

@@ -264,37 +264,44 @@ class BitbucketProvider(ProviderInterface):
         if not isinstance(values, list):
             return [], None
 
-        comments: list[ReviewComment] = []
-        for c in values:
-            if not isinstance(c, dict):
-                continue
-            inline = c.get("inline") or {}
-            path_str = inline.get("path") or ""
-            line = int(inline.get("to") or inline.get("from") or 0)
-            body = (c.get("content") or {}).get("raw") or ""
-            user = c.get("user") if isinstance(c.get("user"), dict) else {}
-            author_login = str(
-                user.get("nickname") or user.get("username") or user.get("display_name") or ""
-            )
-            comments.append(
-                ReviewComment(
-                    id=str(c.get("id", "")),
-                    path=path_str,
-                    line=line,
-                    body=body,
-                    resolved=False,
-                    outdated=bool(inline.get("outdated") is True),
-                    parent_id=self._bbcloud_parent_id(c),
-                    author_login=author_login,
-                    created_at=str(c.get("created_on") or ""),
-                )
-            )
+        comments = [
+            self._bbcloud_review_comment_from_api_dict(comment)
+            for comment in values
+            if isinstance(comment, dict)
+        ]
+        return comments, self._next_page_url(data)
 
-        next_url = data.get("next")
-        if not next_url or not isinstance(next_url, str):
-            return comments, None
-        stripped = next_url.strip()
-        return comments, stripped or None
+    def _bbcloud_review_comment_from_api_dict(self, comment: dict[str, Any]) -> ReviewComment:
+        inline = comment.get("inline") if isinstance(comment.get("inline"), dict) else {}
+        return ReviewComment(
+            id=str(comment.get("id", "")),
+            path=str(inline.get("path") or ""),
+            line=self._bbcloud_inline_line(inline),
+            body=self._bbcloud_comment_body(comment),
+            resolved=False,
+            outdated=bool(inline.get("outdated") is True),
+            parent_id=self._bbcloud_parent_id(comment),
+            author_login=self._bbcloud_comment_author_login(comment),
+            created_at=str(comment.get("created_on") or ""),
+        )
+
+    @staticmethod
+    def _bbcloud_inline_line(inline: dict[str, Any]) -> int:
+        return int(inline.get("to") or inline.get("from") or 0)
+
+    @staticmethod
+    def _bbcloud_comment_body(comment: dict[str, Any]) -> str:
+        content = comment.get("content")
+        if not isinstance(content, dict):
+            return ""
+        return str(content.get("raw") or "")
+
+    @staticmethod
+    def _bbcloud_comment_author_login(comment: dict[str, Any]) -> str:
+        user = comment.get("user")
+        if not isinstance(user, dict):
+            return ""
+        return str(user.get("nickname") or user.get("username") or user.get("display_name") or "")
 
     @staticmethod
     def _bbcloud_is_inline_root_unresolved_comment(comment: ReviewComment) -> bool:

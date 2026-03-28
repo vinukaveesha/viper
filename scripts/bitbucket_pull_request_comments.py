@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
+def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
@@ -67,7 +67,7 @@ def main() -> int:
             password=password,
         )
         print(json.dumps(comments, indent=2))
-        return 0
+        return
 
     comment = delete_pull_request_comment(
         args.project_key,
@@ -78,7 +78,6 @@ def main() -> int:
         password=password,
     )
     print(f"Deleted comment #{comment.get('id', args.comment_id)} from pull request #{args.pull_request_id}")
-    return 0
 
 
 if __name__ == "__main__":

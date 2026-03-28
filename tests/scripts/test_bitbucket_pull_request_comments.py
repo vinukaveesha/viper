@@ -44,7 +44,7 @@ def test_main_lists_pull_request_comments_as_json(
         ],
     )
 
-    assert module.main() == 0
+    assert module.main() is None
 
     captured = capsys.readouterr()
     assert captured.out.strip() == '[\n  {\n    "id": 10,\n    "text": "first"\n  }\n]'
@@ -74,7 +74,7 @@ def test_main_deletes_pull_request_comment_and_prints_summary(
         ],
     )
 
-    assert module.main() == 0
+    assert module.main() is None
 
     captured = capsys.readouterr()
     assert captured.out.strip() == "Deleted comment #42 from pull request #17"
