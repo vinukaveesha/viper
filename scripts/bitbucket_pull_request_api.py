@@ -305,11 +305,23 @@ def list_pull_request_comments(
         password=password,
         item_label="comment",
     )
-    return [
-        comment
-        for activity in activities
-        if (comment := _activity_comment(activity)) is not None
-    ]
+    comments: list[dict[str, Any]] = []
+    for activity in activities:
+        comment = _activity_comment(activity)
+        if not isinstance(comment, dict):
+            continue
+        stack = [comment]
+        while stack:
+            current = stack.pop()
+            if not isinstance(current, dict):
+                continue
+            comments.append(dict(current))
+            children = current.get("comments")
+            if isinstance(children, list):
+                for child in reversed(children):
+                    if isinstance(child, dict):
+                        stack.append(child)
+    return comments
 
 
 def list_pull_request_activities(

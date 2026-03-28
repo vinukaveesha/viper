@@ -156,6 +156,103 @@ def test_list_pull_request_comments_merges_activity_comment_anchor(
     ]
 
 
+def test_list_pull_request_comments_flattens_nested_replies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_module()
+
+    def fake_bitbucket_request(method, url, *, username, payload=None, params=None, **kwargs):
+        assert method == "GET"
+        assert url == module.pull_request_comments_url("PRJ", "demo-repo", 17, activities=True)
+        assert username == TEST_USERNAME
+        assert kwargs[AUTH_SECRET_FIELD] == TEST_AUTH_SECRET
+        assert params == {"start": 0, "limit": 100}
+        return {
+            "values": [
+                {
+                    "action": "COMMENTED",
+                    "comment": {
+                        "id": 42,
+                        "text": "root",
+                        "state": "OPEN",
+                        "comments": [
+                            {
+                                "id": 43,
+                                "text": "reply",
+                                "state": "OPEN",
+                                "comments": [
+                                    {
+                                        "id": 44,
+                                        "text": "nested reply",
+                                        "state": "OPEN",
+                                        "comments": [],
+                                    }
+                                ],
+                            },
+                            "ignore-me",
+                        ],
+                    },
+                    "commentAnchor": {"path": "src/Foo.java", "line": 5},
+                }
+            ],
+            "isLastPage": True,
+        }
+
+    monkeypatch.setattr(module, "bitbucket_request", fake_bitbucket_request)
+
+    credentials = {"username": TEST_USERNAME, AUTH_SECRET_FIELD: TEST_AUTH_SECRET}
+    result = module.list_pull_request_comments(
+        "PRJ",
+        "demo-repo",
+        17,
+        **credentials,
+    )
+
+    assert result == [
+        {
+            "id": 42,
+            "text": "root",
+            "state": "OPEN",
+            "comments": [
+                {
+                    "id": 43,
+                    "text": "reply",
+                    "state": "OPEN",
+                    "comments": [
+                        {
+                            "id": 44,
+                            "text": "nested reply",
+                            "state": "OPEN",
+                            "comments": [],
+                        }
+                    ],
+                },
+                "ignore-me",
+            ],
+            "anchor": {"path": "src/Foo.java", "line": 5},
+        },
+        {
+            "id": 43,
+            "text": "reply",
+            "state": "OPEN",
+            "comments": [
+                {
+                    "id": 44,
+                    "text": "nested reply",
+                    "state": "OPEN",
+                    "comments": [],
+                }
+            ],
+        },
+        {
+            "id": 44,
+            "text": "nested reply",
+            "state": "OPEN",
+            "comments": [],
+        },
+    ]
+
+
 def test_list_pull_request_comments_raises_on_pagination_cycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
