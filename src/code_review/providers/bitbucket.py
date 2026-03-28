@@ -278,6 +278,7 @@ class BitbucketProvider(ProviderInterface):
                     line=line,
                     body=body,
                     resolved=False,
+                    outdated=bool(inline.get("outdated") is True),
                     parent_id=self._bbcloud_parent_id(c),
                 )
             )
@@ -291,6 +292,8 @@ class BitbucketProvider(ProviderInterface):
     @staticmethod
     def _bbcloud_is_inline_root_unresolved_comment(comment: ReviewComment) -> bool:
         if comment.resolved:
+            return False
+        if comment.outdated:
             return False
         if comment.parent_id:
             return False

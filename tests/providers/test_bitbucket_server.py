@@ -494,6 +494,80 @@ def test_get_unresolved_review_items_merges_comments_and_open_tasks(mock_client)
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_orphaned_comments(mock_client):
+    """Orphaned/outdated Bitbucket Server comments must not count against the gate."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/activities" in u:
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 1,
+                            "text": "[High] already applied",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 2, "orphaned": True},
+                        },
+                    },
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 2,
+                            "text": "[Low] still active",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 4},
+                        },
+                    },
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert [i.stable_id for i in items] == ["comment:2"]
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {
+        "isLastPage": True,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 1,
+                    "text": "Applied",
+                    "state": "OPEN",
+                    "anchor": {"path": "src/Foo.java", "line": 5, "orphaned": True},
+                },
+            }
+        ],
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    comments = p.get_existing_review_comments("PROJ", "my-repo", 42)
+
+    assert len(comments) == 1
+    assert comments[0].outdated is True
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_unresolved_review_items_continues_when_activities_fails(mock_client):
     """Comment/activities fetch must not skip task-based quality gate signals."""
 

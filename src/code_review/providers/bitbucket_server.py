@@ -35,6 +35,14 @@ from code_review.schemas.review_thread_dismissal import (
 logger = logging.getLogger("code_review")
 
 
+def _is_truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
+
+
 def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> str:
     """Best-effort response body snippet for logging (Bitbucket Server review decision paths)."""
     try:
@@ -514,7 +522,28 @@ class BitbucketServerProvider(ProviderInterface):
             line=int(anchor.get("line", 0) or 0),
             body=c.get("text") or "",
             resolved=bool(c.get("state") == "RESOLVED"),
+            outdated=self._bbs_comment_is_outdated(c),
         )
+
+    @staticmethod
+    def _bbs_comment_is_outdated(comment: dict[str, Any]) -> bool:
+        """Return True when Bitbucket marks the comment anchor as out-of-date/orphaned.
+
+        Bitbucket Server/DC models outdated PR comments as orphaned diff anchors.
+        Different API surfaces may expose that as ``anchor.orphaned``/``anchor.isOrphaned``
+        booleans or an ``ORPHANED`` anchor state string, so we accept the common shapes.
+        """
+        anchor = comment.get("anchor")
+        if not isinstance(anchor, dict):
+            return False
+        for key in ("orphaned", "isOrphaned"):
+            if _is_truthy_flag(anchor.get(key)):
+                return True
+        for key in ("state", "anchorState"):
+            state = str(anchor.get(key) or "").strip().upper()
+            if state == "ORPHANED":
+                return True
+        return False
 
     def _comments_from_activities_page(self, data: Any) -> tuple[list[ReviewComment], int | None]:
         """Parse one activities API page. Returns (comments, next_start or None if no more)."""

@@ -327,6 +327,7 @@ class ReviewComment(BaseModel):
     line: int
     body: str
     resolved: bool = False
+    outdated: bool = False
     parent_id: str | None = None
 
 
@@ -352,12 +353,12 @@ class UnresolvedReviewItem(BaseModel):
 def default_unresolved_review_items_from_comments(
     comments: list[ReviewComment],
 ) -> list[UnresolvedReviewItem]:
-    """Build unresolved items from inline comments with resolved=False (shared default)."""
+    """Build unresolved items from inline comments that are still active for gating."""
     from code_review.formatters.comment import infer_severity_from_comment_body
 
     out: list[UnresolvedReviewItem] = []
     for c in comments:
-        if c.resolved:
+        if c.resolved or c.outdated:
             continue
         body = (c.body or "").strip()
         if not body:
