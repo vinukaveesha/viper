@@ -107,7 +107,10 @@ class ProviderCapabilities(BaseModel):
       (login, id, etc.) for matching comments and reviews (Phase E / §5.3).
     - supports_review_thread_dismissal_context: provider can load ordered thread comments
       for reply-dismissal classification (Phase E.1).
+    - supports_lightweight_pr_diff_for_file: provider can fetch a single-file PR diff without
+      first downloading the full PR diff (important for lightweight comment pipelines).
     - supports_review_thread_reply: provider can post a reply on an existing review comment.
+    - supports_review_thread_resolution: provider can mark a review thread/discussion resolved.
     """
 
     resolvable_comments: bool = False
@@ -121,7 +124,9 @@ class ProviderCapabilities(BaseModel):
     supports_bot_blocking_state_query: bool = False
     supports_bot_attribution_identity_query: bool = False
     supports_review_thread_dismissal_context: bool = False
+    supports_lightweight_pr_diff_for_file: bool = False
     supports_review_thread_reply: bool = False
+    supports_review_thread_resolution: bool = False
 
 
 ReviewDecision = Literal["APPROVE", "REQUEST_CHANGES"]
@@ -327,7 +332,10 @@ class ReviewComment(BaseModel):
     line: int
     body: str
     resolved: bool = False
+    outdated: bool = False
     parent_id: str | None = None
+    author_login: str = ""
+    created_at: str = ""
 
 
 ReviewItemKind = Literal["inline_comment", "discussion_thread", "task"]
@@ -352,12 +360,12 @@ class UnresolvedReviewItem(BaseModel):
 def default_unresolved_review_items_from_comments(
     comments: list[ReviewComment],
 ) -> list[UnresolvedReviewItem]:
-    """Build unresolved items from inline comments with resolved=False (shared default)."""
+    """Build unresolved items from inline comments that are still active for gating."""
     from code_review.formatters.comment import infer_severity_from_comment_body
 
     out: list[UnresolvedReviewItem] = []
     for c in comments:
-        if c.resolved:
+        if c.resolved or c.outdated:
             continue
         body = (c.body or "").strip()
         if not body:
@@ -638,6 +646,17 @@ class ProviderInterface(ABC):
     ) -> None:
         """Post a reply on an existing PR review comment (e.g. disagreed dismissal text)."""
         raise NotImplementedError("post_review_thread_reply not implemented for this provider")
+
+    def resolve_review_thread(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        thread_context: ReviewThreadDismissalContext,
+        triggered_comment_id: str,
+    ) -> None:  # noqa: B027
+        """Resolve a review thread/discussion after an agreed dismissal verdict."""
+        pass
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
         """

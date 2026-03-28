@@ -27,12 +27,21 @@ from code_review.providers.base import (
     normalize_diff_anchor_path,
 )
 from code_review.providers.safety import truncate_repo_content
+from code_review.reply_dismissal_state import is_reply_dismissal_accepted_reply
 from code_review.schemas.review_thread_dismissal import (
     ReviewThreadDismissalContext,
     ReviewThreadDismissalEntry,
 )
 
 logger = logging.getLogger("code_review")
+
+
+def _is_truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
 
 
 def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> str:
@@ -43,6 +52,66 @@ def _http_error_response_text(exc: httpx.HTTPStatusError, limit: int = 2000) -> 
     except Exception:
         pass
     return ""
+
+
+def _bbs_comment_is_bot_authored(
+    comment: ReviewComment,
+    bot: BotAttributionIdentity,
+) -> bool:
+    author_login = (comment.author_login or "").strip().lower()
+    if not author_login:
+        return False
+    bot_login = (bot.login or "").strip().lower()
+    if bot_login and author_login == bot_login:
+        return True
+    bot_slug = (bot.slug or "").strip().lower()
+    return bool(bot_slug and author_login == bot_slug)
+
+
+def _bbs_comment_order_key(comment: ReviewComment) -> tuple[int, int, str]:
+    raw_created_at = (comment.created_at or "").strip()
+    try:
+        timestamp = int(raw_created_at) if raw_created_at else 0
+    except ValueError:
+        timestamp = 0
+
+    cid = (comment.id or "").strip()
+    numeric_id = int(cid) if cid.isdigit() else -1
+    return (timestamp, numeric_id, cid.lower())
+
+
+def _bbs_latest_comments_by_root(
+    comments: list[ReviewComment],
+    by_id: dict[str, ReviewComment],
+) -> dict[str, ReviewComment]:
+    latest_by_root: dict[str, ReviewComment] = {}
+    for comment in comments:
+        cid = (comment.id or "").strip()
+        if not cid:
+            continue
+        root_id = BitbucketServerProvider._bbs_thread_root_comment_id(by_id, cid)
+        current_latest = latest_by_root.get(root_id)
+        if current_latest is None or _bbs_comment_order_key(comment) >= _bbs_comment_order_key(
+            current_latest
+        ):
+            latest_by_root[root_id] = comment
+    return latest_by_root
+
+
+def bitbucket_server_persisted_dismissed_root_ids(
+    comments: list[ReviewComment],
+    bot: BotAttributionIdentity,
+) -> frozenset[str]:
+    """Stable ids for threads whose latest reply is the durable accepted-thread marker."""
+    by_id = {str(c.id or "").strip(): c for c in comments if (c.id or "").strip()}
+    latest_by_root = _bbs_latest_comments_by_root(comments, by_id)
+    dismissed_roots = {
+        root_id
+        for root_id, comment in latest_by_root.items()
+        if _bbs_comment_is_bot_authored(comment, bot)
+        and is_reply_dismissal_accepted_reply(comment.body)
+    }
+    return frozenset(f"comment:{root_id}" for root_id in dismissed_roots if root_id)
 
 
 def _bbs_blocking_state_for_one_entry(
@@ -312,6 +381,60 @@ class BitbucketServerProvider(ProviderInterface):
         path = self._path(owner, repo, "pull-requests", str(pr_number), "diff")
         return self._get_unified_diff(path)
 
+    def get_pr_diff_for_file(self, owner: str, repo: str, pr_number: int, path: str) -> str:
+        """Return a single-file unified diff with bounded context when possible.
+
+        Bitbucket Server/DC exposes ``/diff/{path}``, which is substantially lighter than
+        downloading the full PR diff and slicing it client-side. Some installations are picky
+        about how the embedded file path is encoded, so try the slash-preserving form first and
+        fall back to the fully encoded form before finally slicing the full PR diff locally.
+        """
+        wanted_path = (path or "").strip()
+        if not wanted_path:
+            return ""
+        api_paths: list[tuple[str, str]] = []
+        for label, encoded_path in (
+            ("slash_preserving", quote(wanted_path, safe="/")),
+            ("fully_encoded", quote(wanted_path, safe="")),
+        ):
+            api_path = self._path(
+                owner,
+                repo,
+                "pull-requests",
+                str(pr_number),
+                "diff",
+                encoded_path,
+            )
+            if any(existing_path == api_path for _, existing_path in api_paths):
+                continue
+            api_paths.append((label, api_path))
+        last_error: Exception | None = None
+        last_variant = ""
+        for label, api_path in api_paths:
+            try:
+                diff_text = self._get_unified_diff(api_path, params={"contextLines": 12})
+                if diff_text:
+                    return diff_text
+                last_variant = label
+            except Exception as e:
+                last_error = e
+                last_variant = label
+        response_text = ""
+        if isinstance(last_error, httpx.HTTPStatusError):
+            response_text = _http_error_response_text(last_error)
+        logger.warning(
+            "Bitbucket Server single-file diff failed owner=%s repo=%s pr=%s path=%s "
+            "variant=%s error=%s response=%r; falling back to full PR diff slice",
+            owner,
+            repo,
+            pr_number,
+            wanted_path,
+            last_variant or "(none)",
+            last_error,
+            response_text,
+        )
+        return super().get_pr_diff_for_file(owner, repo, pr_number, wanted_path)
+
     def get_incremental_pr_diff(
         self,
         owner: str,
@@ -500,6 +623,36 @@ class BitbucketServerProvider(ProviderInterface):
                 else:
                     raise
 
+    @staticmethod
+    def _bbs_review_comment_from_comment_dict(c: dict) -> ReviewComment | None:
+        if not isinstance(c, dict):
+            return None
+        anchor = c.get("anchor")
+        if not isinstance(anchor, dict):
+            anchor = {}
+        author = c.get("author") if isinstance(c.get("author"), dict) else {}
+        comment_for_status = dict(c)
+        if anchor and not isinstance(comment_for_status.get("anchor"), dict):
+            comment_for_status["anchor"] = anchor
+        props = c.get("properties") if isinstance(c.get("properties"), dict) else {}
+        suggestion_state = str(props.get("suggestionState") or "").strip().upper()
+        return ReviewComment(
+            id=str(c.get("id", "")),
+            path=anchor.get("path") or "",
+            line=int(anchor.get("line", 0) or 0),
+            body=c.get("text") or "",
+            # Bitbucket keeps applied-suggestion comments OPEN even though the original
+            # concern is already addressed; treat them like resolved for gate purposes.
+            resolved=bool(str(c.get("state") or "").strip().upper() == "RESOLVED")
+            or suggestion_state == "APPLIED",
+            outdated=BitbucketServerProvider._bbs_comment_is_outdated(comment_for_status),
+            parent_id=BitbucketServerProvider._bbs_comment_parent_id(c),
+            author_login=str(
+                author.get("name") or author.get("slug") or author.get("username") or ""
+            ),
+            created_at=str(c.get("createdDate") or ""),
+        )
+
     def _comment_from_activity(self, act: dict) -> ReviewComment | None:
         """Parse one activity entry into a ReviewComment if it is a COMMENTED action."""
         if not isinstance(act, dict) or act.get("action") != "COMMENTED":
@@ -507,14 +660,32 @@ class BitbucketServerProvider(ProviderInterface):
         c = act.get("comment")
         if not isinstance(c, dict):
             return None
-        anchor = c.get("anchor") or {}
-        return ReviewComment(
-            id=str(c.get("id", "")),
-            path=anchor.get("path") or "",
-            line=int(anchor.get("line", 0) or 0),
-            body=c.get("text") or "",
-            resolved=bool(c.get("state") == "RESOLVED"),
-        )
+        comment = dict(c)
+        if not isinstance(comment.get("anchor"), dict):
+            activity_anchor = act.get("commentAnchor")
+            if isinstance(activity_anchor, dict):
+                comment["anchor"] = activity_anchor
+        return self._bbs_review_comment_from_comment_dict(comment)
+
+    @staticmethod
+    def _bbs_comment_is_outdated(comment: dict[str, Any]) -> bool:
+        """Return True when Bitbucket marks the comment anchor as out-of-date/orphaned.
+
+        Bitbucket Server/DC models outdated PR comments as orphaned diff anchors.
+        Different API surfaces may expose that as ``anchor.orphaned``/``anchor.isOrphaned``
+        booleans or an ``ORPHANED`` anchor state string, so we accept the common shapes.
+        """
+        anchor = comment.get("anchor")
+        if not isinstance(anchor, dict):
+            return False
+        for key in ("orphaned", "isOrphaned"):
+            if _is_truthy_flag(anchor.get(key)):
+                return True
+        for key in ("state", "anchorState"):
+            state = str(anchor.get(key) or "").strip().upper()
+            if state == "ORPHANED":
+                return True
+        return False
 
     def _comments_from_activities_page(self, data: Any) -> tuple[list[ReviewComment], int | None]:
         """Parse one activities API page. Returns (comments, next_start or None if no more)."""
@@ -532,6 +703,31 @@ class BitbucketServerProvider(ProviderInterface):
         return comments, next_start
 
     @staticmethod
+    def _bbs_merge_nested_comment_dicts_into(
+        by_id: dict[str, dict],
+        comment: Any,
+        *,
+        parent_id: str | None = None,
+    ) -> None:
+        if not isinstance(comment, dict):
+            return
+        cid = str(comment.get("id") or "").strip()
+        synthesized_parent = parent_id.strip() if isinstance(parent_id, str) else ""
+        current = dict(by_id.get(cid) or {}) if cid else {}
+        current.update(comment)
+        if synthesized_parent and not BitbucketServerProvider._bbs_comment_parent_id(current):
+            current["parentComment"] = {"id": synthesized_parent}
+        if cid:
+            by_id[cid] = current
+        child_parent_id = cid or synthesized_parent or None
+        for child in comment.get("comments") or []:
+            BitbucketServerProvider._bbs_merge_nested_comment_dicts_into(
+                by_id,
+                child,
+                parent_id=child_parent_id,
+            )
+
+    @staticmethod
     def _bbs_merge_commented_activities_into(by_id: dict[str, dict], data: dict) -> None:
         for act in data.get("values") or []:
             if not isinstance(act, dict) or act.get("action") != "COMMENTED":
@@ -539,10 +735,12 @@ class BitbucketServerProvider(ProviderInterface):
             c = act.get("comment")
             if not isinstance(c, dict):
                 continue
-            cid = str(c.get("id") or "").strip()
-            if not cid:
-                continue
-            by_id[cid] = c
+            merged_comment = dict(c)
+            if not isinstance(merged_comment.get("anchor"), dict):
+                activity_anchor = act.get("commentAnchor")
+                if isinstance(activity_anchor, dict):
+                    merged_comment["anchor"] = activity_anchor
+            BitbucketServerProvider._bbs_merge_nested_comment_dicts_into(by_id, merged_comment)
 
     @staticmethod
     def _bbs_activities_next_start(data: dict, start: int) -> int | None:
@@ -596,7 +794,19 @@ class BitbucketServerProvider(ProviderInterface):
         return None
 
     @staticmethod
-    def _bbs_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, int] | None:
+    def _bbs_anchor_path_line(c: dict) -> tuple[str, int]:
+        anchor = c.get("anchor") if isinstance(c.get("anchor"), dict) else {}
+        path = str(anchor.get("path") or "")
+        try:
+            line = int(anchor.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        return path, line
+
+    @staticmethod
+    def _bbs_dismissal_meta(
+        c: dict,
+    ) -> tuple[str, str | None, str, str, int, str, int, str, bool, str] | None:
         if not isinstance(c, dict):
             return None
         cid = str(c.get("id") or "").strip()
@@ -611,23 +821,33 @@ class BitbucketServerProvider(ProviderInterface):
             ts = int(cd) if cd is not None else 0
         except (TypeError, ValueError):
             ts = 0
-        return (cid, parent, body, login, ts)
+        path, line = BitbucketServerProvider._bbs_anchor_path_line(c)
+        state = str(c.get("state") or "")
+        outdated = BitbucketServerProvider._bbs_comment_is_outdated(c)
+        props = c.get("properties") if isinstance(c.get("properties"), dict) else {}
+        suggestion_state = str(props.get("suggestionState") or "")
+        return (cid, parent, body, login, ts, path, line, state, outdated, suggestion_state)
 
     @staticmethod
     def _bbs_index_dismissal_by_id(
         raw_comments: list[dict],
-    ) -> dict[str, dict[str, str | None | int]]:
-        by_id: dict[str, dict[str, str | None | int]] = {}
+    ) -> dict[str, dict[str, object]]:
+        by_id: dict[str, dict[str, object]] = {}
         for c in raw_comments:
             meta = BitbucketServerProvider._bbs_dismissal_meta(c)
             if not meta:
                 continue
-            cid, parent, body, login, ts = meta
+            cid, parent, body, login, ts, path, line, state, outdated, suggestion_state = meta
             by_id[cid] = {
                 "parent": parent,
                 "body": body,
                 "login": login,
                 "ts": ts,
+                "path": path,
+                "line": line,
+                "state": state,
+                "outdated": outdated,
+                "suggestion_state": suggestion_state,
             }
         return by_id
 
@@ -701,10 +921,31 @@ class BitbucketServerProvider(ProviderInterface):
         entries = BitbucketServerProvider._bbs_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
+        root_meta = by_id.get(root) or {}
+        already_addressed, addressed_reason = BitbucketServerProvider._bbs_scm_already_addressed(
+            root_meta
+        )
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"comment:{root}",
+            path=str(root_meta.get("path") or ""),
+            line=int(root_meta.get("line") or 0),
+            scm_already_addressed=already_addressed,
+            scm_already_addressed_reason=addressed_reason,
             entries=entries,
         )
+
+    @staticmethod
+    def _bbs_scm_already_addressed(root_meta: dict[str, object]) -> tuple[bool, str]:
+        """Return whether SCM state already indicates the root concern is addressed."""
+        suggestion_state = str(root_meta.get("suggestion_state") or "").strip().upper()
+        if suggestion_state == "APPLIED":
+            return True, "suggestion_applied"
+        state = str(root_meta.get("state") or "").strip().upper()
+        if state == "RESOLVED":
+            return True, "resolved"
+        if bool(root_meta.get("outdated")):
+            return True, "outdated_or_orphaned"
+        return False, ""
 
     def get_review_thread_dismissal_context(
         self,
@@ -752,18 +993,151 @@ class BitbucketServerProvider(ProviderInterface):
         The GET .../comments endpoint may return 404 on some Server/DC versions; activities
         with action COMMENTED are the supported way to list comments.
         """
+        existing, _ = self._bbs_collect_activity_review_comments(owner, repo, pr_number)
+        return existing
+
+    def _bbs_collect_activity_review_comments(
+        self, owner: str, repo: str, pr_number: int
+    ) -> tuple[list[ReviewComment], list[ReviewComment]]:
+        """Return flat activity comments plus a merged recursive view of nested replies.
+
+        The first list mirrors the flat activity entries used by ``get_existing_review_comments``.
+        The second list includes replies nested under ``comment.comments`` so reply-dismissal
+        persistence can see accepted-thread replies Bitbucket only exposes recursively.
+        """
         path = self._path(owner, repo, "pull-requests", str(pr_number), "activities")
         result: list[ReviewComment] = []
+        merged_recursive_by_id: dict[str, dict] = {}
         start = 0
         max_pages = 500  # safeguard against infinite loop
         for _ in range(max_pages):
             data = self._get(path, params={"start": start, "limit": 100})
             comments, next_start = self._comments_from_activities_page(data)
             result.extend(comments)
+            if isinstance(data, dict):
+                self._bbs_merge_commented_activities_into(merged_recursive_by_id, data)
             if next_start is None or next_start == start:
                 break
             start = next_start
-        return result
+        merged_recursive = [
+            comment
+            for raw_comment in merged_recursive_by_id.values()
+            if (comment := self._bbs_review_comment_from_comment_dict(raw_comment)) is not None
+        ]
+        merged_recursive.sort(key=self._bbs_comment_order_key)
+        return result, merged_recursive
+
+    def _bbs_collect_comments_endpoint_review_comments(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[ReviewComment] | None:
+        """Best-effort comment listing from ``/comments`` when that endpoint is available."""
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
+        merged_by_id: dict[str, dict] = {}
+        start = 0
+        max_pages = 500
+        for _ in range(max_pages):
+            data = self._bbs_get_comments_endpoint_page(
+                path,
+                owner,
+                repo,
+                pr_number,
+                start,
+            )
+            if data is None:
+                return None
+            for raw_comment in data.get("values") or []:
+                self._bbs_merge_nested_comment_dicts_into(merged_by_id, raw_comment)
+            next_start = self._bbs_activities_next_start(data, start)
+            if next_start is None or next_start == start:
+                break
+            start = next_start
+        return self._bbs_review_comments_from_raw_comment_map(merged_by_id)
+
+    @staticmethod
+    def _bbs_merge_review_comment_lists(
+        base: list[ReviewComment],
+        overlay: list[ReviewComment],
+    ) -> list[ReviewComment]:
+        """Merge duplicate comment ids across Bitbucket views, preserving the richer state."""
+        merged_by_id: dict[str, ReviewComment] = {}
+        passthrough: list[ReviewComment] = []
+        for comment in [*base, *overlay]:
+            cid = (comment.id or "").strip()
+            if not cid:
+                passthrough.append(comment)
+                continue
+            existing = merged_by_id.get(cid)
+            if existing is None:
+                merged_by_id[cid] = comment
+                continue
+            merged_by_id[cid] = ReviewComment(
+                id=cid,
+                path=comment.path or existing.path,
+                line=int(comment.line or existing.line or 0),
+                body=comment.body or existing.body,
+                resolved=bool(existing.resolved or comment.resolved),
+                outdated=bool(existing.outdated or comment.outdated),
+                parent_id=comment.parent_id or existing.parent_id,
+                author_login=comment.author_login or existing.author_login,
+                created_at=comment.created_at or existing.created_at,
+            )
+        merged = [*passthrough, *merged_by_id.values()]
+        merged.sort(key=BitbucketServerProvider._bbs_comment_order_key)
+        return merged
+
+    def _bbs_get_comments_endpoint_page(
+        self,
+        path: str,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        start: int,
+    ) -> dict[str, Any] | None:
+        """Return one `/comments` page or `None` when the endpoint is unavailable."""
+        try:
+            data = self._get(path, params={"start": start, "limit": 100})
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status == 404:
+                logger.debug(
+                    "Bitbucket Server comments endpoint unavailable owner=%s repo=%s pr=%s",
+                    owner,
+                    repo,
+                    pr_number,
+                )
+                return None
+            logger.warning(
+                "Bitbucket Server comments fetch failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        except Exception as e:
+            logger.warning(
+                "Bitbucket Server comments fetch failed owner=%s repo=%s pr=%s: %s",
+                owner,
+                repo,
+                pr_number,
+                e,
+            )
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
+    def _bbs_review_comments_from_raw_comment_map(
+        self,
+        merged_by_id: dict[str, dict],
+    ) -> list[ReviewComment]:
+        comments = [
+            comment
+            for raw_comment in merged_by_id.values()
+            if (comment := self._bbs_review_comment_from_comment_dict(raw_comment)) is not None
+        ]
+        comments.sort(key=self._bbs_comment_order_key)
+        return comments
 
     @staticmethod
     def _bbs_append_open_task_for_quality_gate(t: Any, items: list[UnresolvedReviewItem]) -> None:
@@ -787,6 +1161,39 @@ class BitbucketServerProvider(ProviderInterface):
                 inferred_severity=infer_severity_from_comment_body(text),
             )
         )
+
+    def _bbs_comment_is_bot_authored(
+        self,
+        comment: ReviewComment,
+        bot: BotAttributionIdentity,
+    ) -> bool:
+        return _bbs_comment_is_bot_authored(comment, bot)
+
+    @staticmethod
+    def _bbs_thread_root_comment_id(
+        by_id: dict[str, ReviewComment],
+        comment_id: str,
+    ) -> str:
+        root = (comment_id or "").strip()
+        seen: set[str] = set()
+        while root in by_id:
+            parent_id = (by_id[root].parent_id or "").strip()
+            if not parent_id or parent_id not in by_id or root in seen:
+                break
+            seen.add(root)
+            root = parent_id
+        return root
+
+    def _bbs_persisted_dismissed_root_ids(
+        self,
+        comments: list[ReviewComment],
+        bot: BotAttributionIdentity,
+    ) -> frozenset[str]:
+        return bitbucket_server_persisted_dismissed_root_ids(comments, bot)
+
+    @staticmethod
+    def _bbs_comment_order_key(comment: ReviewComment) -> tuple[int, int, str]:
+        return _bbs_comment_order_key(comment)
 
     def _bbs_paginate_open_pr_tasks(
         self,
@@ -828,7 +1235,11 @@ class BitbucketServerProvider(ProviderInterface):
     ) -> list[UnresolvedReviewItem]:
         """Unresolved inline comments (non-RESOLVED) plus open PR tasks."""
         try:
-            existing = self.get_existing_review_comments(owner, repo, pr_number)
+            existing, merged_recursive_comments = self._bbs_collect_activity_review_comments(
+                owner,
+                repo,
+                pr_number,
+            )
         except Exception as e:
             logger.warning(
                 "Bitbucket Server PR activities fetch failed for quality gate "
@@ -839,7 +1250,32 @@ class BitbucketServerProvider(ProviderInterface):
                 e,
             )
             existing = []
-        items = list(default_unresolved_review_items_from_comments(existing))
+            merged_recursive_comments = []
+        endpoint_comments = self._bbs_collect_comments_endpoint_review_comments(
+            owner, repo, pr_number
+        )
+        if endpoint_comments:
+            existing = self._bbs_merge_review_comment_lists(existing, endpoint_comments)
+            merged_recursive_comments = self._bbs_merge_review_comment_lists(
+                merged_recursive_comments,
+                endpoint_comments,
+            )
+        dismissed_stable_ids = self._bbs_persisted_dismissed_root_ids(
+            merged_recursive_comments,
+            self.get_bot_attribution_identity(owner, repo, pr_number),
+        )
+        by_id = {str(c.id or "").strip(): c for c in existing if (c.id or "").strip()}
+        active_comments = [
+            c
+            for c in existing
+            if f"comment:{self._bbs_thread_root_comment_id(by_id, str(c.id or '').strip())}"
+            not in dismissed_stable_ids
+        ]
+        items = [
+            item
+            for item in default_unresolved_review_items_from_comments(active_comments)
+            if item.stable_id not in dismissed_stable_ids
+        ]
         self._bbs_paginate_open_pr_tasks(owner, repo, pr_number, items)
         return items
 
@@ -1155,5 +1591,6 @@ class BitbucketServerProvider(ProviderInterface):
             supports_bot_blocking_state_query=bool(self._participant_user_slug),
             supports_bot_attribution_identity_query=bool(self._participant_user_slug),
             supports_review_thread_dismissal_context=True,
+            supports_lightweight_pr_diff_for_file=True,
             supports_review_thread_reply=True,
         )

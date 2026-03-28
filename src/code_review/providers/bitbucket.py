@@ -1,6 +1,7 @@
 """Bitbucket Cloud API provider (workspace = owner, repo_slug = repo)."""
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from code_review.formatters.comment import infer_severity_from_comment_body, render_suggestion_block
@@ -29,6 +30,7 @@ from code_review.providers.http_shortcuts import (
 )
 from code_review.providers.review_decision_common import delete_soft_fail, effective_review_body
 from code_review.providers.safety import truncate_repo_content
+from code_review.reply_dismissal_state import is_reply_dismissal_accepted_reply
 from code_review.schemas.review_thread_dismissal import (
     ReviewThreadDismissalContext,
     ReviewThreadDismissalEntry,
@@ -263,38 +265,137 @@ class BitbucketProvider(ProviderInterface):
         if not isinstance(values, list):
             return [], None
 
-        comments: list[ReviewComment] = []
-        for c in values:
-            if not isinstance(c, dict):
-                continue
-            inline = c.get("inline") or {}
-            path_str = inline.get("path") or ""
-            line = int(inline.get("to") or inline.get("from") or 0)
-            body = (c.get("content") or {}).get("raw") or ""
-            comments.append(
-                ReviewComment(
-                    id=str(c.get("id", "")),
-                    path=path_str,
-                    line=line,
-                    body=body,
-                    resolved=False,
-                    parent_id=self._bbcloud_parent_id(c),
-                )
-            )
+        comments = [
+            self._bbcloud_review_comment_from_api_dict(comment)
+            for comment in values
+            if isinstance(comment, dict)
+        ]
+        return comments, self._next_page_url(data)
 
-        next_url = data.get("next")
-        if not next_url or not isinstance(next_url, str):
-            return comments, None
-        stripped = next_url.strip()
-        return comments, stripped or None
+    def _bbcloud_review_comment_from_api_dict(self, comment: dict[str, Any]) -> ReviewComment:
+        inline = comment.get("inline") if isinstance(comment.get("inline"), dict) else {}
+        return ReviewComment(
+            id=str(comment.get("id", "")),
+            path=str(inline.get("path") or ""),
+            line=self._bbcloud_inline_line(inline),
+            body=self._bbcloud_comment_body(comment),
+            resolved=False,
+            outdated=bool(inline.get("outdated") is True),
+            parent_id=self._bbcloud_parent_id(comment),
+            author_login=self._bbcloud_comment_author_login(comment),
+            created_at=str(comment.get("created_on") or ""),
+        )
+
+    @staticmethod
+    def _bbcloud_inline_line(inline: dict[str, Any]) -> int:
+        return int(inline.get("to") or inline.get("from") or 0)
+
+    @staticmethod
+    def _bbcloud_comment_body(comment: dict[str, Any]) -> str:
+        content = comment.get("content")
+        if not isinstance(content, dict):
+            return ""
+        return str(content.get("raw") or "")
+
+    @staticmethod
+    def _bbcloud_user_identity(user: dict[str, Any]) -> str:
+        """Best identifier for bot-matching on Bitbucket Cloud comments."""
+        if not isinstance(user, dict):
+            return ""
+        return str(
+            user.get("username")
+            or user.get("uuid")
+            or user.get("nickname")
+            or user.get("display_name")
+            or ""
+        )
+
+    @classmethod
+    def _bbcloud_comment_author_login(cls, comment: dict[str, Any]) -> str:
+        user = comment.get("user")
+        return cls._bbcloud_user_identity(user if isinstance(user, dict) else {})
 
     @staticmethod
     def _bbcloud_is_inline_root_unresolved_comment(comment: ReviewComment) -> bool:
         if comment.resolved:
             return False
+        if comment.outdated:
+            return False
         if comment.parent_id:
             return False
         return bool(comment.path or int(comment.line or 0) > 0)
+
+    @staticmethod
+    def _bbcloud_comment_is_bot_authored(
+        comment: ReviewComment, bot: BotAttributionIdentity
+    ) -> bool:
+        author_login = (comment.author_login or "").strip().lower()
+        if not author_login:
+            return False
+        bot_login = (bot.login or "").strip().lower()
+        if bot_login and author_login == bot_login:
+            return True
+        bot_uuid = (bot.uuid or "").strip().lower().replace("{", "").replace("}", "")
+        return bool(bot_uuid and author_login.replace("{", "").replace("}", "") == bot_uuid)
+
+    @staticmethod
+    def _bbcloud_thread_root_comment_id(
+        by_id: dict[str, ReviewComment],
+        comment_id: str,
+    ) -> str:
+        root = (comment_id or "").strip()
+        seen: set[str] = set()
+        while root in by_id:
+            parent_id = (by_id[root].parent_id or "").strip()
+            if not parent_id or parent_id not in by_id or root in seen:
+                break
+            seen.add(root)
+            root = parent_id
+        return root
+
+    def _bbcloud_persisted_dismissed_root_ids(
+        self,
+        comments: list[ReviewComment],
+        bot: BotAttributionIdentity,
+    ) -> frozenset[str]:
+        by_id = {str(c.id or "").strip(): c for c in comments if (c.id or "").strip()}
+        latest_by_root: dict[str, ReviewComment] = {}
+        for c in comments:
+            cid = (c.id or "").strip()
+            if not cid:
+                continue
+            root_id = self._bbcloud_thread_root_comment_id(by_id, cid)
+            current_latest = latest_by_root.get(root_id)
+            if current_latest is None or self._bbcloud_comment_order_key(
+                c
+            ) >= self._bbcloud_comment_order_key(current_latest):
+                latest_by_root[root_id] = c
+        dismissed_roots = {
+            root_id
+            for root_id, comment in latest_by_root.items()
+            if self._bbcloud_comment_is_bot_authored(comment, bot)
+            and is_reply_dismissal_accepted_reply(comment.body)
+        }
+        return frozenset(f"comment:{root_id}" for root_id in dismissed_roots if root_id)
+
+    @staticmethod
+    def _bbcloud_comment_order_key(comment: ReviewComment) -> tuple[int, int, str]:
+        raw_created_at = (comment.created_at or "").strip()
+        timestamp_micros = 0
+        if raw_created_at:
+            try:
+                normalized = (
+                    raw_created_at[:-1] + "+00:00"
+                    if raw_created_at.endswith("Z")
+                    else raw_created_at
+                )
+                timestamp_micros = int(datetime.fromisoformat(normalized).timestamp() * 1_000_000)
+            except ValueError:
+                timestamp_micros = 0
+
+        cid = (comment.id or "").strip()
+        numeric_id = int(cid) if cid.isdigit() else -1
+        return (timestamp_micros, numeric_id, cid.lower())
 
     @staticmethod
     def _bbcloud_open_task_from_value(t: Any, out_len: int) -> UnresolvedReviewItem | None:
@@ -339,10 +440,18 @@ class BitbucketProvider(ProviderInterface):
         out: list[UnresolvedReviewItem] = []
         try:
             comments = self.get_existing_review_comments(owner, repo, pr_number)
+            dismissed_stable_ids = self._bbcloud_persisted_dismissed_root_ids(
+                comments,
+                self.get_bot_attribution_identity(owner, repo, pr_number),
+            )
             inline_root_comments = [
                 c for c in comments if self._bbcloud_is_inline_root_unresolved_comment(c)
             ]
-            out.extend(default_unresolved_review_items_from_comments(inline_root_comments))
+            out.extend(
+                item
+                for item in default_unresolved_review_items_from_comments(inline_root_comments)
+                if item.stable_id not in dismissed_stable_ids
+            )
         except Exception as e:
             logger.warning(
                 "Bitbucket Cloud PR comments fetch failed for quality gate "
@@ -434,7 +543,19 @@ class BitbucketProvider(ProviderInterface):
         return None
 
     @staticmethod
-    def _bbcloud_dismissal_meta(c: dict) -> tuple[str, str | None, str, str, str] | None:
+    def _bbcloud_inline_path_line(c: dict) -> tuple[str, int]:
+        inline = c.get("inline") if isinstance(c.get("inline"), dict) else {}
+        path = str(inline.get("path") or "")
+        try:
+            line = int(inline.get("to") or inline.get("from") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        return path, line
+
+    @staticmethod
+    def _bbcloud_dismissal_meta(
+        c: dict,
+    ) -> tuple[str, str | None, str, str, str, str, int] | None:
         if not isinstance(c, dict):
             return None
         cid = str(c.get("id") or "").strip()
@@ -444,33 +565,34 @@ class BitbucketProvider(ProviderInterface):
         content = c.get("content") if isinstance(c.get("content"), dict) else {}
         body = str(content.get("raw") or "")
         user = c.get("user") if isinstance(c.get("user"), dict) else {}
-        login = str(
-            user.get("nickname") or user.get("username") or user.get("display_name") or ""
-        )
+        login = BitbucketProvider._bbcloud_user_identity(user)
         created = str(c.get("created_on") or "")
-        return (cid, parent, body, login, created)
+        path, line = BitbucketProvider._bbcloud_inline_path_line(c)
+        return (cid, parent, body, login, created, path, line)
 
     @staticmethod
     def _bbcloud_index_dismissal_by_id(
         raw_comments: list[dict],
-    ) -> dict[str, dict[str, str | None]]:
-        by_id: dict[str, dict[str, str | None]] = {}
+    ) -> dict[str, dict[str, str | int | None]]:
+        by_id: dict[str, dict[str, str | int | None]] = {}
         for c in raw_comments:
             meta = BitbucketProvider._bbcloud_dismissal_meta(c)
             if not meta:
                 continue
-            cid, parent, body, login, created = meta
+            cid, parent, body, login, created, path, line = meta
             by_id[cid] = {
                 "parent": parent,
                 "body": body,
                 "login": login,
                 "created": created,
+                "path": path,
+                "line": line,
             }
         return by_id
 
     @staticmethod
     def _bbcloud_thread_root_from_want(
-        by_id: dict[str, dict[str, str | None]], want: str
+        by_id: dict[str, dict[str, str | int | None]], want: str
     ) -> str | None:
         if want not in by_id:
             return None
@@ -488,7 +610,7 @@ class BitbucketProvider(ProviderInterface):
 
     @staticmethod
     def _bbcloud_thread_member_ids_sorted(
-        by_id: dict[str, dict[str, str | None]], root: str
+        by_id: dict[str, dict[str, str | int | None]], root: str
     ) -> list[str]:
         children: dict[str, list[str]] = {}
         for cid, info in by_id.items():
@@ -510,7 +632,7 @@ class BitbucketProvider(ProviderInterface):
 
     @staticmethod
     def _bbcloud_dismissal_entries_from_members(
-        by_id: dict[str, dict[str, str | None]], member_ids: list[str]
+        by_id: dict[str, dict[str, str | int | None]], member_ids: list[str]
     ) -> list[ReviewThreadDismissalEntry]:
         entries: list[ReviewThreadDismissalEntry] = []
         for cid in member_ids:
@@ -540,8 +662,11 @@ class BitbucketProvider(ProviderInterface):
         entries = BitbucketProvider._bbcloud_dismissal_entries_from_members(by_id, member_ids)
         if len(entries) < 2:
             return None
+        root_meta = by_id.get(root) or {}
         return ReviewThreadDismissalContext(
             gate_exclusion_stable_id=f"comment:{root}",
+            path=str(root_meta.get("path") or ""),
+            line=int(root_meta.get("line") or 0),
             entries=entries,
         )
 

@@ -16,13 +16,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REPLY_DISMISSAL_INSTRUCTION = """\
-You classify one pull-request review thread: an automated review comment and a human reply.
+You classify one pull-request review thread.
 
-Your job: decide if the human has adequately addressed the concern raised in the review comment.
+Your job: decide if the triggering human reply adequately addresses the concern raised in the
+original automated review comment.
+
+The thread may contain more than two comments. The user message will identify:
+- the original automated review comment
+- the original automated review comment severity
+- the triggering human reply
+
+Base your verdict on whether the triggering reply, together with any later clarifications in the
+same thread, resolves the original concern.
+
+If relevant PR diff context is provided, use it to ground your judgment. Prefer repository-specific
+evidence from that diff over generic assumptions.
+
+Do not rely on promised future work. Replies such as "I'll fix it", "will do", "I'll push a
+change", "agree, will update", or similar intent-only acknowledgements do NOT resolve the concern
+by themselves. Treat those as still unresolved unless the thread or diff already shows the change,
+or the reply contains a concrete present-tense justification that fully addresses the original
+concern.
+
+Severity should influence how much justification you require before agreeing:
+- nit: be pragmatic and easy to satisfy; reasonable developer tradeoffs or deferral are often enough
+- low: require a plausible explanation or low-cost mitigation, but remain flexible
+- medium: be hesitant to agree unless the reply provides a concrete, credible justification or fix
+- high: require strong, specific evidence that the concern is invalid, mitigated, or already fixed
+
+Severity is guidance, not an automatic verdict. If the thread or diff clearly resolves the concern,
+you may still agree even for medium/high findings. If the reply is weak or dismissive, you should be
+especially reluctant to agree for medium/high findings.
 
 Output rules (critical):
-- Respond with a single JSON object only (no prose before or after).
-- You may wrap it in a markdown ```json code block if you prefer.
+- Respond with a single JSON object only. Do not include markdown fences.
 - Schema:
   - "verdict": "agreed" OR "disagreed"
   - "reply_text": string — required when verdict is "disagreed": a short, professional reply \
@@ -31,6 +58,10 @@ is "agreed".
 
 Use "agreed" when the human fix, explanation, or tradeoff reasonably resolves the review \
 comment. Use "disagreed" when the thread still needs action or the reply misses the point.
+
+When verdict is "disagreed" because the author only agreed to act later, thank them briefly but ask
+for evidence in the PR, for example: "Thanks for agreeing. Please push the code changes so I can
+re-check this thread."
 
 Stay pragmatic and concise. Do not re-review the entire patch — only this thread."""
 
@@ -58,7 +89,9 @@ def reply_dismissal_verdict_from_llm_text(text: str) -> ReplyDismissalVerdictV1 
     """Parse final LLM text into a validated verdict, or None if parsing/validation fails."""
     for raw in _iter_reply_dismissal_json_candidates(text):
         try:
-            return ReplyDismissalVerdictV1.model_validate(raw)
+            return ReplyDismissalVerdictV1.model_validate(
+                _normalize_reply_dismissal_payload(raw)
+            )
         except Exception as e:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Invalid reply-dismissal payload: %r (%s)", raw, e, exc_info=True)
@@ -96,14 +129,50 @@ def _iter_reply_dismissal_json_candidates(text: str):
         chunks.append(fenced.strip())
     chunks.append(s)
     for chunk in chunks:
+        yield from _iter_reply_dismissal_chunk_candidates(chunk)
+    yield from _iter_json_objects_via_raw_decode(s)
+
+
+def _iter_reply_dismissal_chunk_candidates(chunk: str):
+    """Yield parsed objects from one chunk, including minimal repair for common LLM escapes."""
+    for candidate in (chunk, _repair_common_llm_json_escapes(chunk)):
+        if candidate is None:
+            continue
         try:
-            val = json.loads(chunk)
-            if isinstance(val, dict):
-                yield val
-                return
+            val = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    yield from _iter_json_objects_via_raw_decode(s)
+        if isinstance(val, dict):
+            yield val
+            return
+
+
+def _repair_common_llm_json_escapes(text: str) -> str | None:
+    """Repair common quasi-JSON escape mistakes without changing valid JSON first-pass behavior."""
+    if "\\'" not in text:
+        return None
+    # In JSON double-quoted strings, apostrophes do not need escaping. Some LLMs still emit
+    # Python-style ``\'`` sequences, which are invalid JSON and would otherwise fail closed.
+    return _strip_python_style_apostrophe_escapes(text)
+
+
+def _normalize_reply_dismissal_payload(raw: dict) -> dict:
+    """Normalize known LLM escape artifacts inside parsed payload strings."""
+    reply_text = raw.get("reply_text")
+    if not isinstance(reply_text, str) or "\\'" not in reply_text:
+        return raw
+    return {
+        **raw,
+        "reply_text": _strip_python_style_apostrophe_escapes(reply_text),
+    }
+
+
+def _strip_python_style_apostrophe_escapes(text: str) -> str:
+    """Collapse repeated ``\\'`` escape layers down to a plain apostrophe."""
+    repaired = text
+    while "\\'" in repaired:
+        repaired = repaired.replace("\\'", "'")
+    return repaired
 
 
 def _iter_json_objects_via_raw_decode(s: str):

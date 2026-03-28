@@ -75,6 +75,23 @@ def test_reply_dismissal_verdict_with_extra_braces_before_object():
     assert v.verdict == "agreed"
 
 
+def test_reply_dismissal_verdict_repairs_python_style_apostrophe_escape():
+    text = (
+        "```json\n"
+        "{\n"
+        '  "verdict": "disagreed",\n'
+        '  "reply_text": "Use XML-safe escaping for characters like '
+        '<\', \'>\', \'&\', \'\\\\\\"\', or \\\\\' before writing attributes."\n'
+        "}\n"
+        "```"
+    )
+    v = reply_dismissal_verdict_from_llm_text(text)
+    assert v is not None
+    assert v.verdict == "disagreed"
+    assert "XML-safe escaping" in v.reply_text
+    assert "\\'" not in v.reply_text
+
+
 def test_reply_dismissal_verdict_skips_unrelated_leading_json_object():
     text = (
         'Context {"trace_id": "x", "n": 1} then '
@@ -88,3 +105,22 @@ def test_reply_dismissal_verdict_skips_unrelated_leading_json_object():
 def test_reply_dismissal_verdict_invalid_returns_none():
     assert reply_dismissal_verdict_from_llm_text("not json") is None
     assert reply_dismissal_verdict_from_llm_text('{"verdict": "disagreed"}') is None
+
+
+def test_reply_dismissal_instruction_mentions_severity_guidance():
+    assert "original automated review comment severity" in REPLY_DISMISSAL_INSTRUCTION
+    assert "nit: be pragmatic and easy to satisfy" in REPLY_DISMISSAL_INSTRUCTION
+    assert "high: require strong, specific evidence" in REPLY_DISMISSAL_INSTRUCTION
+
+
+def test_reply_dismissal_instruction_rejects_future_work_promises():
+    assert "Do not rely on promised future work." in REPLY_DISMISSAL_INSTRUCTION
+    assert '"I\'ll fix it"' in REPLY_DISMISSAL_INSTRUCTION
+    assert "do NOT resolve the concern" in REPLY_DISMISSAL_INSTRUCTION
+
+
+def test_reply_dismissal_instruction_guides_follow_up_reply_for_future_work():
+    assert 'When verdict is "disagreed" because the author only agreed to act later' in (
+        REPLY_DISMISSAL_INSTRUCTION
+    )
+    assert "Please push the code changes so I can" in REPLY_DISMISSAL_INSTRUCTION

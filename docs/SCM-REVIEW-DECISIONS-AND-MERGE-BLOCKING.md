@@ -50,7 +50,7 @@ After comment activity, you can run the tool in **review-decision-only** mode so
 
 When the triggering event is a **reply on a thread**, decision-only still reloads **open** high/medium signals from the SCM and may submit **`APPROVE`** or **`REQUEST_CHANGES`**. If the outcome does not change after a human reply, the host usually still reports the same unresolved items—for example **Bitbucket Cloud** still counts **open inline comments and open tasks** until they are resolved in the UI; **Bitbucket Server / DC** is the same for comments plus tasks. Replies are not ignored; the SCM state simply has not changed yet.
 
-**Optional reply-dismissal.** If turned on in configuration (**§2**), an extra step can load the **PR review-comment** thread, run a small LLM, and—if it judges the reply sufficient—**omit that thread from counts for this run only** (nothing is written back to the SCM as “resolved”). If it judges the reply insufficient, the runner may post a brief follow-up **on that comment thread** where the API allows.
+**Optional reply-dismissal.** If turned on in configuration (**§2**), an extra step can load the **PR review-comment** thread. The runner may first short-circuit from SCM state when the provider already indicates the concern is addressed (for example an applied/orphaned Bitbucket suggestion). Otherwise it runs a small LLM and—if it judges the reply sufficient—**omits that thread from counts for this run**. On **GitHub** and **GitLab**, the runner also resolves the thread in the SCM. On **Bitbucket Cloud** and **Bitbucket Server / DC**, the runner persists an accepted bot reply so later quality-gate runs also exclude that thread. If it judges the reply insufficient, the runner may post a brief follow-up **on that comment thread** where the API allows.
 
 Implemented for **GitHub**, **GitLab**, **Bitbucket Cloud**, and **Bitbucket Server / DC**. For **Bitbucket**, threading and exclusion apply to **inline pull request comments** (parent / reply links in the REST model). The quality gate uses **`comment:{root_comment_id}`** for those items so the excluded id matches what the gate counts. **Gitea** does not implement this path yet (`skipped_no_capability`); recalculation still uses full SCM-derived counts.
 
@@ -74,7 +74,7 @@ Create a second workflow or pipeline job for **discussion-only** events such as 
 
 For Jenkins, prefer putting the full-review job and the comment-events job in the same folder. That keeps the two pipelines easy to track while still sharing the folder-level configuration.
 
-The comment-events job should run **review-decision-only** mode, pass webhook context through **`CODE_REVIEW_EVENT_*`**, and enable **`SCM_REVIEW_DECISION_ENABLED`** so the quality gate can be recomputed without running the full review agent. If reply-dismissal is required for human replies, also enable **`CODE_REVIEW_REPLY_DISMISSAL_ENABLED`** on this job.
+The comment-events job should run **review-decision-only** mode, pass webhook context through **`CODE_REVIEW_EVENT_*`**, and enable **`SCM_REVIEW_DECISION_ENABLED`** so the quality gate can be recomputed without running the full review agent. Reply-dismissal for human replies is enabled by default; set **`CODE_REVIEW_REPLY_DISMISSAL_ENABLED=false`** on this job if you want to turn it off.
 
 This approach keeps full reviews and comment-only recalculation in separate Jenkins jobs, which makes it easier to track volume and behavior for each path independently.
 

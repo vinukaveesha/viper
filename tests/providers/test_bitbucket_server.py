@@ -12,11 +12,83 @@ from code_review.providers.bitbucket_server import (
     _bitbucket_json_diff_to_unified,
     _extract_commit_id,
 )
+from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
 
 
 def test_get_provider_bitbucket_server():
     p = get_provider("bitbucket_server", "https://bb:7990/rest/api/1.0", "token")
     assert isinstance(p, BitbucketServerProvider)
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_pr_diff_for_file_uses_single_file_endpoint(mock_client):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "text/plain"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.text = "@@ -1,1 +1,1 @@\n-old\n+new\n"
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_r
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "@@ -1,1 +1,1 @@" in diff_text
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert "/pull-requests/7/diff/src/Foo.java" in call[0][0]
+    assert call[1]["params"] == {"contextLines": 12}
+
+
+def test_get_pr_diff_for_file_falls_back_to_full_pr_diff_slice_on_single_file_error():
+    request = httpx.Request(
+        "GET",
+        "https://bb:7990/rest/api/1.0/projects/PROJ/repos/repo/pull-requests/7/diff/src/Foo.java",
+    )
+    response = httpx.Response(400, request=request, text="Bad diff request")
+    full_diff = (
+        "diff --git a/src/Foo.java b/src/Foo.java\n"
+        "--- a/src/Foo.java\n"
+        "+++ b/src/Foo.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/src/Bar.java b/src/Bar.java\n"
+        "--- a/src/Bar.java\n"
+        "+++ b/src/Bar.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with (
+        patch.object(
+            BitbucketServerProvider,
+            "_get_unified_diff",
+            side_effect=[
+                httpx.HTTPStatusError("400 Bad Request", request=request, response=response),
+                httpx.HTTPStatusError("400 Bad Request", request=request, response=response),
+            ],
+        ),
+        patch.object(
+            BitbucketServerProvider, "get_pr_diff", return_value=full_diff
+        ) as mock_get_pr_diff,
+    ):
+        diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "+new" in diff_text
+    assert "src/Bar.java" not in diff_text
+    mock_get_pr_diff.assert_called_once_with("PROJ", "repo", 7)
+
+
+def test_get_pr_diff_for_file_tries_next_variant_after_empty_single_file_diff():
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with patch.object(
+        BitbucketServerProvider,
+        "_get_unified_diff",
+        side_effect=["", "@@ -1,1 +1,1 @@\n-old\n+new\n"],
+    ) as mock_get_unified_diff:
+        diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "@@ -1,1 +1,1 @@" in diff_text
+    assert mock_get_unified_diff.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +107,59 @@ def _make_bb_diff(src_path, dst_path, hunks):
             }
         ]
     }
+
+
+def _mock_bb_json_response(payload):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "application/json"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.json.return_value = payload
+    return mock_r
+
+
+def _bbs_anchor(path="f.java", line=2, **extra):
+    return {"path": path, "line": line, **extra}
+
+
+def _bbs_comment(
+    comment_id,
+    text,
+    *,
+    state="OPEN",
+    path="f.java",
+    line=2,
+    created_date=None,
+    author_name=None,
+    parent_id=None,
+    properties=None,
+    comments=None,
+    **anchor_extra,
+):
+    comment = {
+        "id": comment_id,
+        "text": text,
+        "state": state,
+        "anchor": _bbs_anchor(path=path, line=line, **anchor_extra),
+    }
+    if created_date is not None:
+        comment["createdDate"] = created_date
+    if author_name is not None:
+        comment["author"] = {"name": author_name}
+    if parent_id is not None:
+        comment["parentComment"] = {"id": parent_id}
+    if properties is not None:
+        comment["properties"] = properties
+    if comments is not None:
+        comment["comments"] = comments
+    return comment
+
+
+def _bbs_commented_activity(comment):
+    return {"action": "COMMENTED", "comment": comment}
+
+
+def _bbs_page(*values):
+    return {"isLastPage": True, "values": list(values)}
 
 
 def test_bitbucket_json_diff_to_unified_modified_file():
@@ -414,31 +539,18 @@ def test_get_existing_review_comments_uses_activities_endpoint(mock_client):
     """get_existing_review_comments must call /activities, not /comments.
 
     Bitbucket Server requires a 'path' query parameter for GET /comments and
-    returns 400/404 without it.  The activities endpoint is the correct way to
+    returns 400/404 without it. The activities endpoint is the correct way to
     retrieve all PR comments.
     """
-    mock_resp = MagicMock()
-    mock_resp.headers = {"content-type": "application/json"}
-    mock_resp.json.return_value = {
-        "isLastPage": True,
-        "values": [
-            {
-                "action": "COMMENTED",
-                "comment": {
-                    "id": 1,
-                    "text": "Looks good",
-                    "state": "OPEN",
-                    "anchor": {"path": "src/Foo.java", "line": 5},
-                },
-            }
-        ],
-    }
-    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+    mock_client.return_value.__enter__.return_value.get.return_value = _mock_bb_json_response(
+        _bbs_page(
+            _bbs_commented_activity(_bbs_comment(1, "Looks good", path="src/Foo.java", line=5))
+        )
+    )
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
     comments = p.get_existing_review_comments("PROJ", "my-repo", 42)
 
-    # Verify the /activities URL was called, not /comments
     call_args = mock_client.return_value.__enter__.return_value.get.call_args
     called_url = call_args[0][0]
     assert called_url.endswith("/activities"), f"Expected /activities endpoint, got: {called_url}"
@@ -448,6 +560,41 @@ def test_get_existing_review_comments_uses_activities_endpoint(mock_client):
     assert comments[0].body == "Looks good"
     assert comments[0].path == "src/Foo.java"
     assert comments[0].line == 5
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_existing_review_comments_uses_activity_comment_anchor_when_comment_anchor_missing(
+    mock_client,
+):
+    mock_resp = MagicMock()
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_resp.json.return_value = {
+        "isLastPage": True,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 482,
+                    "text": "[Medium] suggestion",
+                    "state": "OPEN",
+                },
+                "commentAnchor": {
+                    "path": "src/main/java/example/Foo.java",
+                    "line": 104,
+                    "orphaned": True,
+                },
+            }
+        ],
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    comments = p.get_existing_review_comments("PROJ", "my-repo", 42)
+
+    assert len(comments) == 1
+    assert comments[0].path == "src/main/java/example/Foo.java"
+    assert comments[0].line == 104
+    assert comments[0].outdated is True
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
@@ -491,6 +638,287 @@ def test_get_unresolved_review_items_merges_comments_and_open_tasks(mock_client)
     assert "inline_comment" in kinds
     assert "task" in kinds
     assert any(i.inferred_severity == "medium" for i in items)
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_orphaned_comments(mock_client):
+    """Orphaned/outdated Bitbucket Server comments must not count against the gate."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/activities" in u:
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 1,
+                            "text": "[High] already applied",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 2, "orphaned": True},
+                        },
+                    },
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 2,
+                            "text": "[Low] still active",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 4},
+                        },
+                    },
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert [i.stable_id for i in items] == ["comment:2"]
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_applied_suggestion_comments(mock_client):
+    """Applied suggestions must not keep Bitbucket Server quality gate in NEEDS_WORK."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        u = str(url)
+        if "/activities" in u:
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            482,
+                            "[High] already applied",
+                            properties={"suggestionState": "APPLIED"},
+                        )
+                    ),
+                    _bbs_commented_activity(_bbs_comment(483, "[Medium] still active", line=4)),
+                )
+            )
+        elif "/tasks" in u:
+            return _mock_bb_json_response(_bbs_page())
+        else:
+            return _mock_bb_json_response({})
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert [i.stable_id for i in items] == ["comment:483"]
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_uses_comments_endpoint_state_when_activities_is_stale(
+    mock_client,
+):
+    """A richer /comments payload should clear the gate even if /activities is stale."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        u = str(url)
+        if "/activities" in u:
+            return _mock_bb_json_response(
+                _bbs_page(_bbs_commented_activity(_bbs_comment(482, "[High] already applied")))
+            )
+        elif u.endswith("/comments"):
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_comment(
+                        482,
+                        "[High] already applied",
+                        properties={"suggestionState": "APPLIED"},
+                    )
+                )
+            )
+        elif "/tasks" in u:
+            return _mock_bb_json_response(_bbs_page())
+        else:
+            return _mock_bb_json_response({})
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_client):
+    mock_client.return_value.__enter__.return_value.get.return_value = _mock_bb_json_response(
+        _bbs_page(
+            _bbs_commented_activity(
+                _bbs_comment(1, "Applied", path="src/Foo.java", line=5, orphaned=True)
+            )
+        )
+    )
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    comments = p.get_existing_review_comments("PROJ", "my-repo", 42)
+
+    assert len(comments) == 1
+    assert comments[0].outdated is True
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_threads_with_latest_accepted_bot_reply(mock_client):
+    def _get_side_effect(url: str, params=None, **kwargs):
+        u = str(url)
+        if "/activities" in u:
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            1,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            2,
+                            "fixed now",
+                            created_date=2,
+                            author_name="dev",
+                            parent_id=1,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            3,
+                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                            created_date=3,
+                            author_name="viper",
+                            parent_id=2,
+                        )
+                    ),
+                )
+            )
+        elif "/tasks" in u:
+            return _mock_bb_json_response(_bbs_page())
+        else:
+            return _mock_bb_json_response({})
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    p._participant_user_slug = "viper"
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_threads_with_nested_accepted_bot_reply(
+    mock_client,
+):
+    def _get_side_effect(url: str, params=None, **kwargs):
+        u = str(url)
+        if "/activities" in u:
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            10,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                            comments=[
+                                _bbs_comment(
+                                    11,
+                                    "fixed now",
+                                    created_date=2,
+                                    author_name="dev",
+                                    comments=[
+                                        _bbs_comment(
+                                            12,
+                                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                                            created_date=3,
+                                            author_name="viper",
+                                            comments=[],
+                                        )
+                                    ],
+                                )
+                            ],
+                        )
+                    )
+                )
+            )
+        elif "/tasks" in u:
+            return _mock_bb_json_response(_bbs_page())
+        else:
+            return _mock_bb_json_response({})
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    p._participant_user_slug = "viper"
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_dismissed_thread_when_activity_order_is_reversed(
+    mock_client,
+):
+    def _get_side_effect(url: str, params=None, **kwargs):
+        u = str(url)
+        if "/activities" in u:
+            return _mock_bb_json_response(
+                _bbs_page(
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            3,
+                            REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                            created_date=3,
+                            author_name="viper",
+                            parent_id=2,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            2,
+                            "fixed now",
+                            created_date=2,
+                            author_name="dev",
+                            parent_id=1,
+                        )
+                    ),
+                    _bbs_commented_activity(
+                        _bbs_comment(
+                            1,
+                            "[High] original issue",
+                            created_date=1,
+                            author_name="viper",
+                        )
+                    ),
+                )
+            )
+        elif "/tasks" in u:
+            return _mock_bb_json_response(_bbs_page())
+        else:
+            return _mock_bb_json_response({})
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    p._participant_user_slug = "viper"
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
@@ -870,6 +1298,77 @@ def test_bbs_build_dismissal_context_thread():
     assert ctx is not None
     assert ctx.gate_exclusion_stable_id == "comment:1"
     assert len(ctx.entries) == 2
+
+
+def test_bbs_build_dismissal_context_marks_suggestion_applied_as_already_addressed():
+    raw = [
+        {
+            "id": 482,
+            "text": "[Medium] apply this",
+            "author": {"name": "viper"},
+            "createdDate": 100,
+            "state": "OPEN",
+            "properties": {"suggestionState": "APPLIED"},
+            "anchor": {"path": "src/Foo.java", "line": 104, "orphaned": True},
+        },
+        {
+            "id": 483,
+            "text": "done",
+            "parentComment": {"id": 482},
+            "author": {"name": "dev"},
+            "createdDate": 200,
+        },
+    ]
+    ctx = BitbucketServerProvider._bbs_build_dismissal_context(raw, "483")
+
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:482"
+    assert ctx.scm_already_addressed is True
+    assert ctx.scm_already_addressed_reason == "suggestion_applied"
+    assert ctx.path == "src/Foo.java"
+    assert ctx.line == 104
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_review_thread_dismissal_context_server_with_nested_activity_comments(mock_client):
+    mock_r = MagicMock()
+    mock_r.headers = {"content-type": "application/json"}
+    mock_r.raise_for_status = MagicMock()
+    mock_r.json.return_value = {
+        "isLastPage": True,
+        "values": [
+            {
+                "action": "COMMENTED",
+                "comment": {
+                    "id": 10,
+                    "text": "top",
+                    "state": "OPEN",
+                    "author": {"name": "a"},
+                    "createdDate": 1,
+                    "anchor": {"path": "f.java", "line": 1},
+                    "comments": [
+                        {
+                            "id": 11,
+                            "text": "child",
+                            "state": "OPEN",
+                            "author": {"name": "b"},
+                            "createdDate": 2,
+                            "anchor": {"path": "f.java", "line": 1},
+                            "comments": [],
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_r
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    ctx = p.get_review_thread_dismissal_context("PROJ", "repo", 7, "11")
+    assert ctx is not None
+    assert ctx.gate_exclusion_stable_id == "comment:10"
+    assert ctx.path == "f.java"
+    assert ctx.line == 1
+    assert [e.comment_id for e in ctx.entries] == ["10", "11"]
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")

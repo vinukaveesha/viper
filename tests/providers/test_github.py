@@ -116,6 +116,53 @@ def test_get_pr_files(mock_client):
 
 
 @patch("code_review.providers.github.httpx.Client")
+def test_get_pr_diff_for_file_uses_patch_from_matching_file(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = [
+        {
+            "filename": "src/Foo.java",
+            "status": "modified",
+            "patch": "@@ -4,2 +4,2 @@\n-old\n+new",
+        }
+    ]
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    p = GitHubProvider("https://api.github.com", "tok")
+    diff = p.get_pr_diff_for_file("owner", "repo", 1, "src/Foo.java")
+
+    assert "diff --git a/src/Foo.java b/src/Foo.java" in diff
+    assert "@@ -4,2 +4,2 @@" in diff
+    call = mock_client.return_value.__enter__.return_value.get.call_args
+    assert "/pulls/1/files" in call[0][0]
+    assert call[1]["params"] == {"per_page": 100, "page": 1}
+
+
+@patch("code_review.providers.github.httpx.Client")
+def test_get_pr_diff_for_file_falls_back_to_full_diff_when_github_omits_patch(mock_client):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = [{"filename": "src/Foo.java", "status": "modified"}]
+    mock_resp.headers = {"content-type": "application/json"}
+    mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
+
+    full_diff = (
+        "diff --git a/src/Foo.java b/src/Foo.java\n"
+        "--- a/src/Foo.java\n"
+        "+++ b/src/Foo.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    p = GitHubProvider("https://api.github.com", "tok")
+    with patch.object(GitHubProvider, "get_pr_diff", return_value=full_diff) as mock_get_pr_diff:
+        diff = p.get_pr_diff_for_file("owner", "repo", 1, "src/Foo.java")
+
+    assert "diff --git a/src/Foo.java b/src/Foo.java" in diff
+    assert "+new" in diff
+    mock_get_pr_diff.assert_called_once_with("owner", "repo", 1)
+
+
+@patch("code_review.providers.github.httpx.Client")
 def test_get_incremental_pr_files_uses_compare_endpoint(mock_client):
     mock_resp = MagicMock()
     mock_resp.json.return_value = {
@@ -470,6 +517,9 @@ def test_get_review_thread_dismissal_context_finds_thread(mock_gql):
     ctx = p.get_review_thread_dismissal_context("o", "r", 1, "200")
     assert ctx is not None
     assert ctx.gate_exclusion_stable_id == "github:thread:PRRT_kwDOABC"
+    assert ctx.thread_id == "PRRT_kwDOABC"
+    assert ctx.path == "a.py"
+    assert ctx.line == 1
     assert len(ctx.entries) == 2
 
 
@@ -528,6 +578,7 @@ def test_get_review_thread_dismissal_context_fetches_extra_comment_pages(mock_gq
     p = GitHubProvider("https://api.github.com", "tok")
     ctx = p.get_review_thread_dismissal_context("o", "r", 1, "9999")
     assert ctx is not None
+    assert ctx.thread_id == "PRRT_kwLONG"
     assert len(ctx.entries) == 51
     assert ctx.entries[-1].comment_id == "9999"
 
@@ -552,4 +603,26 @@ def test_post_review_thread_reply_github(mock_post):
     mock_post.assert_called_once_with(
         "/repos/o/r/pulls/1/comments",
         {"body": "hello", "in_reply_to": 99},
+    )
+
+
+@patch.object(GitHubProvider, "_graphql")
+def test_resolve_review_thread_github(mock_gql):
+    from code_review.schemas.review_thread_dismissal import ReviewThreadDismissalContext
+
+    p = GitHubProvider("https://api.github.com", "tok")
+    p.resolve_review_thread(
+        "o",
+        "r",
+        1,
+        ReviewThreadDismissalContext(
+            gate_exclusion_stable_id="github:thread:PRRT_kwDOABC",
+            thread_id="PRRT_kwDOABC",
+            entries=[],
+        ),
+        "200",
+    )
+    mock_gql.assert_called_once_with(
+        GitHubProvider._RESOLVE_REVIEW_THREAD_GQL,
+        {"threadId": "PRRT_kwDOABC"},
     )
