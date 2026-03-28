@@ -132,6 +132,50 @@ def test_build_pr_gate_report_excludes_dismissed_threads(
     ]
 
 
+def test_build_pr_gate_report_uses_configured_bot_slug_for_dismissed_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_module()
+
+    monkeypatch.setenv("SCM_BITBUCKET_SERVER_USER_SLUG", "review-bot")
+    monkeypatch.setattr(
+        module,
+        "list_pull_request_comments",
+        lambda *args, **kwargs: [
+            {
+                "id": 1,
+                "text": "[High] still blocking",
+                "state": "OPEN",
+                "author": {"name": "review-bot"},
+                "anchor": {"path": "src/Foo.java", "line": 5},
+            },
+            {
+                "id": 2,
+                "text": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                "state": "OPEN",
+                "author": {"name": "review-bot"},
+                "parentComment": {"id": 1},
+                "anchor": {"path": "src/Foo.java", "line": 5},
+            },
+        ],
+    )
+    monkeypatch.setattr(module, "list_pull_request_tasks", lambda *args, **kwargs: [])
+
+    report = module.build_pr_gate_report(
+        "PRJ",
+        "demo-repo",
+        17,
+        **{"username": "alice", "pass" + "word": TEST_AUTH_TOKEN},
+    )
+
+    assert report["open_high_count"] == 0
+    assert report["counted_items"] == []
+    assert [item["quality_gate_reason"] for item in report["comments"]] == [
+        "dismissed_thread",
+        "dismissed_thread",
+    ]
+
+
 def test_main_comment_prints_json_report(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

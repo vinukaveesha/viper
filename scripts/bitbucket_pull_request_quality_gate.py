@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -142,6 +143,7 @@ def _load_provider_comment_gate_context_for_pr(
     username: str,
     password: str,
 ) -> tuple[list[dict[str, Any]], dict[str, ReviewComment], frozenset[str]]:
+    bot_login = _bitbucket_server_bot_login(username)
     comments = list_pull_request_comments(
         project_key,
         repo_slug,
@@ -151,9 +153,14 @@ def _load_provider_comment_gate_context_for_pr(
     )
     review_comments_by_id, dismissed_stable_ids = _provider_comment_gate_context(
         comments,
-        bot_login=username,
+        bot_login=bot_login,
     )
     return comments, review_comments_by_id, dismissed_stable_ids
+
+
+def _bitbucket_server_bot_login(username: str) -> str:
+    """Return the Bitbucket Server bot slug used by the production provider when available."""
+    return os.environ.get("SCM_BITBUCKET_SERVER_USER_SLUG", "").strip() or username
 
 
 def _fallback_comment_gate_status(comment: dict[str, Any]) -> tuple[bool, str]:
