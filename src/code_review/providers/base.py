@@ -334,6 +334,8 @@ class ReviewComment(BaseModel):
     resolved: bool = False
     outdated: bool = False
     parent_id: str | None = None
+    author_login: str = ""
+    created_at: str = ""
 
 
 ReviewItemKind = Literal["inline_comment", "discussion_thread", "task"]

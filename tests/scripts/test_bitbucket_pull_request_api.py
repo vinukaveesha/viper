@@ -238,3 +238,54 @@ def test_delete_pull_request_comment_passes_version_query_param(monkeypatch: pyt
             {"version": 7},
         )
     ]
+
+
+def test_list_pull_request_tasks_reads_all_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = load_module()
+    requests: list[tuple[str, str, dict[str, int]]] = []
+    responses = iter(
+        [
+            {
+                "values": [{"id": 9, "state": "OPEN", "text": "first task"}],
+                "isLastPage": False,
+                "nextPageStart": 100,
+            },
+            {
+                "values": [{"id": 10, "state": "RESOLVED", "text": "second task"}],
+                "isLastPage": True,
+            },
+        ]
+    )
+
+    def fake_bitbucket_request(method, url, *, username, payload=None, params=None, **kwargs):
+        requests.append((method, url, params or {}))
+        assert username == TEST_USERNAME
+        assert kwargs[AUTH_SECRET_FIELD] == TEST_AUTH_SECRET
+        return next(responses)
+
+    monkeypatch.setattr(module, "bitbucket_request", fake_bitbucket_request)
+
+    credentials = {"username": TEST_USERNAME, AUTH_SECRET_FIELD: TEST_AUTH_SECRET}
+    result = module.list_pull_request_tasks(
+        "PRJ",
+        "demo-repo",
+        17,
+        **credentials,
+    )
+
+    assert result == [
+        {"id": 9, "state": "OPEN", "text": "first task"},
+        {"id": 10, "state": "RESOLVED", "text": "second task"},
+    ]
+    assert requests == [
+        (
+            "GET",
+            module.pull_request_tasks_url("PRJ", "demo-repo", 17),
+            {"start": 0, "limit": 100},
+        ),
+        (
+            "GET",
+            module.pull_request_tasks_url("PRJ", "demo-repo", 17),
+            {"start": 100, "limit": 100},
+        ),
+    ]

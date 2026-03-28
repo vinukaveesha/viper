@@ -6,6 +6,7 @@ from code_review.providers import get_provider
 from code_review.providers.base import InlineComment
 from code_review.providers.bitbucket import BitbucketProvider
 from code_review.providers.review_decision_common import effective_review_body
+from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
 
 
 def test_get_provider_bitbucket():
@@ -307,6 +308,58 @@ def test_get_unresolved_review_items_skips_outdated_inline_comments(mock_client)
     items = p.get_unresolved_review_items_for_quality_gate("ws", "slug", 9)
 
     assert [i.stable_id for i in items] == ["comment:101"]
+
+
+@patch("code_review.providers.http_shortcuts.httpx.Client")
+def test_get_unresolved_review_items_skips_threads_with_latest_accepted_bot_reply(mock_client):
+    def _get_side_effect(url: str, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if u.endswith("/user"):
+            mock_r.json.return_value = {"username": "viper"}
+        elif "/pullrequests/9/comments" in u:
+            mock_r.json.return_value = {
+                "values": [
+                    {
+                        "id": 100,
+                        "content": {"raw": "[Medium] inline root"},
+                        "inline": {"path": "a.py", "to": 2},
+                        "user": {"nickname": "viper"},
+                        "created_on": "2025-01-01T10:00:00Z",
+                    },
+                    {
+                        "id": 101,
+                        "content": {"raw": "I fixed it"},
+                        "inline": {"path": "a.py", "to": 2},
+                        "parent": {"id": 100},
+                        "user": {"nickname": "dev"},
+                        "created_on": "2025-01-01T11:00:00Z",
+                    },
+                    {
+                        "id": 102,
+                        "content": {"raw": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT},
+                        "inline": {"path": "a.py", "to": 2},
+                        "parent": {"id": 101},
+                        "user": {"nickname": "viper"},
+                        "created_on": "2025-01-01T12:00:00Z",
+                    },
+                ],
+                "next": None,
+            }
+        elif "/pullrequests/9/tasks" in u:
+            mock_r.json.return_value = {"values": [], "next": None}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+    p = BitbucketProvider("https://api.bitbucket.org/2.0", "tok")
+
+    items = p.get_unresolved_review_items_for_quality_gate("ws", "slug", 9)
+
+    assert items == []
 
 
 @patch("code_review.providers.http_shortcuts.httpx.Client")

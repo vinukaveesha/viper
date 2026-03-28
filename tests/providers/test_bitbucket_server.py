@@ -12,6 +12,7 @@ from code_review.providers.bitbucket_server import (
     _bitbucket_json_diff_to_unified,
     _extract_commit_id,
 )
+from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
 
 
 def test_get_provider_bitbucket_server():
@@ -582,6 +583,69 @@ def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_clie
 
     assert len(comments) == 1
     assert comments[0].outdated is True
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_skips_threads_with_latest_accepted_bot_reply(mock_client):
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/activities" in u:
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 1,
+                            "text": "[High] original issue",
+                            "state": "OPEN",
+                            "createdDate": 1,
+                            "author": {"name": "viper"},
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    },
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 2,
+                            "text": "fixed now",
+                            "state": "OPEN",
+                            "createdDate": 2,
+                            "author": {"name": "dev"},
+                            "parentComment": {"id": 1},
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    },
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 3,
+                            "text": REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+                            "state": "OPEN",
+                            "createdDate": 3,
+                            "author": {"name": "viper"},
+                            "parentComment": {"id": 2},
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    },
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    p._participant_user_slug = "viper"
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")

@@ -62,6 +62,7 @@ from code_review.schemas.review_decision_event import (
     event_allows_decision_only_skip_when_bot_not_blocking,
     review_decision_event_context_from_env,
 )
+from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
 from code_review.schemas.review_thread_dismissal import ReviewThreadDismissalContext
 from code_review.standards import detect_from_paths, get_review_standards
 
@@ -2820,6 +2821,43 @@ class ReviewOrchestrator:
         except Exception as e:
             logger.warning("post_review_thread_reply failed: %s", e)
 
+    def _decision_only_maybe_post_agreed_thread_reply(
+        self,
+        provider,
+        caps_rd,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        dry_run: bool,
+        comment_id: str,
+    ) -> None:
+        if not caps_rd.supports_review_thread_reply:
+            logger.info(
+                "Reply-dismissal agreed: provider does not support thread replies; "
+                "cannot persist accepted thread state"
+            )
+            return
+        if dry_run:
+            logger.info(
+                "Dry-run: would post durable accepted-thread reply: %s",
+                REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+            )
+            return
+        try:
+            provider.post_review_thread_reply(
+                owner,
+                repo,
+                pr_number,
+                comment_id,
+                REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
+            )
+            logger.info(
+                "Reply-dismissal agreed: posted durable accepted-thread reply to comment_id=%s",
+                comment_id,
+            )
+        except Exception as e:
+            logger.warning("post agreed accepted-thread reply failed: %s", e)
+
     def _decision_only_maybe_resolve_agreed_thread(
         self,
         provider,
@@ -2832,9 +2870,14 @@ class ReviewOrchestrator:
         dctx: ReviewThreadDismissalContext,
     ) -> None:
         if not caps_rd.supports_review_thread_resolution:
-            logger.info(
-                "Reply-dismissal agreed: provider does not support resolving the review thread; "
-                "keeping exclusion local to this run"
+            self._decision_only_maybe_post_agreed_thread_reply(
+                provider,
+                caps_rd,
+                owner,
+                repo,
+                pr_number,
+                dry_run,
+                comment_id,
             )
             return
         if dry_run:

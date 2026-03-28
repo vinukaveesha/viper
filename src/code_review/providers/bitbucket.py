@@ -29,6 +29,7 @@ from code_review.providers.http_shortcuts import (
 )
 from code_review.providers.review_decision_common import delete_soft_fail, effective_review_body
 from code_review.providers.safety import truncate_repo_content
+from code_review.reply_dismissal_state import is_reply_dismissal_accepted_reply
 from code_review.schemas.review_thread_dismissal import (
     ReviewThreadDismissalContext,
     ReviewThreadDismissalEntry,
@@ -271,6 +272,10 @@ class BitbucketProvider(ProviderInterface):
             path_str = inline.get("path") or ""
             line = int(inline.get("to") or inline.get("from") or 0)
             body = (c.get("content") or {}).get("raw") or ""
+            user = c.get("user") if isinstance(c.get("user"), dict) else {}
+            author_login = str(
+                user.get("nickname") or user.get("username") or user.get("display_name") or ""
+            )
             comments.append(
                 ReviewComment(
                     id=str(c.get("id", "")),
@@ -280,6 +285,8 @@ class BitbucketProvider(ProviderInterface):
                     resolved=False,
                     outdated=bool(inline.get("outdated") is True),
                     parent_id=self._bbcloud_parent_id(c),
+                    author_login=author_login,
+                    created_at=str(c.get("created_on") or ""),
                 )
             )
 
@@ -298,6 +305,53 @@ class BitbucketProvider(ProviderInterface):
         if comment.parent_id:
             return False
         return bool(comment.path or int(comment.line or 0) > 0)
+
+    @staticmethod
+    def _bbcloud_comment_is_bot_authored(comment: ReviewComment, bot: BotAttributionIdentity) -> bool:
+        author_login = (comment.author_login or "").strip().lower()
+        if not author_login:
+            return False
+        bot_login = (bot.login or "").strip().lower()
+        if bot_login and author_login == bot_login:
+            return True
+        bot_uuid = (bot.uuid or "").strip().lower().replace("{", "").replace("}", "")
+        return bool(bot_uuid and author_login.replace("{", "").replace("}", "") == bot_uuid)
+
+    @staticmethod
+    def _bbcloud_thread_root_comment_id(
+        by_id: dict[str, ReviewComment],
+        comment_id: str,
+    ) -> str:
+        root = (comment_id or "").strip()
+        seen: set[str] = set()
+        while root in by_id:
+            parent_id = (by_id[root].parent_id or "").strip()
+            if not parent_id or parent_id not in by_id or root in seen:
+                break
+            seen.add(root)
+            root = parent_id
+        return root
+
+    def _bbcloud_persisted_dismissed_root_ids(
+        self,
+        comments: list[ReviewComment],
+        bot: BotAttributionIdentity,
+    ) -> frozenset[str]:
+        by_id = {str(c.id or "").strip(): c for c in comments if (c.id or "").strip()}
+        latest_by_root: dict[str, ReviewComment] = {}
+        for c in comments:
+            cid = (c.id or "").strip()
+            if not cid:
+                continue
+            root_id = self._bbcloud_thread_root_comment_id(by_id, cid)
+            latest_by_root[root_id] = c
+        dismissed_roots = {
+            root_id
+            for root_id, comment in latest_by_root.items()
+            if self._bbcloud_comment_is_bot_authored(comment, bot)
+            and is_reply_dismissal_accepted_reply(comment.body)
+        }
+        return frozenset(f"comment:{root_id}" for root_id in dismissed_roots if root_id)
 
     @staticmethod
     def _bbcloud_open_task_from_value(t: Any, out_len: int) -> UnresolvedReviewItem | None:
@@ -342,10 +396,18 @@ class BitbucketProvider(ProviderInterface):
         out: list[UnresolvedReviewItem] = []
         try:
             comments = self.get_existing_review_comments(owner, repo, pr_number)
+            dismissed_stable_ids = self._bbcloud_persisted_dismissed_root_ids(
+                comments,
+                self.get_bot_attribution_identity(owner, repo, pr_number),
+            )
             inline_root_comments = [
                 c for c in comments if self._bbcloud_is_inline_root_unresolved_comment(c)
             ]
-            out.extend(default_unresolved_review_items_from_comments(inline_root_comments))
+            out.extend(
+                item
+                for item in default_unresolved_review_items_from_comments(inline_root_comments)
+                if item.stable_id not in dismissed_stable_ids
+            )
         except Exception as e:
             logger.warning(
                 "Bitbucket Cloud PR comments fetch failed for quality gate "

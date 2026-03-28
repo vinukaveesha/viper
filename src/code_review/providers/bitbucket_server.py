@@ -27,6 +27,7 @@ from code_review.providers.base import (
     normalize_diff_anchor_path,
 )
 from code_review.providers.safety import truncate_repo_content
+from code_review.reply_dismissal_state import is_reply_dismissal_accepted_reply
 from code_review.schemas.review_thread_dismissal import (
     ReviewThreadDismissalContext,
     ReviewThreadDismissalEntry,
@@ -548,6 +549,7 @@ class BitbucketServerProvider(ProviderInterface):
         if not isinstance(c, dict):
             return None
         anchor = c.get("anchor") or {}
+        author = c.get("author") if isinstance(c.get("author"), dict) else {}
         return ReviewComment(
             id=str(c.get("id", "")),
             path=anchor.get("path") or "",
@@ -555,6 +557,9 @@ class BitbucketServerProvider(ProviderInterface):
             body=c.get("text") or "",
             resolved=bool(c.get("state") == "RESOLVED"),
             outdated=self._bbs_comment_is_outdated(c),
+            parent_id=self._bbs_comment_parent_id(c),
+            author_login=str(author.get("name") or author.get("slug") or author.get("username") or ""),
+            created_at=str(c.get("createdDate") or ""),
         )
 
     @staticmethod
@@ -887,6 +892,56 @@ class BitbucketServerProvider(ProviderInterface):
             )
         )
 
+    def _bbs_comment_is_bot_authored(
+        self,
+        comment: ReviewComment,
+        bot: BotAttributionIdentity,
+    ) -> bool:
+        author_login = (comment.author_login or "").strip().lower()
+        if not author_login:
+            return False
+        bot_login = (bot.login or "").strip().lower()
+        if bot_login and author_login == bot_login:
+            return True
+        bot_slug = (bot.slug or "").strip().lower()
+        return bool(bot_slug and author_login == bot_slug)
+
+    @staticmethod
+    def _bbs_thread_root_comment_id(
+        by_id: dict[str, ReviewComment],
+        comment_id: str,
+    ) -> str:
+        root = (comment_id or "").strip()
+        seen: set[str] = set()
+        while root in by_id:
+            parent_id = (by_id[root].parent_id or "").strip()
+            if not parent_id or parent_id not in by_id or root in seen:
+                break
+            seen.add(root)
+            root = parent_id
+        return root
+
+    def _bbs_persisted_dismissed_root_ids(
+        self,
+        comments: list[ReviewComment],
+        bot: BotAttributionIdentity,
+    ) -> frozenset[str]:
+        by_id = {str(c.id or "").strip(): c for c in comments if (c.id or "").strip()}
+        latest_by_root: dict[str, ReviewComment] = {}
+        for c in comments:
+            cid = (c.id or "").strip()
+            if not cid:
+                continue
+            root_id = self._bbs_thread_root_comment_id(by_id, cid)
+            latest_by_root[root_id] = c
+        dismissed_roots = {
+            root_id
+            for root_id, comment in latest_by_root.items()
+            if self._bbs_comment_is_bot_authored(comment, bot)
+            and is_reply_dismissal_accepted_reply(comment.body)
+        }
+        return frozenset(f"comment:{root_id}" for root_id in dismissed_roots if root_id)
+
     def _bbs_paginate_open_pr_tasks(
         self,
         owner: str,
@@ -938,7 +993,22 @@ class BitbucketServerProvider(ProviderInterface):
                 e,
             )
             existing = []
-        items = list(default_unresolved_review_items_from_comments(existing))
+        dismissed_stable_ids = self._bbs_persisted_dismissed_root_ids(
+            existing,
+            self.get_bot_attribution_identity(owner, repo, pr_number),
+        )
+        by_id = {str(c.id or "").strip(): c for c in existing if (c.id or "").strip()}
+        active_comments = [
+            c
+            for c in existing
+            if f"comment:{self._bbs_thread_root_comment_id(by_id, str(c.id or '').strip())}"
+            not in dismissed_stable_ids
+        ]
+        items = [
+            item
+            for item in default_unresolved_review_items_from_comments(active_comments)
+            if item.stable_id not in dismissed_stable_ids
+        ]
         self._bbs_paginate_open_pr_tasks(owner, repo, pr_number, items)
         return items
 
