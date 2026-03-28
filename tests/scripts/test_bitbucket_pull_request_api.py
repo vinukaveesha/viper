@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "bitbucket_pull_request_api.py"
 AUTH_SECRET_FIELD = "pass" + "word"
@@ -24,7 +23,9 @@ def load_module():
     return module
 
 
-def test_delete_pull_request_reads_current_version_before_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_delete_pull_request_reads_current_version_before_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_module()
     requests: list[tuple[str, str, dict[str, int]]] = []
 
@@ -61,7 +62,9 @@ def test_pull_request_version_requires_integer_value() -> None:
         module.pull_request_version({"id": 17, "version": "not-an-int"})
 
 
-def test_list_pull_request_comments_reads_all_activity_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_pull_request_comments_reads_all_activity_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_module()
     requests: list[tuple[str, str, dict[str, int]]] = []
     responses = iter(
@@ -324,7 +327,10 @@ def test_list_pull_request_comments_raises_when_max_pages_exhausted(
         assert params == {"start": request_count - 1, "limit": 100}
         return {
             "values": [
-                {"action": "COMMENTED", "comment": {"id": request_count, "text": f"comment-{request_count}"}},
+                {
+                    "action": "COMMENTED",
+                    "comment": {"id": request_count, "text": f"comment-{request_count}"},
+                },
             ],
             "isLastPage": False,
             "nextPageStart": request_count,
@@ -344,7 +350,9 @@ def test_list_pull_request_comments_raises_when_max_pages_exhausted(
     assert request_count == 500
 
 
-def test_delete_pull_request_comment_passes_version_query_param(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_delete_pull_request_comment_passes_version_query_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_module()
     requests: list[tuple[str, str, dict[str, int]]] = []
 

@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "jenkins_sync_inline_pipeline.py"
 
@@ -304,7 +303,11 @@ def test_main_applies_default_bitbucket_trigger_settings_without_bootstrap(monke
     sync_jobs_mock = MagicMock()
     monkeypatch.setattr(module, "sync_jobs", sync_jobs_mock)
     monkeypatch.setattr(module, "load_local_env", lambda: None)
-    monkeypatch.setattr(module, "JENKINSFILE", MagicMock(read_text=lambda encoding="utf-8": "pipeline {}"))
+    monkeypatch.setattr(
+        module,
+        "JENKINSFILE",
+        MagicMock(read_text=lambda encoding="utf-8": "pipeline {}"),
+    )
     monkeypatch.setattr(sys, "argv", ["jenkins_sync_inline_pipeline.py"])
 
     rc = module.main()
@@ -327,7 +330,11 @@ def test_main_does_not_pass_empty_scm_override_defaults_to_sync_jobs(monkeypatch
     sync_jobs_mock = MagicMock()
     monkeypatch.setattr(module, "sync_jobs", sync_jobs_mock)
     monkeypatch.setattr(module, "load_local_env", lambda: None)
-    monkeypatch.setattr(module, "JENKINSFILE", MagicMock(read_text=lambda encoding="utf-8": "pipeline {}"))
+    monkeypatch.setattr(
+        module,
+        "JENKINSFILE",
+        MagicMock(read_text=lambda encoding="utf-8": "pipeline {}"),
+    )
     monkeypatch.setattr(
         module,
         "default_parameter_defaults",

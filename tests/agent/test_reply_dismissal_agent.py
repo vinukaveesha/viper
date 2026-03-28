@@ -76,12 +76,15 @@ def test_reply_dismissal_verdict_with_extra_braces_before_object():
 
 
 def test_reply_dismissal_verdict_repairs_python_style_apostrophe_escape():
-    text = """```json
-{
-  "verdict": "disagreed",
-  "reply_text": "Use XML-safe escaping for characters like '<', '>', '&', '\\\"', or \\' before writing attributes."
-}
-```"""
+    text = (
+        "```json\n"
+        "{\n"
+        '  "verdict": "disagreed",\n'
+        '  "reply_text": "Use XML-safe escaping for characters like '
+        '<\', \'>\', \'&\', \'\\\\\\"\', or \\\\\' before writing attributes."\n'
+        "}\n"
+        "```"
+    )
     v = reply_dismissal_verdict_from_llm_text(text)
     assert v is not None
     assert v.verdict == "disagreed"

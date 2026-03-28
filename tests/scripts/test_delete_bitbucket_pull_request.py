@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "delete_bitbucket_pull_request.py"
 TEST_AUTH_TOKEN = "fixture-auth-token"

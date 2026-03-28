@@ -89,7 +89,9 @@ def reply_dismissal_verdict_from_llm_text(text: str) -> ReplyDismissalVerdictV1 
     """Parse final LLM text into a validated verdict, or None if parsing/validation fails."""
     for raw in _iter_reply_dismissal_json_candidates(text):
         try:
-            return ReplyDismissalVerdictV1.model_validate(raw)
+            return ReplyDismissalVerdictV1.model_validate(
+                _normalize_reply_dismissal_payload(raw)
+            )
         except Exception as e:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Invalid reply-dismissal payload: %r (%s)", raw, e, exc_info=True)
@@ -151,7 +153,26 @@ def _repair_common_llm_json_escapes(text: str) -> str | None:
         return None
     # In JSON double-quoted strings, apostrophes do not need escaping. Some LLMs still emit
     # Python-style ``\'`` sequences, which are invalid JSON and would otherwise fail closed.
-    return text.replace("\\'", "'")
+    return _strip_python_style_apostrophe_escapes(text)
+
+
+def _normalize_reply_dismissal_payload(raw: dict) -> dict:
+    """Normalize known LLM escape artifacts inside parsed payload strings."""
+    reply_text = raw.get("reply_text")
+    if not isinstance(reply_text, str) or "\\'" not in reply_text:
+        return raw
+    return {
+        **raw,
+        "reply_text": _strip_python_style_apostrophe_escapes(reply_text),
+    }
+
+
+def _strip_python_style_apostrophe_escapes(text: str) -> str:
+    """Collapse repeated ``\\'`` escape layers down to a plain apostrophe."""
+    repaired = text
+    while "\\'" in repaired:
+        repaired = repaired.replace("\\'", "'")
+    return repaired
 
 
 def _iter_json_objects_via_raw_decode(s: str):

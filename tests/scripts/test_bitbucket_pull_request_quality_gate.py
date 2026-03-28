@@ -9,14 +9,15 @@ import pytest
 
 from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "bitbucket_pull_request_quality_gate.py"
 TEST_AUTH_TOKEN = "fixture-auth-token"
 
 
 def load_module():
-    spec = importlib.util.spec_from_file_location("bitbucket_pull_request_quality_gate", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "bitbucket_pull_request_quality_gate", SCRIPT_PATH
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
