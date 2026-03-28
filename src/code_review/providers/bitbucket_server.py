@@ -325,33 +325,52 @@ class BitbucketServerProvider(ProviderInterface):
         """Return a single-file unified diff with bounded context when possible.
 
         Bitbucket Server/DC exposes ``/diff/{path}``, which is substantially lighter than
-        downloading the full PR diff and slicing it client-side. Keep context small because
-        reply-dismissal only needs nearby evidence for one review thread.
+        downloading the full PR diff and slicing it client-side. Some installations are picky
+        about how the embedded file path is encoded, so try the slash-preserving form first and
+        fall back to the fully encoded form before finally slicing the full PR diff locally.
         """
         wanted_path = (path or "").strip()
         if not wanted_path:
             return ""
-        api_path = self._path(
-            owner,
-            repo,
-            "pull-requests",
-            str(pr_number),
-            "diff",
-            quote(wanted_path, safe=""),
-        )
-        try:
-            return self._get_unified_diff(api_path, params={"contextLines": 12})
-        except Exception as e:
-            logger.warning(
-                "Bitbucket Server single-file diff failed owner=%s repo=%s pr=%s path=%s: %s; "
-                "skipping diff context for this thread",
+        api_paths: list[tuple[str, str]] = []
+        for label, encoded_path in (
+            ("slash_preserving", quote(wanted_path, safe="/")),
+            ("fully_encoded", quote(wanted_path, safe="")),
+        ):
+            api_path = self._path(
                 owner,
                 repo,
-                pr_number,
-                wanted_path,
-                e,
+                "pull-requests",
+                str(pr_number),
+                "diff",
+                encoded_path,
             )
-            return ""
+            if any(existing_path == api_path for _, existing_path in api_paths):
+                continue
+            api_paths.append((label, api_path))
+        last_error: Exception | None = None
+        last_variant = ""
+        for label, api_path in api_paths:
+            try:
+                return self._get_unified_diff(api_path, params={"contextLines": 12})
+            except Exception as e:
+                last_error = e
+                last_variant = label
+        response_text = ""
+        if isinstance(last_error, httpx.HTTPStatusError):
+            response_text = _http_error_response_text(last_error)
+        logger.warning(
+            "Bitbucket Server single-file diff failed owner=%s repo=%s pr=%s path=%s "
+            "variant=%s error=%s response=%r; falling back to full PR diff slice",
+            owner,
+            repo,
+            pr_number,
+            wanted_path,
+            last_variant or "(none)",
+            last_error,
+            response_text,
+        )
+        return super().get_pr_diff_for_file(owner, repo, pr_number, wanted_path)
 
     def get_incremental_pr_diff(
         self,

@@ -33,8 +33,47 @@ def test_get_pr_diff_for_file_uses_single_file_endpoint(mock_client):
 
     assert "@@ -1,1 +1,1 @@" in diff_text
     call = mock_client.return_value.__enter__.return_value.get.call_args
-    assert "/pull-requests/7/diff/src%2FFoo.java" in call[0][0]
+    assert "/pull-requests/7/diff/src/Foo.java" in call[0][0]
     assert call[1]["params"] == {"contextLines": 12}
+
+
+def test_get_pr_diff_for_file_falls_back_to_full_pr_diff_slice_on_single_file_error():
+    request = httpx.Request(
+        "GET",
+        "https://bb:7990/rest/api/1.0/projects/PROJ/repos/repo/pull-requests/7/diff/src/Foo.java",
+    )
+    response = httpx.Response(400, request=request, text="Bad diff request")
+    full_diff = (
+        "diff --git a/src/Foo.java b/src/Foo.java\n"
+        "--- a/src/Foo.java\n"
+        "+++ b/src/Foo.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/src/Bar.java b/src/Bar.java\n"
+        "--- a/src/Bar.java\n"
+        "+++ b/src/Bar.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-before\n"
+        "+after\n"
+    )
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with (
+        patch.object(
+            BitbucketServerProvider,
+            "_get_unified_diff",
+            side_effect=[
+                httpx.HTTPStatusError("400 Bad Request", request=request, response=response),
+                httpx.HTTPStatusError("400 Bad Request", request=request, response=response),
+            ],
+        ),
+        patch.object(BitbucketServerProvider, "get_pr_diff", return_value=full_diff) as mock_get_pr_diff,
+    ):
+        diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "+new" in diff_text
+    assert "src/Bar.java" not in diff_text
+    mock_get_pr_diff.assert_called_once_with("PROJ", "repo", 7)
 
 
 # ---------------------------------------------------------------------------
