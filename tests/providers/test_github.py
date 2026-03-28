@@ -139,18 +139,27 @@ def test_get_pr_diff_for_file_uses_patch_from_matching_file(mock_client):
 
 
 @patch("code_review.providers.github.httpx.Client")
-def test_get_pr_diff_for_file_returns_empty_when_github_omits_patch(mock_client):
+def test_get_pr_diff_for_file_falls_back_to_full_diff_when_github_omits_patch(mock_client):
     mock_resp = MagicMock()
-    mock_resp.json.return_value = [
-        {"filename": "src/Foo.java", "status": "modified"}
-    ]
+    mock_resp.json.return_value = [{"filename": "src/Foo.java", "status": "modified"}]
     mock_resp.headers = {"content-type": "application/json"}
     mock_client.return_value.__enter__.return_value.get.return_value = mock_resp
 
+    full_diff = (
+        "diff --git a/src/Foo.java b/src/Foo.java\n"
+        "--- a/src/Foo.java\n"
+        "+++ b/src/Foo.java\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
     p = GitHubProvider("https://api.github.com", "tok")
-    diff = p.get_pr_diff_for_file("owner", "repo", 1, "src/Foo.java")
+    with patch.object(GitHubProvider, "get_pr_diff", return_value=full_diff) as mock_get_pr_diff:
+        diff = p.get_pr_diff_for_file("owner", "repo", 1, "src/Foo.java")
 
-    assert diff == ""
+    assert "diff --git a/src/Foo.java b/src/Foo.java" in diff
+    assert "+new" in diff
+    mock_get_pr_diff.assert_called_once_with("owner", "repo", 1)
 
 
 @patch("code_review.providers.github.httpx.Client")

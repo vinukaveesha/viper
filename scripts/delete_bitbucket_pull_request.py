@@ -24,14 +24,18 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from bitbucket_pull_request_api import delete_pull_request, load_script_credentials
 
+PROJECT_KEY_HELP = "Bitbucket project key, for example PRJ"
+REPO_SLUG_HELP = "Bitbucket repository slug"
+PULL_REQUEST_ID_HELP = "Pull request id"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Delete a Bitbucket Server/DC pull request on http://localhost:7990."
     )
-    parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
     return parser
 
 

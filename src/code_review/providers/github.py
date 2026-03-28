@@ -520,10 +520,10 @@ class GitHubProvider(ProviderInterface):
         return wanted_path in {filename, previous}
 
     @staticmethod
-    def _github_single_file_diff_from_item(item: dict[str, Any]) -> str:
+    def _github_single_file_diff_from_item(item: dict[str, Any]) -> str | None:
         patch_text = str(item.get("patch") or "").strip()
         if not patch_text:
-            return ""
+            return None
         old_path = str(item.get("previous_filename") or item.get("filename") or "")
         new_path = str(item.get("filename") or old_path)
         lines = [
@@ -559,6 +559,11 @@ class GitHubProvider(ProviderInterface):
             match = self._github_diff_for_matching_pr_file(data, wanted_path)
             if match is not None:
                 return match
+            if any(
+                isinstance(item, dict) and self._github_pr_file_matches_path(item, wanted_path)
+                for item in data
+            ):
+                return super().get_pr_diff_for_file(owner, repo, pr_number, path)
             if len(data) < 100:
                 return ""
             page += 1

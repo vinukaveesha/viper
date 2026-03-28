@@ -290,6 +290,24 @@ def _activity_comment(activity: dict[str, Any]) -> dict[str, Any] | None:
     return merged
 
 
+def _flatten_comment_tree(root_comment: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return one activity's comment tree in depth-first chronological order."""
+    comments: list[dict[str, Any]] = []
+    stack = [root_comment]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        comments.append(dict(current))
+        children = current.get("comments")
+        if not isinstance(children, list):
+            continue
+        for child in reversed(children):
+            if isinstance(child, dict):
+                stack.append(child)
+    return comments
+
+
 def list_pull_request_comments(
     project_key: str,
     repo_slug: str,
@@ -308,19 +326,9 @@ def list_pull_request_comments(
     comments: list[dict[str, Any]] = []
     for activity in activities:
         comment = _activity_comment(activity)
-        if not isinstance(comment, dict):
+        if comment is None:
             continue
-        stack = [comment]
-        while stack:
-            current = stack.pop()
-            if not isinstance(current, dict):
-                continue
-            comments.append(dict(current))
-            children = current.get("comments")
-            if isinstance(children, list):
-                for child in reversed(children):
-                    if isinstance(child, dict):
-                        stack.append(child)
+        comments.extend(_flatten_comment_tree(comment))
     return comments
 
 

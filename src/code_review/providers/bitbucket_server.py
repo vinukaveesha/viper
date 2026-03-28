@@ -352,7 +352,10 @@ class BitbucketServerProvider(ProviderInterface):
         last_variant = ""
         for label, api_path in api_paths:
             try:
-                return self._get_unified_diff(api_path, params={"contextLines": 12})
+                diff_text = self._get_unified_diff(api_path, params={"contextLines": 12})
+                if diff_text:
+                    return diff_text
+                last_variant = label
             except Exception as e:
                 last_error = e
                 last_variant = label

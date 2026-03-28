@@ -36,6 +36,10 @@ from bitbucket_pull_request_api import (
 )
 from code_review.formatters.comment import infer_severity_from_comment_body
 
+PROJECT_KEY_HELP = "Bitbucket project key, for example PRJ"
+REPO_SLUG_HELP = "Bitbucket repository slug"
+PULL_REQUEST_ID_HELP = "Pull request id"
+
 
 def _is_truthy_flag(value: object) -> bool:
     if isinstance(value, bool):
@@ -253,27 +257,27 @@ def build_parser() -> argparse.ArgumentParser:
         "comment",
         help="Inspect one pull request comment and report whether it currently counts toward the gate",
     )
-    comment_parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    comment_parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    comment_parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    comment_parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    comment_parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    comment_parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
     comment_parser.add_argument("comment_id", type=int, help="Pull request comment id")
 
     raw_parser = subparsers.add_parser(
         "raw",
         help="Inspect one pull request comment via raw /comments and /activities API payloads",
     )
-    raw_parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    raw_parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    raw_parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    raw_parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    raw_parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    raw_parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
     raw_parser.add_argument("comment_id", type=int, help="Pull request comment id")
 
     pr_parser = subparsers.add_parser(
         "pr",
         help="Inspect the full pull request quality-gate snapshot (comments plus tasks)",
     )
-    pr_parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    pr_parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    pr_parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    pr_parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    pr_parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    pr_parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
     return parser
 
 
@@ -321,7 +325,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        main()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1)

@@ -76,6 +76,19 @@ def test_get_pr_diff_for_file_falls_back_to_full_pr_diff_slice_on_single_file_er
     mock_get_pr_diff.assert_called_once_with("PROJ", "repo", 7)
 
 
+def test_get_pr_diff_for_file_tries_next_variant_after_empty_single_file_diff():
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    with patch.object(
+        BitbucketServerProvider,
+        "_get_unified_diff",
+        side_effect=["", "@@ -1,1 +1,1 @@\n-old\n+new\n"],
+    ) as mock_get_unified_diff:
+        diff_text = p.get_pr_diff_for_file("PROJ", "repo", 7, "src/Foo.java")
+
+    assert "@@ -1,1 +1,1 @@" in diff_text
+    assert mock_get_unified_diff.call_count == 2
+
+
 # ---------------------------------------------------------------------------
 # _bitbucket_json_diff_to_unified unit tests
 # ---------------------------------------------------------------------------

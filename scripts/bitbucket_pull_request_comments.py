@@ -30,6 +30,10 @@ from bitbucket_pull_request_api import (
     load_script_credentials,
 )
 
+PROJECT_KEY_HELP = "Bitbucket project key, for example PRJ"
+REPO_SLUG_HELP = "Bitbucket repository slug"
+PULL_REQUEST_ID_HELP = "Pull request id"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -38,14 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     list_parser = subparsers.add_parser("list", help="List comments for a pull request")
-    list_parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    list_parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    list_parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    list_parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    list_parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    list_parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
 
     delete_parser = subparsers.add_parser("delete", help="Delete one pull request comment by id")
-    delete_parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    delete_parser.add_argument("repo_slug", help="Bitbucket repository slug")
-    delete_parser.add_argument("pull_request_id", type=int, help="Pull request id")
+    delete_parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    delete_parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
+    delete_parser.add_argument("pull_request_id", type=int, help=PULL_REQUEST_ID_HELP)
     delete_parser.add_argument("comment_id", type=int, help="Pull request comment id")
     return parser
 
@@ -82,7 +86,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        raise SystemExit(main())
+        main()
     except RuntimeError as exc:
         print(exc, file=sys.stderr)
         raise SystemExit(1)

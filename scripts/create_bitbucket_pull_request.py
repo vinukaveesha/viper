@@ -30,13 +30,16 @@ from bitbucket_pull_request_api import (
     load_script_credentials,
 )
 
+PROJECT_KEY_HELP = "Bitbucket project key, for example PRJ"
+REPO_SLUG_HELP = "Bitbucket repository slug"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Create a Bitbucket Server/DC pull request on http://localhost:7990."
     )
-    parser.add_argument("project_key", help="Bitbucket project key, for example PRJ")
-    parser.add_argument("repo_slug", help="Bitbucket repository slug")
+    parser.add_argument("project_key", help=PROJECT_KEY_HELP)
+    parser.add_argument("repo_slug", help=REPO_SLUG_HELP)
     parser.add_argument("source_branch", help="Source branch name")
     parser.add_argument("destination_branch", help="Destination branch name")
     return parser
