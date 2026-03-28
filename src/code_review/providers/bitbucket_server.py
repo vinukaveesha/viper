@@ -977,6 +977,11 @@ class BitbucketServerProvider(ProviderInterface):
         with action COMMENTED are the supported way to list comments.
         """
         existing, _ = self._bbs_collect_activity_review_comments(owner, repo, pr_number)
+        endpoint_comments = self._bbs_collect_comments_endpoint_review_comments(
+            owner, repo, pr_number
+        )
+        if endpoint_comments:
+            return self._bbs_merge_review_comment_lists(existing, endpoint_comments)
         return existing
 
     def _bbs_collect_activity_review_comments(
@@ -1009,6 +1014,92 @@ class BitbucketServerProvider(ProviderInterface):
         ]
         merged_recursive.sort(key=self._bbs_comment_order_key)
         return result, merged_recursive
+
+    def _bbs_collect_comments_endpoint_review_comments(
+        self, owner: str, repo: str, pr_number: int
+    ) -> list[ReviewComment] | None:
+        """Best-effort comment listing from ``/comments`` when that endpoint is available."""
+        path = self._path(owner, repo, "pull-requests", str(pr_number), "comments")
+        merged_by_id: dict[str, dict] = {}
+        start = 0
+        max_pages = 500
+        for _ in range(max_pages):
+            try:
+                data = self._get(path, params={"start": start, "limit": 100})
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code if e.response is not None else 0
+                if status == 404:
+                    logger.debug(
+                        "Bitbucket Server comments endpoint unavailable owner=%s repo=%s pr=%s",
+                        owner,
+                        repo,
+                        pr_number,
+                    )
+                    return None
+                logger.warning(
+                    "Bitbucket Server comments fetch failed owner=%s repo=%s pr=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
+                )
+                return None
+            except Exception as e:
+                logger.warning(
+                    "Bitbucket Server comments fetch failed owner=%s repo=%s pr=%s: %s",
+                    owner,
+                    repo,
+                    pr_number,
+                    e,
+                )
+                return None
+            if not isinstance(data, dict):
+                return None
+            for raw_comment in data.get("values") or []:
+                self._bbs_merge_nested_comment_dicts_into(merged_by_id, raw_comment)
+            next_start = self._bbs_activities_next_start(data, start)
+            if next_start is None or next_start == start:
+                break
+            start = next_start
+        comments = [
+            comment
+            for raw_comment in merged_by_id.values()
+            if (comment := self._bbs_review_comment_from_comment_dict(raw_comment)) is not None
+        ]
+        comments.sort(key=self._bbs_comment_order_key)
+        return comments
+
+    @staticmethod
+    def _bbs_merge_review_comment_lists(
+        base: list[ReviewComment],
+        overlay: list[ReviewComment],
+    ) -> list[ReviewComment]:
+        """Merge duplicate comment ids across Bitbucket views, preserving the richer state."""
+        merged_by_id: dict[str, ReviewComment] = {}
+        passthrough: list[ReviewComment] = []
+        for comment in [*base, *overlay]:
+            cid = (comment.id or "").strip()
+            if not cid:
+                passthrough.append(comment)
+                continue
+            existing = merged_by_id.get(cid)
+            if existing is None:
+                merged_by_id[cid] = comment
+                continue
+            merged_by_id[cid] = ReviewComment(
+                id=cid,
+                path=comment.path or existing.path,
+                line=int(comment.line or existing.line or 0),
+                body=comment.body or existing.body,
+                resolved=bool(existing.resolved or comment.resolved),
+                outdated=bool(existing.outdated or comment.outdated),
+                parent_id=comment.parent_id or existing.parent_id,
+                author_login=comment.author_login or existing.author_login,
+                created_at=comment.created_at or existing.created_at,
+            )
+        merged = [*passthrough, *merged_by_id.values()]
+        merged.sort(key=BitbucketServerProvider._bbs_comment_order_key)
+        return merged
 
     @staticmethod
     def _bbs_append_open_task_for_quality_gate(t: Any, items: list[UnresolvedReviewItem]) -> None:
@@ -1137,6 +1228,15 @@ class BitbucketServerProvider(ProviderInterface):
             )
             existing = []
             merged_recursive_comments = []
+        endpoint_comments = self._bbs_collect_comments_endpoint_review_comments(
+            owner, repo, pr_number
+        )
+        if endpoint_comments:
+            existing = self._bbs_merge_review_comment_lists(existing, endpoint_comments)
+            merged_recursive_comments = self._bbs_merge_review_comment_lists(
+                merged_recursive_comments,
+                endpoint_comments,
+            )
         dismissed_stable_ids = self._bbs_persisted_dismissed_root_ids(
             merged_recursive_comments,
             self.get_bot_attribution_identity(owner, repo, pr_number),

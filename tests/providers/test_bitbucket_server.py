@@ -694,6 +694,59 @@ def test_get_unresolved_review_items_skips_applied_suggestion_comments(mock_clie
 
 
 @patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_uses_comments_endpoint_state_when_activities_is_stale(
+    mock_client,
+):
+    """A richer /comments payload should clear the gate even if /activities is stale."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/activities" in u:
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 482,
+                            "text": "[High] already applied",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    }
+                ],
+            }
+        elif u.endswith("/comments"):
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "id": 482,
+                        "text": "[High] already applied",
+                        "state": "OPEN",
+                        "properties": {"suggestionState": "APPLIED"},
+                        "anchor": {"path": "f.java", "line": 2},
+                    }
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+
+    assert items == []
+
+
+@patch("code_review.providers.bitbucket_server.httpx.Client")
 def test_get_existing_review_comments_marks_orphaned_comments_outdated(mock_client):
     mock_resp = MagicMock()
     mock_resp.headers = {"content-type": "application/json"}

@@ -1243,6 +1243,17 @@ class QualityGateReviewOutcome:
     submission_reason: str
 
 
+def _log_quality_gate_review_outcome(context: str, gate_outcome: QualityGateReviewOutcome) -> None:
+    """Emit a stable log line for the computed quality gate and derived PR decision."""
+    logger.info(
+        "%s quality gate: open_high=%d open_medium=%d => decision=%s",
+        context,
+        gate_outcome.high_count,
+        gate_outcome.medium_count,
+        gate_outcome.decision,
+    )
+
+
 def _compute_quality_gate_review_outcome(
     provider,
     owner: str,
@@ -2434,6 +2445,7 @@ class ReviewOrchestrator:
         gate_outcome = _compute_quality_gate_review_outcome(
             provider, owner, repo, pr_number, to_post, cfg
         )
+        _log_quality_gate_review_outcome("Full-review", gate_outcome)
         count = 0
         if to_post:
             if not head_sha:
@@ -3332,12 +3344,7 @@ class ReviewOrchestrator:
             cfg,
             excluded_gate_stable_ids=excluded_gate if excluded_gate else None,
         )
-        logger.info(
-            "Review-decision-only quality gate: open_high=%d open_medium=%d => decision=%s",
-            gate_outcome.high_count,
-            gate_outcome.medium_count,
-            gate_outcome.decision,
-        )
+        _log_quality_gate_review_outcome("Review-decision-only", gate_outcome)
         _maybe_submit_review_decision(
             provider,
             owner,
@@ -3462,6 +3469,7 @@ class ReviewOrchestrator:
                     [],
                     cfg,
                 )
+                _log_quality_gate_review_outcome("Empty-scope refresh", gate_outcome)
                 _maybe_submit_review_decision(
                     provider,
                     owner,

@@ -745,6 +745,87 @@ def test_run_review_empty_incremental_scope_approves_when_bitbucket_suggestion_a
     assert provider.submit_review_decision.call_args.args[3] == "APPROVE"
 
 
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+@patch("code_review.runner.get_context_window")
+@patch("code_review.runner.get_provider")
+@patch("code_review.runner.get_scm_config")
+def test_run_review_empty_incremental_scope_uses_comments_endpoint_state_for_bitbucket_gate(
+    mock_get_scm_config,
+    mock_get_provider,
+    mock_get_context_window,
+    mock_client,
+):
+    """Empty-scope Bitbucket refresh should honor richer /comments state over stale activities."""
+    from code_review.runner import run_review
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        mock_r.raise_for_status = MagicMock()
+        u = str(url)
+        if "/activities" in u:
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 482,
+                            "text": "[High] already applied",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    }
+                ],
+            }
+        elif u.endswith("/comments"):
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "id": 482,
+                        "text": "[High] already applied",
+                        "state": "OPEN",
+                        "properties": {"suggestionState": "APPLIED"},
+                        "anchor": {"path": "f.java", "line": 2},
+                    }
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    provider = BitbucketServerProvider(
+        "https://bb:7990/rest/api/1.0",
+        "tok",
+        participant_user_slug="viper",
+    )
+    provider.get_incremental_pr_files = MagicMock(return_value=[])
+    provider.get_incremental_pr_diff = MagicMock(return_value="")
+    provider.submit_review_decision = MagicMock()
+    _wire_standard_runner_mocks(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_context_window,
+        scm=_review_decision_scm_config(
+            provider="bitbucket_server",
+            url="https://bb:7990/rest/api/1.0",
+            base_sha="base123",
+        ),
+        provider=provider,
+    )
+
+    posted = run_review("o", "r", 1, head_sha="head456", dry_run=False)
+
+    assert posted == []
+    provider.submit_review_decision.assert_called_once()
+    assert provider.submit_review_decision.call_args.args[3] == "APPROVE"
+
+
 @patch("code_review.runner.get_context_window")
 @patch("code_review.runner.get_provider")
 @patch("code_review.runner.get_scm_config")
