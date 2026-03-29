@@ -169,7 +169,6 @@ jobs:
             -e LLM_API_KEY \
             -e CODE_REVIEW_LOG_LEVEL \
             "$IMAGE" \
-            review \
             --owner "$SCM_OWNER" \
             --repo "$SCM_REPO" \
             --pr "$SCM_PR_NUM" \
@@ -181,7 +180,7 @@ Notes:
 - no `actions/checkout` step is required
 - no Python setup is required
 - the container already has `code-review` as its entrypoint
-- the explicit `review` subcommand is still required
+- pass the CLI flags directly; do not add an extra `review` argument
 
 ---
 
@@ -274,7 +273,6 @@ jobs:
             -e LLM_API_KEY \
             -e CODE_REVIEW_LOG_LEVEL \
             "$IMAGE" \
-            review \
             --owner "$SCM_OWNER" \
             --repo "$SCM_REPO" \
             --pr "$SCM_PR_NUM" \
@@ -314,7 +312,6 @@ Use this first if you want to validate configuration without posting comments:
       -e LLM_API_KEY \
       -e CODE_REVIEW_LOG_LEVEL \
       "$IMAGE" \
-      review \
       --owner "$SCM_OWNER" \
       --repo "$SCM_REPO" \
       --pr "$SCM_PR_NUM" \
@@ -342,7 +339,6 @@ Use this only if you want the review to become merge-blocking:
       -e LLM_API_KEY \
       -e CODE_REVIEW_LOG_LEVEL \
       "$IMAGE" \
-      review \
       --owner "$SCM_OWNER" \
       --repo "$SCM_REPO" \
       --pr "$SCM_PR_NUM" \
@@ -419,7 +415,7 @@ Example container invocation (adapt `SCM_PR_NUM` / `SCM_HEAD_SHA` to your event 
       -e SCM_PROVIDER -e SCM_URL -e SCM_TOKEN \
       -e SCM_OWNER -e SCM_REPO -e SCM_PR_NUM \
       -e SCM_REVIEW_DECISION_ENABLED=true \
-      "$IMAGE" review \
+      "$IMAGE" \
       --owner "$SCM_OWNER" --repo "$SCM_REPO" --pr "$SCM_PR_NUM" \
       --review-decision-only
 ```
@@ -494,7 +490,7 @@ Default values are:
 
 ## 10. How the review flow works internally
 
-When the container runs `code-review review`, the agent:
+When the container runs `code-review`, the agent:
 
 1. validates `owner`, `repo`, `pr`, and `head_sha`
 2. loads SCM and LLM configuration from the environment

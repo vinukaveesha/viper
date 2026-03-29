@@ -1,6 +1,6 @@
 # Code review agent image: run as one-shot job (e.g. from Jenkins).
 # Build: docker build -t code-review-agent -f docker/Dockerfile.agent .
-# Run:  docker run --rm -e SCM_* -e LLM_* code-review-agent review --owner O --repo R --pr N --head-sha SHA
+# Run:  docker run --rm -e SCM_* -e LLM_* code-review-agent --owner O --repo R --pr N --head-sha SHA
 
 FROM python:3.12-slim
 
@@ -31,4 +31,3 @@ USER appuser
 
 # No long-running process; Jenkins (or other CI) invokes: code-review
 ENTRYPOINT ["code-review"]
-CMD ["review"]
