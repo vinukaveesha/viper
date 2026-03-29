@@ -1,11 +1,19 @@
 """Tests for LLM_DISABLE_TOOL_CALLS debug mode in create_review_agent (Phase 1.1)."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from code_review.agent import (
     FINDINGS_ONLY_INSTRUCTION,
     SINGLE_SHOT_INSTRUCTION,
     create_review_agent,
+)
+from code_review.agent.agent import (
+    _TOOL_RESULT_CHAR_LIMIT,
+    _after_tool_callback,
+    _before_model_callback,
+    _before_tool_callback,
 )
 from code_review.schemas.findings import FindingsBatchV1
 
@@ -35,6 +43,8 @@ def test_create_review_agent_tools_enabled_by_default(
     _, kwargs = mock_agent_cls.call_args
     assert kwargs["tools"] == tools
     assert kwargs["output_schema"] is FindingsBatchV1
+    assert kwargs["before_model_callback"] is _before_model_callback
+    assert kwargs["after_tool_callback"] is _after_tool_callback
     # File-by-file mode: must use FINDINGS_ONLY_INSTRUCTION (has tool references)
     assert kwargs["instruction"] == FINDINGS_ONLY_INSTRUCTION
 
@@ -303,3 +313,123 @@ def test_shared_agent_fix_and_examples_appear_in_both_instructions():
     assert _SHARED_AGENT_FIX_AND_EXAMPLES in SINGLE_SHOT_INSTRUCTION, (
         "SINGLE_SHOT_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
     )
+
+
+class _FakeLlmRequest:
+    def __init__(self, tools_dict: dict[str, object]) -> None:
+        self.tools_dict = tools_dict
+        self.added_instructions: list[list[str]] = []
+
+    def append_instructions(self, instructions: list[str]) -> None:
+        self.added_instructions.append(instructions)
+
+
+def test_before_model_callback_adds_tool_specific_guardrails() -> None:
+    llm_request = _FakeLlmRequest(
+        {
+            "get_pr_diff_for_file": object(),
+            "get_file_content": object(),
+            "get_file_lines": object(),
+        }
+    )
+    callback_context = SimpleNamespace(agent_name="code_review_agent")
+
+    asyncio.run(_before_model_callback(callback_context, llm_request))
+
+    assert len(llm_request.added_instructions) == 1
+    rendered = "\n".join(llm_request.added_instructions[0])
+    assert "Only call registered tools" in rendered
+    assert "get_pr_diff_for_file" in rendered
+    assert "get_file_content" in rendered
+    assert "get_file_lines" in rendered
+    assert "required structured schema" in rendered
+
+
+def test_before_model_callback_adds_no_tools_guardrail() -> None:
+    llm_request = _FakeLlmRequest({})
+    callback_context = SimpleNamespace(agent_name="code_review_agent")
+
+    asyncio.run(_before_model_callback(callback_context, llm_request))
+
+    assert len(llm_request.added_instructions) == 1
+    rendered = "\n".join(llm_request.added_instructions[0])
+    assert "No tools are available for this run." in rendered
+    assert "Use only the diff and context already present in the prompt." in rendered
+
+
+def test_before_tool_callback_rejects_blank_path() -> None:
+    tool = SimpleNamespace(name="get_pr_diff_for_file")
+
+    result = asyncio.run(
+        _before_tool_callback(tool, {"path": "   "}, tool_context=SimpleNamespace())
+    )
+
+    assert result == {"error": "get_pr_diff_for_file: path must be a non-empty string."}
+
+
+def test_before_tool_callback_rejects_blank_ref() -> None:
+    tool = SimpleNamespace(name="get_file_content")
+
+    result = asyncio.run(
+        _before_tool_callback(
+            tool,
+            {"path": "README.md", "ref": ""},
+            tool_context=SimpleNamespace(),
+        )
+    )
+
+    assert result == {"error": "get_file_content: ref must be a non-empty string."}
+
+
+def test_before_tool_callback_rejects_invalid_line_range() -> None:
+    tool = SimpleNamespace(name="get_file_lines")
+
+    result = asyncio.run(
+        _before_tool_callback(
+            tool,
+            {
+                "path": "src/app.py",
+                "ref": "abc123",
+                "start_line": 20,
+                "end_line": 10,
+            },
+            tool_context=SimpleNamespace(),
+        )
+    )
+
+    assert result == {
+        "error": "get_file_lines: end_line must be greater than or equal to start_line."
+    }
+
+
+def test_after_tool_callback_normalizes_crlf() -> None:
+    tool = SimpleNamespace(name="get_file_content")
+
+    result = asyncio.run(
+        _after_tool_callback(
+            tool,
+            {"path": "README.md", "ref": "abc123"},
+            tool_context=SimpleNamespace(),
+            tool_response="line1\r\nline2\r\n",
+        )
+    )
+
+    assert result == "line1\nline2\n"
+
+
+def test_after_tool_callback_truncates_oversized_string_results() -> None:
+    tool = SimpleNamespace(name="get_file_content")
+    oversized = "x" * (_TOOL_RESULT_CHAR_LIMIT + 50)
+
+    result = asyncio.run(
+        _after_tool_callback(
+            tool,
+            {"path": "README.md", "ref": "abc123"},
+            tool_context=SimpleNamespace(),
+            tool_response=oversized,
+        )
+    )
+
+    assert result is not None
+    assert result.endswith("\n...[truncated by callback]")
+    assert len(result) > _TOOL_RESULT_CHAR_LIMIT

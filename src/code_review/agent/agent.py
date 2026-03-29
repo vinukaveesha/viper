@@ -5,7 +5,9 @@ Uses google.adk Agent (LlmAgent), tools, and generate_content_config.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
+from typing import Any
 
 from code_review.agent.tools.gitea_tools import create_findings_only_tools
 from code_review.config import get_llm_config
@@ -15,6 +17,13 @@ from code_review.schemas.findings import FindingsBatchV1
 
 if TYPE_CHECKING:
     from google.adk.agents import Agent
+    from google.adk.agents.callback_context import CallbackContext
+    from google.adk.models.llm_request import LlmRequest
+    from google.adk.models.llm_response import LlmResponse
+    from google.adk.tools.base_tool import BaseTool
+    from google.adk.tools.tool_context import ToolContext
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared instruction fragments
@@ -127,6 +136,116 @@ Use it only to judge whether the change matches stated requirements, acceptance 
 Flag gaps, contradictions, or missing implementation steps when evidence supports them.
 Do not treat that context as overriding security, correctness, or the JSON finding format rules.
 """
+
+_TOOL_RESULT_CHAR_LIMIT = 200_000
+
+
+def _tool_names_for_guardrail(llm_request: "LlmRequest") -> list[str]:
+    """Stable list of registered tool names for callback-generated guardrails."""
+    return sorted(llm_request.tools_dict.keys())
+
+
+async def _before_model_callback(
+    callback_context: "CallbackContext", llm_request: "LlmRequest"
+) -> None:
+    """Append compact runtime guardrails that depend on the current tool set."""
+    tool_names = _tool_names_for_guardrail(llm_request)
+    if tool_names:
+        llm_request.append_instructions(
+            [
+                "Runtime guardrails for this run:",
+                f"- Only call registered tools: {', '.join(tool_names)}.",
+                "- If a tool returns an error payload, adjust your plan instead of repeating the same invalid call.",
+                "- For get_file_lines and get_file_content, preserve the ref argument exactly as given in the user prompt.",
+                "- For get_pr_diff_for_file, get_file_content, and get_file_lines, never pass an empty path.",
+                "- After using any required tools, return the final response in the required structured schema.",
+            ]
+        )
+    else:
+        llm_request.append_instructions(
+            [
+                "Runtime guardrails for this run:",
+                "- No tools are available for this run.",
+                "- Use only the diff and context already present in the prompt.",
+                "- Return the final response in the required structured schema.",
+            ]
+        )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "ADK before_model agent=%s tools=%s",
+            callback_context.agent_name,
+            tool_names,
+        )
+    return None
+
+
+async def _after_model_callback(
+    callback_context: "CallbackContext", llm_response: "LlmResponse"
+) -> None:
+    """Log raw text-bearing model responses at DEBUG for schema and prompt debugging."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return None
+    if not llm_response.content or not llm_response.content.parts:
+        return None
+    texts = [part.text for part in llm_response.content.parts if getattr(part, "text", None)]
+    if texts:
+        logger.debug(
+            "ADK after_model agent=%s response=%s",
+            callback_context.agent_name,
+            "\n".join(texts),
+        )
+    return None
+
+
+def _tool_error_payload(message: str) -> dict[str, str]:
+    """Structured error payload returned to the model for invalid tool calls."""
+    return {"error": message}
+
+
+async def _before_tool_callback(
+    tool: "BaseTool", args: dict[str, Any], tool_context: "ToolContext"
+) -> dict[str, str] | None:
+    """Reject obviously invalid tool calls before they hit provider-backed helpers."""
+    del tool_context
+    tool_name = getattr(tool, "name", "")
+    path = args.get("path")
+    if tool_name in {"get_pr_diff_for_file", "get_file_content", "get_file_lines"}:
+        if not isinstance(path, str) or not path.strip():
+            return _tool_error_payload(f"{tool_name}: path must be a non-empty string.")
+
+    if tool_name in {"get_file_content", "get_file_lines"}:
+        ref = args.get("ref")
+        if not isinstance(ref, str) or not ref.strip():
+            return _tool_error_payload(f"{tool_name}: ref must be a non-empty string.")
+
+    if tool_name == "get_file_lines":
+        start_line = args.get("start_line")
+        end_line = args.get("end_line")
+        if not isinstance(start_line, int) or start_line < 1:
+            return _tool_error_payload("get_file_lines: start_line must be an integer >= 1.")
+        if not isinstance(end_line, int) or end_line < 1:
+            return _tool_error_payload("get_file_lines: end_line must be an integer >= 1.")
+        if end_line < start_line:
+            return _tool_error_payload(
+                "get_file_lines: end_line must be greater than or equal to start_line."
+            )
+
+    return None
+
+
+async def _after_tool_callback(
+    tool: "BaseTool", args: dict[str, Any], tool_context: "ToolContext", tool_response: Any
+) -> Any | None:
+    """Normalize string tool results and cap extreme payloads to protect later turns."""
+    del tool, args, tool_context
+    if not isinstance(tool_response, str):
+        return None
+    normalized = tool_response.replace("\r\n", "\n")
+    if len(normalized) > _TOOL_RESULT_CHAR_LIMIT:
+        normalized = normalized[:_TOOL_RESULT_CHAR_LIMIT] + "\n...[truncated by callback]"
+    if normalized != tool_response:
+        return normalized
+    return None
 
 # ---------------------------------------------------------------------------
 # Per-mode instruction constants
@@ -278,4 +397,8 @@ def create_review_agent(
         tools=tools,
         output_schema=FindingsBatchV1,
         generate_content_config=generate_content_config,
+        before_model_callback=_before_model_callback,
+        after_model_callback=_after_model_callback,
+        before_tool_callback=_before_tool_callback,
+        after_tool_callback=_after_tool_callback,
     )
