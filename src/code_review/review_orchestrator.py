@@ -172,12 +172,17 @@ class ReviewOrchestrator:
         If we already ran for this PR/range/config (run id in comment marker),
         emit observability and return []. Otherwise return None (caller continues).
         """
-        head_sha = self.head_sha
-        if not head_sha:
+        if not self.head_sha:
             return None
-        incremental_base_sha = incremental_base_sha or self._incremental_base_sha(cfg, head_sha)
+        incremental_base_sha = incremental_base_sha or self._incremental_base_sha(cfg, self.head_sha)
         run_id = runner_mod._build_idempotency_key(
-            cfg, llm_cfg, self.owner, self.repo, self.pr_number, head_sha, incremental_base_sha
+            cfg,
+            llm_cfg,
+            self.owner,
+            self.repo,
+            self.pr_number,
+            self.head_sha,
+            incremental_base_sha,
         )
         if not runner_mod._idempotency_key_seen_in_comments(existing_dicts, run_id):
             return None
@@ -363,13 +368,12 @@ class ReviewOrchestrator:
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
         """Review one file at a time using already-scoped embedded diffs (tools disabled)."""
-        head_sha = self.head_sha
 
         def _build_embedded_message(file_path: str) -> str | None:
             file_diff = diff_by_path.get(file_path, "")
             if not file_diff:
                 return None
-            head_sha_clause = f" head_sha={head_sha}." if head_sha else ""
+            head_sha_clause = f" head_sha={self.head_sha}." if self.head_sha else ""
             msg = (
                 f"Review exactly one file from this PR. owner={self.owner}, repo={self.repo}, pr_number={self.pr_number}."
                 + head_sha_clause
@@ -395,13 +399,11 @@ class ReviewOrchestrator:
         *,
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
-        head_sha = self.head_sha
-
         def _build_file_by_file_message(file_path: str) -> str:
-            head_sha_clause = f" head_sha={head_sha}." if head_sha else ""
+            head_sha_clause = f" head_sha={self.head_sha}." if self.head_sha else ""
             ref_guidance = (
-                f' When calling get_file_lines for surrounding context, use ref="{head_sha}" as the ref parameter.'
-                if head_sha
+                f' When calling get_file_lines for surrounding context, use ref="{self.head_sha}" as the ref parameter.'
+                if self.head_sha
                 else ""
             )
             annotation_guidance = " The diff returned by get_pr_diff_for_file has <L{n}> line-number annotations on every visible line (added '+' and context ' '). Use the <L{n}> value as the 'line' field in each finding. Do NOT compute line numbers from hunk headers."
@@ -494,9 +496,8 @@ class ReviewOrchestrator:
         *,
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
-        head_sha = self.head_sha
         msg = f"Review this PR: owner={self.owner}, repo={self.repo}, pr_number={self.pr_number}." + (
-            f" head_sha={head_sha}." if head_sha else ""
+            f" head_sha={self.head_sha}." if self.head_sha else ""
         )
         if full_diff:
             annotated = runner_mod.annotate_diff_with_line_numbers(full_diff)
@@ -568,12 +569,17 @@ class ReviewOrchestrator:
         full_diff: used to set line_type (ADDED vs CONTEXT) so Bitbucket
         Server anchors comments correctly.
         """
-        head_sha = self.head_sha
-        dry_run = self.dry_run
         runner_mod._resolve_stale_comments_if_supported(
-            provider, self.owner, self.repo, self.pr_number, existing, to_post, head_sha, dry_run
+            provider,
+            self.owner,
+            self.repo,
+            self.pr_number,
+            existing,
+            to_post,
+            self.head_sha,
+            self.dry_run,
         )
-        if dry_run:
+        if self.dry_run:
             return 0
         gate_outcome = runner_mod._compute_quality_gate_review_outcome(
             provider, self.owner, self.repo, self.pr_number, to_post, cfg
@@ -581,7 +587,7 @@ class ReviewOrchestrator:
         runner_mod._log_quality_gate_review_outcome("Full-review", gate_outcome)
         count = 0
         if to_post:
-            if not head_sha:
+            if not self.head_sha:
                 raise ValueError(
                     "head_sha is required when posting comments (dry_run=False). Provide head_sha or use --dry-run to skip posting."
                 )
@@ -590,14 +596,14 @@ class ReviewOrchestrator:
                 self.owner,
                 self.repo,
                 self.pr_number,
-                head_sha,
+                self.head_sha,
                 incremental_base_sha,
                 to_post,
                 cfg,
                 llm_cfg,
                 full_diff=full_diff,
             )
-        if head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
+        if self.head_sha and provider.capabilities().omit_fingerprint_marker_in_body:
             planned = len(to_post)
             include_marker = planned == 0 or count == planned
             runner_mod._post_omit_marker_pr_summary_comment(
@@ -607,7 +613,7 @@ class ReviewOrchestrator:
                 self.pr_number,
                 cfg,
                 llm_cfg,
-                head_sha,
+                self.head_sha,
                 incremental_base_sha,
                 findings_planned=planned,
                 successful_inline_posts=count,
@@ -619,8 +625,8 @@ class ReviewOrchestrator:
             self.owner,
             self.repo,
             self.pr_number,
-            head_sha,
-            dry_run,
+            self.head_sha,
+            self.dry_run,
             cfg,
             gate_outcome=gate_outcome,
         )
@@ -1279,7 +1285,6 @@ class ReviewOrchestrator:
         self, trace_id: str, start_time: float, run_handle, cfg, provider
     ) -> list[runner_mod.FindingV1]:
         """Recompute quality-gate counts from SCM state and submit review decision only."""
-        dry_run = self.dry_run
         pr_url = self._build_pr_url(cfg)
         runner_mod.logger.info(
             "Review-decision-only run for %s/%s PR %s (provider=%s) URL: %s",
@@ -1309,7 +1314,7 @@ class ReviewOrchestrator:
         head_sha = runner_mod._resolve_head_sha_for_review_decision_submission(
             provider, self.owner, self.repo, self.pr_number, head_hint
         )
-        if not head_sha and (not dry_run):
+        if not head_sha and (not self.dry_run):
             runner_mod.logger.warning(
                 "Review-decision-only: head_sha missing after provider lookup; submit_review_decision may omit commit id for some SCMs."
             )
@@ -1332,7 +1337,7 @@ class ReviewOrchestrator:
             self.repo,
             self.pr_number,
             head_sha,
-            dry_run,
+            self.dry_run,
             cfg,
             gate_outcome=gate_outcome,
         )
@@ -1376,7 +1381,6 @@ class ReviewOrchestrator:
         """Handle the empty-review-scope early return, including review-decision refresh."""
         if paths:
             return None
-        dry_run = self.dry_run
         runner_mod.logger.info("No files to review")
         if bool(getattr(cfg, "review_decision_enabled", False)):
             runner_mod.logger.info(
@@ -1395,7 +1399,7 @@ class ReviewOrchestrator:
                 self.repo,
                 self.pr_number,
                 submission_head_sha,
-                dry_run,
+                self.dry_run,
                 cfg,
                 gate_outcome=gate_outcome,
             )
@@ -1425,8 +1429,6 @@ class ReviewOrchestrator:
         app_cfg,
     ) -> list[runner_mod.FindingV1]:
         """Execute the full non-decision-only review path."""
-        head_sha = self.head_sha
-        dry_run = self.dry_run
         print_findings = self.print_findings
         pr_url = self._build_pr_url(cfg)
         runner_mod.logger.info(
@@ -1449,7 +1451,7 @@ class ReviewOrchestrator:
             resolved_body_set,
             resolved_fp_set,
         ) = self._load_existing_comments_and_markers(provider)
-        incremental_base_sha = self._incremental_base_sha(cfg, head_sha)
+        incremental_base_sha = self._incremental_base_sha(cfg, self.head_sha)
         idempotency_result = self._compute_idempotency_and_maybe_short_circuit(
             cfg,
             llm_cfg,
@@ -1469,11 +1471,11 @@ class ReviewOrchestrator:
         pr_info_for_metadata = provider.get_pr_info(self.owner, self.repo, self.pr_number)
         _, paths, full_diff, incremental_base_sha = self._fetch_review_files_and_diffs(provider, cfg)
         paths = self._build_ignore_set_and_filter_files(paths)
-        self._log_review_scope_fetch(incremental_base_sha, head_sha, paths)
+        self._log_review_scope_fetch(incremental_base_sha, self.head_sha, paths)
         empty_scope_result = self._maybe_finish_empty_scope_review(
             provider,
             cfg,
-            head_sha,
+            self.head_sha,
             trace_id,
             start_time,
             run_handle,
@@ -1482,7 +1484,7 @@ class ReviewOrchestrator:
         )
         if empty_scope_result is not None:
             return empty_scope_result
-        if not dry_run:
+        if not self.dry_run:
             runner_mod._maybe_post_started_review_comment(
                 provider, self.owner, self.repo, self.pr_number, pr_info_for_metadata, paths
             )
@@ -1534,7 +1536,7 @@ class ReviewOrchestrator:
             len(all_findings),
             len(to_post),
         )
-        self._print_findings_summary(print_findings, to_post)
+        self._print_findings_summary(self.print_findings, to_post)
         successful_post_count = self._post_findings_and_summary(
             provider,
             incremental_base_sha,
@@ -1544,7 +1546,7 @@ class ReviewOrchestrator:
             existing,
             full_diff=full_diff,
         )
-        self._log_post_counts(dry_run, len(to_post), successful_post_count)
+        self._log_post_counts(self.dry_run, len(to_post), successful_post_count)
         return self._record_observability_and_build_result(
             trace_id,
             start_time,
