@@ -57,15 +57,17 @@ def test_manually_resolved_comment_does_not_block_changed_code(
     mock_fingerprint_for_finding.return_value = "new-fp"
 
     findings_json = """
-    [
-        {
-            "path": "foo.py",
-            "line": 1,
-            "severity": "medium",
-            "code": "use-const",
-            "message": "Use a constant."
-        }
-    ]
+    {
+        "findings": [
+            {
+                "path": "foo.py",
+                "line": 1,
+                "severity": "medium",
+                "code": "use-const",
+                "message": "Use a constant."
+            }
+        ]
+    }
     """
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
