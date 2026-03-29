@@ -1240,6 +1240,14 @@ class QualityGateReviewOutcome:
     submission_reason: str
 
 
+@dataclass(frozen=True)
+class PartialResponseCollectionError(Exception):
+    """Raised when a workflow emits some final responses before failing."""
+
+    responses: list[tuple[str, str]]
+    cause: Exception
+
+
 def _log_quality_gate_review_outcome(context: str, gate_outcome: QualityGateReviewOutcome) -> None:
     """Emit a stable log line for the computed quality gate and derived PR decision."""
     logger.info(
@@ -1565,15 +1573,18 @@ async def _collect_final_response_texts_async(
         session_id=session_id,
     )
     responses: list[tuple[str, str]] = []
-    async for event in runner.run_async(
-        user_id=USER_ID,
-        session_id=session_id,
-        new_message=content,
-    ):
-        if event.is_final_response() and event.content and event.content.parts:
-            texts = [part.text for part in event.content.parts if getattr(part, "text", None)]
-            if texts:
-                responses.append((getattr(event, "author", ""), "\n".join(texts)))
+    try:
+        async for event in runner.run_async(
+            user_id=USER_ID,
+            session_id=session_id,
+            new_message=content,
+        ):
+            if event.is_final_response() and event.content and event.content.parts:
+                texts = [part.text for part in event.content.parts if getattr(part, "text", None)]
+                if texts:
+                    responses.append((getattr(event, "author", ""), "\n".join(texts)))
+    except Exception as exc:
+        raise PartialResponseCollectionError(responses=responses, cause=exc) from exc
     return responses
 
 

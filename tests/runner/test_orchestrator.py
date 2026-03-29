@@ -284,6 +284,8 @@ def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
     runner = SimpleNamespace(_uses_sequential_batch_review=True)
 
     findings = orchestrator._run_agent_and_collect_findings(
+        MagicMock(),
+        "review standards",
         runner,
         MagicMock(),
         "session-1",

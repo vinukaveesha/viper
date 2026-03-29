@@ -125,6 +125,15 @@ def _exercise_batch_mode_failure(
     return results
 
 
+def _final_batch_event(author: str, findings_json: str) -> MagicMock:
+    event = MagicMock()
+    event.is_final_response.return_value = True
+    event.author = author
+    event.content = MagicMock()
+    event.content.parts = [MagicMock(text=findings_json)]
+    return event
+
+
 @patch("code_review.orchestration_deps.get_context_window")
 @patch("code_review.orchestration_deps.get_llm_config")
 @patch("code_review.orchestration_deps.get_provider")
@@ -225,20 +234,34 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
 def test_batch_mode_rate_limit_error_is_fatal(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """Batch mode currently treats a top-level RateLimitError as fatal for the whole run."""
+    """Rate-limited batches are skipped while earlier successful batch responses are preserved."""
+
+    calls = {"count": 0}
 
     def run_async_side_effect(*, new_message, **kwargs):
         del new_message, kwargs
-        raise RateLimitError("HTTP 429 Too Many Requests")
+        calls["count"] += 1
 
-    with pytest.raises(RateLimitError, match="HTTP 429 Too Many Requests"):
-        _exercise_batch_mode_failure(
-            mock_get_scm_config,
-            mock_get_provider,
-            mock_get_llm_config,
-            mock_get_context_window,
-            run_async_side_effect,
-        )
+        async def _agen():
+            if calls["count"] == 1:
+                yield _final_batch_event(
+                    "batch_review_0",
+                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x","message":"Fix a."}]}',
+                )
+                raise RateLimitError("HTTP 429 Too Many Requests")
+            raise RateLimitError("HTTP 429 Too Many Requests")
+
+        return _agen()
+
+    results = _exercise_batch_mode_failure(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_llm_config,
+        mock_get_context_window,
+        run_async_side_effect,
+    )
+
+    assert [(finding.path, finding.message) for finding in results] == [("a.py", "Fix a.")]
 
 
 @patch("code_review.orchestration_deps.get_context_window")
@@ -248,7 +271,7 @@ def test_batch_mode_rate_limit_error_is_fatal(
 def test_batch_mode_propagates_rate_limit_error_for_whole_run(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
-    """Batch mode surfaces a top-level RateLimitError for the whole run."""
+    """A workflow-level 429 falls back to isolated batches and skips only the rate-limited ones."""
     from code_review.runner import run_review
 
     mock_get_scm_config.return_value = MagicMock(
@@ -289,14 +312,31 @@ def test_batch_mode_propagates_rate_limit_error_for_whole_run(
 
     mock_runner_instance = MagicMock()
 
+    calls = {"count": 0}
+
     def run_async_side_effect(*, new_message, **kwargs):
-        raise RateLimitError("HTTP 429 Too Many Requests")
+        del new_message, kwargs
+        calls["count"] += 1
+
+        async def _agen():
+            if calls["count"] == 1:
+                raise RateLimitError("HTTP 429 Too Many Requests")
+            if calls["count"] == 2:
+                yield _final_batch_event(
+                    "batch_review_0",
+                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x","message":"Fix a."}]}',
+                )
+                return
+            raise RateLimitError("HTTP 429 Too Many Requests")
+
+        return _agen()
 
     mock_runner_instance.run_async = run_async_side_effect
 
     with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
-        with pytest.raises(RateLimitError, match="HTTP 429 Too Many Requests"):
-            run_review("o", "r", 1, head_sha="abc123", dry_run=True)
+        findings = run_review("o", "r", 1, head_sha="abc123", dry_run=True)
+
+    assert [(finding.path, finding.message) for finding in findings] == [("a.py", "Fix a.")]
 
 
 @patch("code_review.orchestration_deps.get_context_window")

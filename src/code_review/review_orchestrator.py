@@ -301,10 +301,14 @@ class ReviewOrchestrator:
 
     def _run_agent_and_collect_findings(
         self,
+        provider,
+        review_standards: str,
         runner,
         session_service,
         session_id: str,
         batches: list[ReviewBatch],
+        *,
+        context_brief_attached: bool = False,
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
         """
@@ -314,23 +318,57 @@ class ReviewOrchestrator:
         if not batches:
             return []
         return self._run_sequential_batch_review_mode(
+            provider,
+            review_standards,
             runner,
             session_service,
             session_id,
+            batches=batches,
             batch_count=len(batches),
+            context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
 
     def _run_sequential_batch_review_mode(
         self,
+        provider,
+        review_standards: str,
         runner,
         session_service,
         session_id: str,
         *,
+        batches: list[ReviewBatch],
         batch_count: int,
+        context_brief_attached: bool = False,
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
-        """Run the SequentialAgent batch workflow and parse one structured response per sub-agent."""
+        """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
+        content = self._build_batch_review_content(batch_count=batch_count, prompt_suffix=prompt_suffix)
+        try:
+            responses = runner_mod._run_agent_and_collect_responses(
+                runner, session_service, session_id, content
+            )
+        except runner_mod.PartialResponseCollectionError as exc:
+            if isinstance(exc.cause, runner_mod.RateLimitError):
+                return self._recover_rate_limited_batches(
+                    provider,
+                    review_standards,
+                    batches,
+                    completed_responses=exc.responses,
+                    context_brief_attached=context_brief_attached,
+                    prompt_suffix=prompt_suffix,
+                    error=exc.cause,
+                )
+            raise exc.cause
+        return self._findings_from_batch_responses(responses)
+
+    def _build_batch_review_content(
+        self,
+        *,
+        batch_count: int,
+        prompt_suffix: str = "",
+    ):
+        """Build the user message used to execute a prepared batch-review workflow."""
         msg = (
             "Review the prepared PR batches sequentially. "
             f"owner={self.owner}, repo={self.repo}, pr_number={self.pr_number}."
@@ -342,16 +380,81 @@ class ReviewOrchestrator:
         if runner_mod.logger.isEnabledFor(runner_mod.logging.DEBUG):
             runner_mod.logger.debug(
                 "LLM request (batch SequentialAgent) session=%s prompt=%s",
-                session_id,
+                "<dynamic>",
                 msg,
             )
-        content = runner_mod.types.Content(role="user", parts=[runner_mod.types.Part(text=msg)])
-        responses = runner_mod._run_agent_and_collect_responses(
-            runner, session_service, session_id, content
-        )
+        return runner_mod.types.Content(role="user", parts=[runner_mod.types.Part(text=msg)])
+
+    @staticmethod
+    def _findings_from_batch_responses(
+        responses: list[tuple[str, str]],
+    ) -> list[runner_mod.FindingV1]:
+        """Parse structured findings from a list of batch response texts."""
         all_findings: list[runner_mod.FindingV1] = []
         for _author, response_text in responses:
             all_findings.extend(runner_mod._findings_from_response(response_text))
+        return all_findings
+
+    @staticmethod
+    def _batch_index_from_author(author: str) -> int | None:
+        """Extract the original batch index from a workflow response author name."""
+        prefix = "batch_review_"
+        if not author.startswith(prefix):
+            return None
+        suffix = author[len(prefix) :]
+        return int(suffix) if suffix.isdigit() else None
+
+    def _recover_rate_limited_batches(
+        self,
+        provider,
+        review_standards: str,
+        batches: list[ReviewBatch],
+        *,
+        completed_responses: list[tuple[str, str]],
+        context_brief_attached: bool,
+        prompt_suffix: str,
+        error: runner_mod.RateLimitError,
+    ) -> list[runner_mod.FindingV1]:
+        """Keep successful batch responses and isolate the remaining batches one-by-one."""
+        completed_batch_indexes = {
+            batch_index
+            for author, _text in completed_responses
+            if (batch_index := self._batch_index_from_author(author)) is not None
+        }
+        runner_mod.logger.warning(
+            "Batch review hit rate limit after %d/%d completed batch response(s); "
+            "continuing remaining batches individually: %s",
+            len(completed_batch_indexes),
+            len(batches),
+            error,
+        )
+        all_findings = self._findings_from_batch_responses(completed_responses)
+        for batch_index, batch in enumerate(batches):
+            if batch_index in completed_batch_indexes:
+                continue
+            session_id, session_service, runner = self._create_agent_and_runner(
+                provider,
+                review_standards,
+                [batch],
+                context_brief_attached=context_brief_attached,
+            )
+            content = self._build_batch_review_content(batch_count=1, prompt_suffix=prompt_suffix)
+            try:
+                responses = runner_mod._run_agent_and_collect_responses(
+                    runner, session_service, session_id, content
+                )
+            except runner_mod.PartialResponseCollectionError as exc:
+                if isinstance(exc.cause, runner_mod.RateLimitError):
+                    runner_mod.logger.warning(
+                        "Skipping rate-limited batch %d/%d paths=%s: %s",
+                        batch_index + 1,
+                        len(batches),
+                        ", ".join(batch.paths),
+                        exc.cause,
+                    )
+                    continue
+                raise exc.cause
+            all_findings.extend(self._findings_from_batch_responses(responses))
         return all_findings
 
     @staticmethod
@@ -1393,10 +1496,13 @@ class ReviewOrchestrator:
             context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
         )
         all_findings = self._run_agent_and_collect_findings(
+            provider,
+            review_standards,
             runner,
             session_service,
             session_id,
             batches,
+            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
             prompt_suffix=prompt_suffix,
         )
         all_findings = self._filter_findings_by_diff_scope(all_findings, paths, full_diff)
