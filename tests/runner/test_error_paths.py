@@ -188,7 +188,7 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
 ):
     """When per-comment inline posting fails, the comment is skipped — no PR summary fallback.
 
-    This mirrors the tool-based (file-by-file / multi-shot) behaviour: if a comment cannot
+    This mirrors the current tool-based inline-posting behaviour: if a comment cannot
     be posted inline, a WARNING is logged and the comment is simply dropped.  The runner
     must NOT call post_pr_summary_comment as a fallback for failed inline comments.
     """

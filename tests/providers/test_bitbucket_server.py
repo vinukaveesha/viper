@@ -1248,7 +1248,7 @@ def test_fallback_no_pr_summary_when_inline_fails():
     """_post_comments_one_by_one must NOT call post_pr_summary_comment as a fallback.
 
     When individual inline posting fails, the comment is simply skipped (logged as WARNING).
-    This mirrors the tool-based (file-by-file / multi-shot) behaviour.
+    This mirrors the current tool-based inline-posting behaviour.
     """
     from code_review.runner import _post_comments_one_by_one
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from code_review.batching import ReviewBatch, build_review_batch_budget, build_review_batches
+from code_review.batching import ReviewBatch, build_review_batch_budget
 from code_review import orchestration_deps as runner_mod
+from code_review import review_execution as execution_mod
 
 
 class ReviewOrchestrator:
@@ -279,25 +280,16 @@ class ReviewOrchestrator:
         Build the batch-review SequentialAgent, session service, and ADK Runner.
         Returns (session_id, session_service, runner).
         """
-        from google.adk.runners import Runner
-        from google.adk.sessions import InMemorySessionService
-
-        from code_review.agent.workflows import create_sequential_batch_review_agent
-
-        agent = create_sequential_batch_review_agent(
+        return execution_mod.create_agent_and_runner(
+            self.owner,
+            self.repo,
+            self.pr_number,
+            self.head_sha,
             provider,
             review_standards,
             batches,
-            head_sha=self.head_sha,
             context_brief_attached=context_brief_attached,
         )
-        session_id = (
-            f"{self.owner}/{self.repo}/pr-{self.pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
-        )
-        session_service = InMemorySessionService()
-        runner = Runner(agent=agent, app_name=runner_mod.APP_NAME, session_service=session_service)
-        setattr(runner, "_uses_sequential_batch_review", True)
-        return (session_id, session_service, runner)
 
     def _run_agent_and_collect_findings(
         self,
@@ -315,16 +307,17 @@ class ReviewOrchestrator:
         Run the batch-review agent and parse responses into FindingV1 list.
         Returns all_findings (unfiltered).
         """
-        if not batches:
-            return []
-        return self._run_sequential_batch_review_mode(
+        return execution_mod.run_agent_and_collect_findings(
+            self.owner,
+            self.repo,
+            self.pr_number,
+            self.head_sha,
             provider,
             review_standards,
             runner,
             session_service,
             session_id,
-            batches=batches,
-            batch_count=len(batches),
+            batches,
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
@@ -343,24 +336,21 @@ class ReviewOrchestrator:
         prompt_suffix: str = "",
     ) -> list[runner_mod.FindingV1]:
         """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
-        content = self._build_batch_review_content(batch_count=batch_count, prompt_suffix=prompt_suffix)
-        try:
-            responses = runner_mod._run_agent_and_collect_responses(
-                runner, session_service, session_id, content
-            )
-        except runner_mod.PartialResponseCollectionError as exc:
-            if isinstance(exc.cause, runner_mod.RateLimitError):
-                return self._recover_rate_limited_batches(
-                    provider,
-                    review_standards,
-                    batches,
-                    completed_responses=exc.responses,
-                    context_brief_attached=context_brief_attached,
-                    prompt_suffix=prompt_suffix,
-                    error=exc.cause,
-                )
-            raise exc.cause
-        return self._findings_from_batch_responses(responses)
+        return execution_mod._run_sequential_batch_review_mode(
+            self.owner,
+            self.repo,
+            self.pr_number,
+            self.head_sha,
+            provider,
+            review_standards,
+            runner,
+            session_service,
+            session_id,
+            batches=batches,
+            batch_count=batch_count,
+            context_brief_attached=context_brief_attached,
+            prompt_suffix=prompt_suffix,
+        )
 
     def _build_batch_review_content(
         self,
@@ -369,40 +359,26 @@ class ReviewOrchestrator:
         prompt_suffix: str = "",
     ):
         """Build the user message used to execute a prepared batch-review workflow."""
-        msg = (
-            "Review the prepared PR batches sequentially. "
-            f"owner={self.owner}, repo={self.repo}, pr_number={self.pr_number}."
-            + (f" head_sha={self.head_sha}." if self.head_sha else "")
-            + f" Prepared batch count: {batch_count}."
+        return execution_mod.build_batch_review_content(
+            owner=self.owner,
+            repo=self.repo,
+            pr_number=self.pr_number,
+            head_sha=self.head_sha,
+            batch_count=batch_count,
+            prompt_suffix=prompt_suffix,
         )
-        if prompt_suffix:
-            msg += "\n\n" + prompt_suffix
-        if runner_mod.logger.isEnabledFor(runner_mod.logging.DEBUG):
-            runner_mod.logger.debug(
-                "LLM request (batch SequentialAgent) session=%s prompt=%s",
-                "<dynamic>",
-                msg,
-            )
-        return runner_mod.types.Content(role="user", parts=[runner_mod.types.Part(text=msg)])
 
     @staticmethod
     def _findings_from_batch_responses(
         responses: list[tuple[str, str]],
     ) -> list[runner_mod.FindingV1]:
         """Parse structured findings from a list of batch response texts."""
-        all_findings: list[runner_mod.FindingV1] = []
-        for _author, response_text in responses:
-            all_findings.extend(runner_mod._findings_from_response(response_text))
-        return all_findings
+        return execution_mod.findings_from_batch_responses(responses)
 
     @staticmethod
     def _batch_index_from_author(author: str) -> int | None:
         """Extract the original batch index from a workflow response author name."""
-        prefix = "batch_review_"
-        if not author.startswith(prefix):
-            return None
-        suffix = author[len(prefix) :]
-        return int(suffix) if suffix.isdigit() else None
+        return execution_mod.batch_index_from_author(author)
 
     def _recover_rate_limited_batches(
         self,
@@ -416,75 +392,33 @@ class ReviewOrchestrator:
         error: runner_mod.RateLimitError,
     ) -> list[runner_mod.FindingV1]:
         """Keep successful batch responses and isolate the remaining batches one-by-one."""
-        completed_batch_indexes = {
-            batch_index
-            for author, _text in completed_responses
-            if (batch_index := self._batch_index_from_author(author)) is not None
-        }
-        runner_mod.logger.warning(
-            "Batch review hit rate limit after %d/%d completed batch response(s); "
-            "continuing remaining batches individually: %s",
-            len(completed_batch_indexes),
-            len(batches),
-            error,
+        return execution_mod._recover_rate_limited_batches(
+            self.owner,
+            self.repo,
+            self.pr_number,
+            self.head_sha,
+            provider,
+            review_standards,
+            batches,
+            completed_responses=completed_responses,
+            context_brief_attached=context_brief_attached,
+            prompt_suffix=prompt_suffix,
+            error=error,
         )
-        all_findings = self._findings_from_batch_responses(completed_responses)
-        for batch_index, batch in enumerate(batches):
-            if batch_index in completed_batch_indexes:
-                continue
-            session_id, session_service, runner = self._create_agent_and_runner(
-                provider,
-                review_standards,
-                [batch],
-                context_brief_attached=context_brief_attached,
-            )
-            content = self._build_batch_review_content(batch_count=1, prompt_suffix=prompt_suffix)
-            try:
-                responses = runner_mod._run_agent_and_collect_responses(
-                    runner, session_service, session_id, content
-                )
-            except runner_mod.PartialResponseCollectionError as exc:
-                if isinstance(exc.cause, runner_mod.RateLimitError):
-                    runner_mod.logger.warning(
-                        "Skipping rate-limited batch %d/%d paths=%s: %s",
-                        batch_index + 1,
-                        len(batches),
-                        ", ".join(batch.paths),
-                        exc.cause,
-                    )
-                    continue
-                raise exc.cause
-            all_findings.extend(self._findings_from_batch_responses(responses))
-        return all_findings
 
     @staticmethod
     def _build_review_batches(
         files: list[object], paths: list[str], full_diff: str, diff_budget: int
     ) -> list[ReviewBatch]:
         """Slice the scoped diff by file and pack the resulting segments into ordered batches."""
-        scoped_diff_by_path = {
-            path: runner_mod.unified_diff_for_path(full_diff, path) for path in paths
-        }
-        return build_review_batches(
-            files,
-            scoped_diff_by_path,
-            diff_budget_tokens=max(1, diff_budget),
-        )
+        return execution_mod.build_review_batches_for_scope(files, paths, full_diff, diff_budget)
 
     @staticmethod
     def _log_review_batch_plan(
         batches: list[ReviewBatch], paths: list[str], incremental_base_sha: str
     ) -> None:
         """Emit a concise log line describing the prepared review batches."""
-        segment_count = sum(len(batch.segments) for batch in batches)
-        mode_label = "incremental batch mode" if incremental_base_sha else "batch mode"
-        runner_mod.logger.info(
-            "Running agent on %d file(s) across %d batch(es) and %d segment(s) (%s)",
-            len(paths),
-            len(batches),
-            segment_count,
-            mode_label,
-        )
+        execution_mod.log_review_batch_plan(batches, paths, incremental_base_sha)
 
     def _attach_fingerprints_and_filter_findings(
         self,

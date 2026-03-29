@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from code_review.agent import (
-    FINDINGS_ONLY_INSTRUCTION,
-    SINGLE_SHOT_INSTRUCTION,
+    EMBEDDED_DIFF_REVIEW_INSTRUCTION,
+    TOOL_ENABLED_REVIEW_INSTRUCTION,
     create_review_agent,
 )
 from code_review.agent.agent import (
@@ -47,8 +47,8 @@ def test_create_review_agent_tools_enabled_by_default(
     assert kwargs["output_schema"] is FindingsBatchV1
     assert kwargs["before_model_callback"] is _before_model_callback
     assert kwargs["after_tool_callback"] is _after_tool_callback
-    # File-by-file mode: must use FINDINGS_ONLY_INSTRUCTION (has tool references)
-    assert kwargs["instruction"] == FINDINGS_ONLY_INSTRUCTION
+    # Tool-enabled review must use TOOL_ENABLED_REVIEW_INSTRUCTION (has tool references)
+    assert kwargs["instruction"] == TOOL_ENABLED_REVIEW_INSTRUCTION
 
 
 @patch("google.adk.agents.Agent")
@@ -85,7 +85,7 @@ def test_create_review_agent_disable_tools_param_overrides_factory(
 ) -> None:
     """disable_tools=True creates agent with no tools even if disable_tool_calls is False.
 
-    This is the single-shot mode path: the full diff is already in the user message
+    This is the embedded-diff batch-review path: the relevant diff is already in the user message
     so there is nothing to fetch.  Giving the agent tools in this mode causes it to
     call get_pr_diff_for_file / get_file_content for every file, leading to triangular
     token accumulation and multi-million-token usage on large PRs.
@@ -107,7 +107,7 @@ def test_create_review_agent_disable_tools_param_overrides_factory(
     assert result is agent_instance
     _, kwargs = mock_agent_cls.call_args
     assert kwargs["tools"] == [], (
-        "single-shot mode must create the agent with no tools to prevent triangular "
+        "embedded-diff review must create the agent with no tools to prevent triangular "
         "token accumulation"
     )
     assert kwargs["output_schema"] is FindingsBatchV1
@@ -118,15 +118,15 @@ def test_create_review_agent_disable_tools_param_overrides_factory(
 @patch("google.adk.agents.Agent")
 @patch("code_review.agent.agent.create_findings_only_tools")
 @patch("code_review.agent.agent.get_llm_config")
-def test_single_shot_uses_single_shot_instruction(
+def test_embedded_diff_review_uses_embedded_diff_instruction(
     mock_get_llm_config, mock_create_tools, mock_agent_cls
 ) -> None:
-    """Single-shot mode (disable_tools=True) must use SINGLE_SHOT_INSTRUCTION.
+    """Embedded-diff review (disable_tools=True) must use EMBEDDED_DIFF_REVIEW_INSTRUCTION.
 
-    FINDINGS_ONLY_INSTRUCTION references tools (get_file_content, get_file_lines,
-    detect_language_context) that are absent in single-shot mode.  When Gemini sees
+    TOOL_ENABLED_REVIEW_INSTRUCTION references tools (get_file_content, get_file_lines,
+    detect_language_context) that are absent in embedded-diff review. When Gemini sees
     those references but the tools aren't registered, it infers it cannot complete
-    the workflow and returns [] (no findings).  SINGLE_SHOT_INSTRUCTION is clean and
+    the workflow and returns [] (no findings). EMBEDDED_DIFF_REVIEW_INSTRUCTION is clean and
     tool-free, so the LLM reviews the embedded diff and returns real findings.
     """
     provider = MagicMock()
@@ -142,26 +142,26 @@ def test_single_shot_uses_single_shot_instruction(
     create_review_agent(provider, review_standards="", findings_only=True, disable_tools=True)
 
     _, kwargs = mock_agent_cls.call_args
-    assert kwargs["instruction"] == SINGLE_SHOT_INSTRUCTION, (
-        "single-shot mode must use SINGLE_SHOT_INSTRUCTION (no tool references) "
+    assert kwargs["instruction"] == EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "embedded-diff review must use EMBEDDED_DIFF_REVIEW_INSTRUCTION (no tool references) "
         "to avoid Gemini returning [] when referenced tools are absent"
     )
     assert kwargs["output_schema"] is FindingsBatchV1
     assert "get_file_content" not in kwargs["instruction"], (
-        "SINGLE_SHOT_INSTRUCTION must not reference tools that are not available"
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must not reference tools that are not available"
     )
     assert "get_pr_diff_for_file" not in kwargs["instruction"], (
-        "SINGLE_SHOT_INSTRUCTION must not reference tools that are not available"
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must not reference tools that are not available"
     )
 
 
 @patch("google.adk.agents.Agent")
 @patch("code_review.agent.agent.create_findings_only_tools")
 @patch("code_review.agent.agent.get_llm_config")
-def test_file_by_file_uses_findings_only_instruction(
+def test_tool_enabled_review_uses_tool_enabled_instruction(
     mock_get_llm_config, mock_create_tools, mock_agent_cls
 ) -> None:
-    """File-by-file mode (disable_tools=False) must use FINDINGS_ONLY_INSTRUCTION."""
+    """Tool-enabled review (disable_tools=False) must use TOOL_ENABLED_REVIEW_INSTRUCTION."""
     provider = MagicMock()
     mock_get_llm_config.return_value = MagicMock(
         temperature=0.0,
@@ -176,7 +176,7 @@ def test_file_by_file_uses_findings_only_instruction(
     create_review_agent(provider, review_standards="", findings_only=True, disable_tools=False)
 
     _, kwargs = mock_agent_cls.call_args
-    assert kwargs["instruction"] == FINDINGS_ONLY_INSTRUCTION
+    assert kwargs["instruction"] == TOOL_ENABLED_REVIEW_INSTRUCTION
     assert kwargs["output_schema"] is FindingsBatchV1
     assert "get_pr_diff_for_file" in kwargs["instruction"]
 
@@ -185,73 +185,73 @@ def test_file_by_file_uses_findings_only_instruction(
 
 
 def test_findings_only_instruction_contains_line_number_guidance():
-    """FINDINGS_ONLY_INSTRUCTION must contain line number guidance based on <L{n}> annotations.
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must contain line number guidance based on <L{n}> annotations.
 
-    In file-by-file mode the agent reads a diff returned from get_pr_diff_for_file.
+    In tool-enabled review the agent reads a diff returned from get_pr_diff_for_file.
     The diff is pre-annotated with <L{n}> prefixes on visible new-file lines.
     The instruction must tell the agent to use these annotations as the 'line'
     value in findings so it does not have to compute line numbers from hunk headers.
     """
-    assert "<L{n}>" in FINDINGS_ONLY_INSTRUCTION or "<L" in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must explain the <L{n}> line number annotation format"
+    assert "<L{n}>" in TOOL_ENABLED_REVIEW_INSTRUCTION or "<L" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must explain the <L{n}> line number annotation format"
     )
-    assert "annotation" in FINDINGS_ONLY_INSTRUCTION.lower(), (
-        "FINDINGS_ONLY_INSTRUCTION must reference the line number annotations"
+    assert "annotation" in TOOL_ENABLED_REVIEW_INSTRUCTION.lower(), (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must reference the line number annotations"
     )
 
 
 def test_findings_only_instruction_restricts_to_visible_diff_lines():
-    """FINDINGS_ONLY_INSTRUCTION must tell the agent to only report lines visible in the diff."""
-    instr = FINDINGS_ONLY_INSTRUCTION
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must tell the agent to only report lines visible in the diff."""
+    instr = TOOL_ENABLED_REVIEW_INSTRUCTION
     # Must tell the agent to drop findings for lines with no annotation
     assert "annotation" in instr.lower() or "annotated" in instr.lower(), (
-        "FINDINGS_ONLY_INSTRUCTION must describe the <L{n}> annotation mechanism"
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must describe the <L{n}> annotation mechanism"
     )
     # Must distinguish added (+) vs context lines
-    assert "+" in instr, "FINDINGS_ONLY_INSTRUCTION must mention '+' for added lines"
+    assert "+" in instr, "TOOL_ENABLED_REVIEW_INSTRUCTION must mention '+' for added lines"
 
 
 def test_findings_only_instruction_head_sha_ref_guidance():
-    """FINDINGS_ONLY_INSTRUCTION must tell the agent to use head_sha as ref for get_file_lines."""
-    assert "head_sha" in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must guide the agent to use head_sha as the ref parameter "
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must tell the agent to use head_sha as ref for get_file_lines."""
+    assert "head_sha" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must guide the agent to use head_sha as the ref parameter "
         "for get_file_lines and get_file_content so it reads the correct revision"
     )
 
 
 def test_findings_only_instruction_category_field():
-    """FINDINGS_ONLY_INSTRUCTION must mention the category field in the output format."""
-    assert "category" in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must mention the optional 'category' field "
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must mention the category field in the output format."""
+    assert "category" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must mention the optional 'category' field "
         "so the agent populates it with values like Correctness, Security, etc."
     )
     # Must provide example values so the agent knows what to put there
-    assert "Correctness" in FINDINGS_ONLY_INSTRUCTION or "Security" in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must list example category values"
+    assert "Correctness" in TOOL_ENABLED_REVIEW_INSTRUCTION or "Security" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must list example category values"
     )
 
 
 def test_findings_only_instruction_mentions_evidence_and_confidence():
-    """FINDINGS_ONLY_INSTRUCTION should bias the model toward evidence-backed findings."""
-    lowered = FINDINGS_ONLY_INSTRUCTION.lower()
+    """TOOL_ENABLED_REVIEW_INSTRUCTION should bias the model toward evidence-backed findings."""
+    lowered = TOOL_ENABLED_REVIEW_INSTRUCTION.lower()
     assert "evidence" in lowered
     assert "confidence" in lowered
     assert "reconstruct the" in lowered and "builder" in lowered
 
 
-def test_single_shot_instruction_category_field():
-    """SINGLE_SHOT_INSTRUCTION must mention the category field with example values."""
-    assert "category" in SINGLE_SHOT_INSTRUCTION, (
-        "SINGLE_SHOT_INSTRUCTION must mention the optional 'category' field"
+def test_embedded_diff_review_instruction_category_field():
+    """EMBEDDED_DIFF_REVIEW_INSTRUCTION must mention the category field with example values."""
+    assert "category" in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must mention the optional 'category' field"
     )
-    assert "Correctness" in SINGLE_SHOT_INSTRUCTION or "Security" in SINGLE_SHOT_INSTRUCTION, (
-        "SINGLE_SHOT_INSTRUCTION must list example category values"
+    assert "Correctness" in EMBEDDED_DIFF_REVIEW_INSTRUCTION or "Security" in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must list example category values"
     )
 
 
-def test_single_shot_instruction_prefers_omission_over_weak_speculation():
-    """SINGLE_SHOT_INSTRUCTION should tell the model to omit contradicted or weak findings."""
-    lowered = SINGLE_SHOT_INSTRUCTION.lower()
+def test_embedded_diff_review_instruction_prefers_omission_over_weak_speculation():
+    """EMBEDDED_DIFF_REVIEW_INSTRUCTION should tell the model to omit contradicted or weak findings."""
+    lowered = EMBEDDED_DIFF_REVIEW_INSTRUCTION.lower()
     assert "omit the finding" in lowered
     assert "prefer omission over weak speculation" in lowered
 
@@ -260,11 +260,11 @@ def test_instructions_consistent_category_guidance():
     """Both instructions should describe the category field consistently."""
     # Both must mention the same set of category values
     for category in ("Correctness", "Security", "Performance", "Maintainability"):
-        assert category in FINDINGS_ONLY_INSTRUCTION, (
-            f"FINDINGS_ONLY_INSTRUCTION missing category example: {category}"
+        assert category in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+            f"TOOL_ENABLED_REVIEW_INSTRUCTION missing category example: {category}"
         )
-        assert category in SINGLE_SHOT_INSTRUCTION, (
-            f"SINGLE_SHOT_INSTRUCTION missing category example: {category}"
+        assert category in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+            f"EMBEDDED_DIFF_REVIEW_INSTRUCTION missing category example: {category}"
         )
 
 
@@ -281,11 +281,11 @@ def test_shared_line_number_rules_appear_in_both_instructions():
     """
     from code_review.agent.agent import _SHARED_LINE_NUMBER_RULES
 
-    assert _SHARED_LINE_NUMBER_RULES in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must contain the shared line-number rules fragment"
+    assert _SHARED_LINE_NUMBER_RULES in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must contain the shared line-number rules fragment"
     )
-    assert _SHARED_LINE_NUMBER_RULES in SINGLE_SHOT_INSTRUCTION, (
-        "SINGLE_SHOT_INSTRUCTION must contain the shared line-number rules fragment"
+    assert _SHARED_LINE_NUMBER_RULES in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must contain the shared line-number rules fragment"
     )
 
 
@@ -297,11 +297,11 @@ def test_shared_format_and_placement_appear_in_both_instructions():
     """
     from code_review.agent.agent import _SHARED_FORMAT_AND_PLACEMENT
 
-    assert _SHARED_FORMAT_AND_PLACEMENT in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must contain the shared format/placement fragment"
+    assert _SHARED_FORMAT_AND_PLACEMENT in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must contain the shared format/placement fragment"
     )
-    assert _SHARED_FORMAT_AND_PLACEMENT in SINGLE_SHOT_INSTRUCTION, (
-        "SINGLE_SHOT_INSTRUCTION must contain the shared format/placement fragment"
+    assert _SHARED_FORMAT_AND_PLACEMENT in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must contain the shared format/placement fragment"
     )
 
 
@@ -309,11 +309,11 @@ def test_shared_agent_fix_and_examples_appear_in_both_instructions():
     """Both instructions must contain the shared agent_fix_prompt guidance and examples."""
     from code_review.agent.agent import _SHARED_AGENT_FIX_AND_EXAMPLES
 
-    assert _SHARED_AGENT_FIX_AND_EXAMPLES in FINDINGS_ONLY_INSTRUCTION, (
-        "FINDINGS_ONLY_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
+    assert _SHARED_AGENT_FIX_AND_EXAMPLES in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
     )
-    assert _SHARED_AGENT_FIX_AND_EXAMPLES in SINGLE_SHOT_INSTRUCTION, (
-        "SINGLE_SHOT_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
+    assert _SHARED_AGENT_FIX_AND_EXAMPLES in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
     )
 
 

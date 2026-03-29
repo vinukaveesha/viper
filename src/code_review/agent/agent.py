@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared instruction fragments
-# Both FINDINGS_ONLY_INSTRUCTION (tool-enabled review) and
-# SINGLE_SHOT_INSTRUCTION (tool-free embedded-diff review, now used by prepared
+# Both TOOL_ENABLED_REVIEW_INSTRUCTION (tool-enabled review) and
+# EMBEDDED_DIFF_REVIEW_INSTRUCTION (tool-free embedded-diff review, now used by prepared
 # batch sub-agents) share the same output-format contract, finding schema,
 # anchor/placement rules, and examples. Edit these fragments to update both
 # instruction styles at once.
@@ -231,7 +231,7 @@ async def _after_tool_callback(
 
 # Instruction when agent returns findings only; runner filters and posts.
 # Used when tools are available and the agent may fetch file-scoped diff/context.
-FINDINGS_ONLY_INSTRUCTION = (
+TOOL_ENABLED_REVIEW_INSTRUCTION = (
     "\n"
     "You are a code review agent. You will receive PR details\n"
     "(owner, repo, pr_number, head_sha).\n"
@@ -278,7 +278,7 @@ FINDINGS_ONLY_INSTRUCTION = (
 
 # Instruction for tool-free embedded-diff review: the prepared diff payload is already
 # embedded in the user message, so the agent should not expect tools.
-SINGLE_SHOT_INSTRUCTION = (
+EMBEDDED_DIFF_REVIEW_INSTRUCTION = (
     "\n"
     "You are a code review agent. You will receive the complete unified diff of a pull\n"
     "request in the user message between triple-backtick diff fences.\n"
@@ -338,19 +338,19 @@ def create_review_agent(
         max_output_tokens=llm_cfg.max_output_tokens,
     )
 
-    instruction = FINDINGS_ONLY_INSTRUCTION
+    instruction = TOOL_ENABLED_REVIEW_INSTRUCTION
     # Disable tools when:
     # 1. Explicitly requested via disable_tools=True (prepared diff is already in the message)
     # 2. LLM_DISABLE_TOOL_CALLS env var is set (debug/test override)
     if disable_tools or getattr(llm_cfg, "disable_tool_calls", False):
         tools = []
         # Use the tool-free instruction when review batches already embed the relevant diff.
-        # FINDINGS_ONLY_INSTRUCTION
+        # TOOL_ENABLED_REVIEW_INSTRUCTION
         # references get_file_content, get_file_lines, detect_language_context etc.;
         # when those tools are absent, Gemini infers it cannot complete the workflow
-        # and returns [] (no findings). SINGLE_SHOT_INSTRUCTION is clean and only
+        # and returns [] (no findings). EMBEDDED_DIFF_REVIEW_INSTRUCTION is clean and only
         # describes the embedded-diff workflow.
-        instruction = SINGLE_SHOT_INSTRUCTION
+        instruction = EMBEDDED_DIFF_REVIEW_INSTRUCTION
     else:
         tools = create_findings_only_tools(provider)
 
