@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -224,6 +225,72 @@ def test_review_orchestrator_run_returns_list_of_findings():
     assert len(result) == 1
     assert result[0].path == "foo.py"
     assert result[0].message == "m"
+
+
+@patch("google.adk.sessions.InMemorySessionService")
+@patch("google.adk.runners.Runner")
+@patch("code_review.agent.workflows.create_sequential_file_review_agent")
+def test_create_agent_and_runner_uses_sequential_workflow_prototype_when_enabled(
+    mock_create_sequential, mock_runner_cls, mock_session_service_cls
+):
+    provider = MagicMock()
+    sequential_agent = MagicMock()
+    mock_create_sequential.return_value = sequential_agent
+    runner_instance = MagicMock()
+    mock_runner_cls.return_value = runner_instance
+    mock_session_service_cls.return_value = MagicMock()
+    orchestrator = ReviewOrchestrator("o", "r", 1, head_sha="sha1")
+
+    with patch.dict(
+        "os.environ", {"CODE_REVIEW_ENABLE_SEQUENTIAL_AGENT_PROTOTYPE": "1"}, clear=False
+    ):
+        _, _, runner = orchestrator._create_agent_and_runner(
+            provider,
+            "review standards",
+            ["a.py", "b.py"],
+            use_file_by_file=True,
+        )
+
+    assert runner is runner_instance
+    mock_create_sequential.assert_called_once_with(
+        provider,
+        "review standards",
+        ["a.py", "b.py"],
+        head_sha="sha1",
+        context_brief_attached=False,
+    )
+    assert getattr(runner, "_uses_sequential_file_review_prototype") is True
+
+
+@patch("code_review.orchestration_deps._run_agent_and_collect_responses")
+def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
+    mock_collect_responses,
+):
+    mock_collect_responses.return_value = [
+        (
+            "file_review_0",
+            '{"findings":[{"path":"a.py","line":1,"severity":"low","code":"c1","message":"m1"}]}',
+        ),
+        (
+            "file_review_1",
+            '{"findings":[{"path":"b.py","line":2,"severity":"medium","code":"c2","message":"m2"}]}',
+        ),
+    ]
+    orchestrator = ReviewOrchestrator("o", "r", 1, head_sha="sha1")
+    runner = SimpleNamespace(_uses_sequential_file_review_prototype=True)
+
+    findings = orchestrator._run_agent_and_collect_findings(
+        runner,
+        MagicMock(),
+        "session-1",
+        ["a.py", "b.py"],
+        True,
+    )
+
+    assert [(f.path, f.line, f.message) for f in findings] == [
+        ("a.py", 1, "m1"),
+        ("b.py", 2, "m2"),
+    ]
 
 
 # --- Step 2: _determine_skip_reason, _load_existing_comments_and_markers,

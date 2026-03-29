@@ -1553,6 +1553,37 @@ def _run_agent_and_collect_response(
     return asyncio.run(_collect_response_async(runner, session_service, session_id, content))
 
 
+async def _collect_final_response_texts_async(
+    runner, session_service, session_id: str, content: types.Content
+) -> list[tuple[str, str]]:
+    """Run agent once and collect text-bearing final responses per participating agent."""
+    asyncio.get_running_loop().set_exception_handler(_suppress_ssl_teardown_errors)
+
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id=USER_ID,
+        session_id=session_id,
+    )
+    responses: list[tuple[str, str]] = []
+    async for event in runner.run_async(
+        user_id=USER_ID,
+        session_id=session_id,
+        new_message=content,
+    ):
+        if event.is_final_response() and event.content and event.content.parts:
+            texts = [part.text for part in event.content.parts if getattr(part, "text", None)]
+            if texts:
+                responses.append((getattr(event, "author", ""), "\n".join(texts)))
+    return responses
+
+
+def _run_agent_and_collect_responses(
+    runner, session_service, session_id: str, content: types.Content
+) -> list[tuple[str, str]]:
+    """Run agent once and return text-bearing final responses from all participating agents."""
+    return asyncio.run(_collect_final_response_texts_async(runner, session_service, session_id, content))
+
+
 def _normalize_scm_identity_fragment(value: str) -> str:
     """Lowercase and strip braces/spaces for comparing SCM user/uuid strings."""
     return (value or "").strip().lower().replace("{", "").replace("}", "")

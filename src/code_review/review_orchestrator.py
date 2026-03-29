@@ -270,6 +270,7 @@ class ReviewOrchestrator:
         self,
         provider,
         review_standards: str,
+        paths: list[str] | None = None,
         *,
         use_file_by_file: bool = False,
         disable_tools: bool | None = None,
@@ -306,18 +307,37 @@ class ReviewOrchestrator:
         disable_tools_effective = (
             disable_tools if disable_tools is not None else not use_file_by_file
         )
-        agent = runner_mod.create_review_agent(
-            provider,
-            review_standards,
-            findings_only=True,
-            disable_tools=disable_tools_effective,
-            context_brief_attached=context_brief_attached,
+        use_sequential_workflow = (
+            bool(paths)
+            and use_file_by_file
+            and not disable_tools_effective
+            and runner_mod.os.getenv("CODE_REVIEW_ENABLE_SEQUENTIAL_AGENT_PROTOTYPE", "").strip()
+            in ("1", "true", "TRUE")
         )
+        if use_sequential_workflow:
+            from code_review.agent.workflows import create_sequential_file_review_agent
+
+            agent = create_sequential_file_review_agent(
+                provider,
+                review_standards,
+                paths or [],
+                head_sha=self.head_sha,
+                context_brief_attached=context_brief_attached,
+            )
+        else:
+            agent = runner_mod.create_review_agent(
+                provider,
+                review_standards,
+                findings_only=True,
+                disable_tools=disable_tools_effective,
+                context_brief_attached=context_brief_attached,
+            )
         session_id = (
             f"{self.owner}/{self.repo}/pr-{self.pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
         )
         session_service = InMemorySessionService()
         runner = Runner(agent=agent, app_name=runner_mod.APP_NAME, session_service=session_service)
+        setattr(runner, "_uses_sequential_file_review_prototype", use_sequential_workflow)
         return (session_id, session_service, runner)
 
     def _run_agent_and_collect_findings(
@@ -340,6 +360,13 @@ class ReviewOrchestrator:
         JSON parsing or filtering.
         """
         if use_file_by_file and paths:
+            if getattr(runner, "_uses_sequential_file_review_prototype", False):
+                return self._run_sequential_file_review_mode(
+                    runner,
+                    session_service,
+                    session_id,
+                    prompt_suffix=prompt_suffix,
+                )
             if diff_by_path is not None:
                 return self._run_embedded_file_by_file_mode(
                     runner,
@@ -531,6 +558,37 @@ class ReviewOrchestrator:
             runner, session_service, session_id, content
         )
         return runner_mod._findings_from_response(response_text)
+
+    def _run_sequential_file_review_mode(
+        self,
+        runner,
+        session_service,
+        session_id: str,
+        *,
+        prompt_suffix: str = "",
+    ) -> list[runner_mod.FindingV1]:
+        """Run the SequentialAgent prototype and parse one structured response per sub-agent."""
+        msg = (
+            "Review the prepared PR files sequentially. "
+            f"owner={self.owner}, repo={self.repo}, pr_number={self.pr_number}."
+            + (f" head_sha={self.head_sha}." if self.head_sha else "")
+        )
+        if prompt_suffix:
+            msg += "\n\n" + prompt_suffix
+        if runner_mod.logger.isEnabledFor(runner_mod.logging.DEBUG):
+            runner_mod.logger.debug(
+                "LLM request (SequentialAgent prototype) session=%s prompt=%s",
+                session_id,
+                msg,
+            )
+        content = runner_mod.types.Content(role="user", parts=[runner_mod.types.Part(text=msg)])
+        responses = runner_mod._run_agent_and_collect_responses(
+            runner, session_service, session_id, content
+        )
+        all_findings: list[runner_mod.FindingV1] = []
+        for _author, response_text in responses:
+            all_findings.extend(runner_mod._findings_from_response(response_text))
+        return all_findings
 
     def _attach_fingerprints_and_filter_findings(
         self,
@@ -1548,6 +1606,7 @@ class ReviewOrchestrator:
         session_id, session_service, runner = self._create_agent_and_runner(
             provider,
             review_standards,
+            paths,
             use_file_by_file=use_file_by_file,
             disable_tools=True if use_embedded_file_diffs else None,
             context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
