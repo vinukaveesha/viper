@@ -230,7 +230,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
 
     env:
-      IMAGE: your-dockerhub-user/code-review-agent:v1.2.3
+      IMAGE: e4c5/code-review-agent:1.0.1
 
       SCM_PROVIDER: github
       SCM_URL: https://api.github.com
