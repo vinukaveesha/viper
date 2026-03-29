@@ -38,8 +38,8 @@ jobs:
       SCM_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       SCM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      LLM_PROVIDER: ${{ vars.CODE_REVIEW_LLM_PROVIDER || 'openai' }}
-      LLM_MODEL: ${{ vars.CODE_REVIEW_LLM_MODEL || 'gpt-5-mini' }}
+      LLM_PROVIDER: ${{ vars.CODE_REVIEW_LLM_PROVIDER || 'openrouter' }}
+      LLM_MODEL: ${{ vars.CODE_REVIEW_LLM_MODEL || 'google/gemini-3.1-flash-lite-preview' }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
       SCM_SKIP_LABEL: skip-ai-review
