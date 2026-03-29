@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.genai import types
 from litellm import AuthenticationError
@@ -65,6 +65,9 @@ from code_review.schemas.review_decision_event import (
 )
 from code_review.schemas.review_thread_dismissal import ReviewThreadDismissalContext
 from code_review.standards import detect_from_paths, get_review_standards
+
+if TYPE_CHECKING:
+    from code_review.review_orchestrator import ReviewOrchestrator
 
 APP_NAME = "code_review"
 USER_ID = "reviewer"
@@ -1827,7 +1830,13 @@ def _run_reply_dismissal_llm(user_message: str) -> str:
     return _run_agent_and_collect_response(runner, session_service, session_id, content)
 
 
-from code_review.review_orchestrator import ReviewOrchestrator
+def __getattr__(name: str) -> Any:
+    """Lazily expose heavy or cyclic imports needed by legacy callers."""
+    if name == "ReviewOrchestrator":
+        from code_review.review_orchestrator import ReviewOrchestrator
+
+        return ReviewOrchestrator
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def run_review(
@@ -1861,6 +1870,8 @@ def run_review(
     :class:`~code_review.schemas.review_decision_event.ReviewDecisionEventContext`
     (used for review-decision-only logging and head SHA hints).
     """
+    from code_review.review_orchestrator import ReviewOrchestrator
+
     resolved_event = event_context or review_decision_event_context_from_env()
     orchestrator = ReviewOrchestrator(
         owner,

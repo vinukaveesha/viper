@@ -1,5 +1,7 @@
 """Unit tests for ReviewOrchestrator and its extracted helpers (RUN_REVIEW_REFACTOR_PLAN)."""
 
+import subprocess
+import sys
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +13,29 @@ from code_review.runner import (
     _maybe_post_started_review_comment,
 )
 from tests.conftest import runner_run_async_returning
+
+
+def test_review_orchestrator_imports_without_circular_dependency():
+    """Directly importing review_orchestrator should not trip runner's lazy back-import."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.path.insert(0, 'viper/src'); "
+                "import code_review.review_orchestrator; "
+                "print('ok')"
+            ),
+        ],
+        cwd="/home/raditha/workspace/python/code-review",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "ok" in result.stdout
 
 
 @contextmanager
