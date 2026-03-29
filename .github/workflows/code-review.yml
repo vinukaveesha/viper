@@ -73,7 +73,6 @@ jobs:
             -e LLM_API_KEY \
             -e CODE_REVIEW_LOG_LEVEL \
             "$IMAGE" \
-            review \
             --owner "$SCM_OWNER" \
             --repo "$SCM_REPO" \
             --pr "$SCM_PR_NUM" \
