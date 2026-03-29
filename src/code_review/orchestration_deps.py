@@ -1530,11 +1530,6 @@ async def _collect_response_async(
     # when asyncio.run() calls loop.close() after this coroutine returns.
     asyncio.get_running_loop().set_exception_handler(_suppress_ssl_teardown_errors)
 
-    await session_service.create_session(
-        app_name=APP_NAME,
-        user_id=USER_ID,
-        session_id=session_id,
-    )
     parts: list[str] = []
     async for event in runner.run_async(
         user_id=USER_ID,
@@ -1567,11 +1562,6 @@ async def _collect_final_response_texts_async(
     """Run agent once and collect text-bearing final responses per participating agent."""
     asyncio.get_running_loop().set_exception_handler(_suppress_ssl_teardown_errors)
 
-    await session_service.create_session(
-        app_name=APP_NAME,
-        user_id=USER_ID,
-        session_id=session_id,
-    )
     responses: list[tuple[str, str]] = []
     try:
         async for event in runner.run_async(
@@ -1846,6 +1836,7 @@ def _run_reply_dismissal_llm(user_message: str) -> str:
         agent=agent,
         app_name=APP_NAME,
         session_service=session_service,
+        auto_create_session=True,
     )
     session_id = f"reply-dismissal/{uuid.uuid4().hex[:12]}"
     if logger.isEnabledFor(logging.DEBUG):

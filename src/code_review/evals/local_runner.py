@@ -132,7 +132,12 @@ def _run_agent_text(agent, user_text: str) -> str:
     from google.genai import types
 
     session_service = InMemorySessionService()
-    runner = Runner(agent=agent, app_name="code_review_eval", session_service=session_service)
+    runner = Runner(
+        agent=agent,
+        app_name="code_review_eval",
+        session_service=session_service,
+        auto_create_session=True,
+    )
     content = types.Content(role="user", parts=[types.Part(text=user_text)])
     return _run_agent_and_collect_response(runner, session_service, "eval-session", content)
 

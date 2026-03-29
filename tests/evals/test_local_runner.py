@@ -62,6 +62,14 @@ def test_run_local_golden_pr_review_eval_adk_mode(
     assert summary.failed == 1
     assert summary.passed == 1
     mock_create_review_agent.assert_called()
+    assert mock_runner_cls.call_count == summary.total
+    for call in mock_runner_cls.call_args_list:
+        assert call.kwargs == {
+            "agent": mock_create_review_agent.return_value,
+            "app_name": "code_review_eval",
+            "session_service": session_service,
+            "auto_create_session": True,
+        }
 
 
 @patch("google.adk.sessions.InMemorySessionService")
@@ -89,3 +97,11 @@ def test_run_local_reply_dismissal_eval_adk_mode(
     assert summary.failed == 1
     assert summary.passed == 1
     mock_create_reply_agent.assert_called()
+    assert mock_runner_cls.call_count == summary.total
+    for call in mock_runner_cls.call_args_list:
+        assert call.kwargs == {
+            "agent": mock_create_reply_agent.return_value,
+            "app_name": "code_review_eval",
+            "session_service": session_service,
+            "auto_create_session": True,
+        }

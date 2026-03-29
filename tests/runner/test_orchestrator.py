@@ -519,10 +519,12 @@ def test_create_agent_and_runner_returns_session_id_service_runner(mock_create_a
     assert len(session_id) > len("o/r/pr-42/")
     assert session_service is mock_svc
     assert runner is mock_runner
-    # Session is created in _collect_response_async via create_session (async), not here
-    mock_svc.create_session_sync.assert_not_called()
+    # Runner is responsible for creating the in-memory session lazily.
     MockRunner.assert_called_once_with(
-        agent=batch_agent, app_name="code_review", session_service=mock_svc
+        agent=batch_agent,
+        app_name="code_review",
+        session_service=mock_svc,
+        auto_create_session=True,
     )
 
 

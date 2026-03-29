@@ -29,7 +29,12 @@ def create_agent_and_runner(
     )
     session_id = f"{owner}/{repo}/pr-{pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
     session_service = InMemorySessionService()
-    runner = Runner(agent=agent, app_name=runner_mod.APP_NAME, session_service=session_service)
+    runner = Runner(
+        agent=agent,
+        app_name=runner_mod.APP_NAME,
+        session_service=session_service,
+        auto_create_session=True,
+    )
     setattr(runner, "_uses_sequential_batch_review", True)
     return (session_id, session_service, runner)
 
