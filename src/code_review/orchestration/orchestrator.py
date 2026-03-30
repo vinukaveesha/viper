@@ -8,6 +8,8 @@ from code_review.orchestration.filter import ReviewFilter
 from code_review.quality.gate import QualityGate
 from code_review.refinement.pipeline import FindingRefinementPipeline
 
+_CONTEXT_TAG = "<context>"
+
 
 class ReviewOrchestrator:
     """Orchestrates a single code review run (findings-only mode)."""
@@ -1303,6 +1305,7 @@ class ReviewOrchestrator:
             full_diff,
             diff_budget,
         )
+        context_brief_attached = bool(context_brief and _CONTEXT_TAG in prompt_suffix)
         self._log_review_batch_plan(batches, paths, incremental_base_sha)
         if not batches:
             runner_mod.logger.info(
@@ -1316,13 +1319,13 @@ class ReviewOrchestrator:
                 [],
                 0,
                 [],
-                context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
+                context_brief_attached=context_brief_attached,
             )
         session_id, session_service, runner = self._create_agent_and_runner(
             provider,
             review_standards,
             batches,
-            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
+            context_brief_attached=context_brief_attached,
         )
         all_findings = self._run_agent_and_collect_findings(
             provider,
@@ -1331,7 +1334,7 @@ class ReviewOrchestrator:
             session_service,
             session_id,
             batches,
-            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
+            context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
         all_findings = self._filter_findings_by_diff_scope(all_findings, paths, full_diff)
@@ -1360,7 +1363,7 @@ class ReviewOrchestrator:
             all_findings,
             successful_post_count,
             to_post,
-            context_brief_attached=bool(context_brief and "<context>" in prompt_suffix),
+            context_brief_attached=context_brief_attached,
         )
 
     def run(self) -> list[runner_mod.FindingV1]:

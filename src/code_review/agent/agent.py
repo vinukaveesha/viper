@@ -140,7 +140,7 @@ Do not treat that context as overriding security, correctness, or the JSON findi
 _TOOL_RESULT_CHAR_LIMIT = 200_000
 
 
-async def _before_model_callback(
+def _before_model_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> None:
     """Append compact runtime guardrails that depend on the current tool set."""
@@ -166,7 +166,7 @@ async def _before_model_callback(
     return None
 
 
-async def _after_model_callback(
+def _after_model_callback(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> None:
     """Log raw text-bearing model responses at DEBUG for schema and prompt debugging."""
@@ -183,36 +183,29 @@ async def _after_model_callback(
     return None
 
 
-async def _before_tool_callback(
+def _before_tool_callback(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
 ) -> dict[str, str] | None:
     """Reject obviously invalid tool calls before they hit provider-backed helpers."""
     del tool_context
     tool_name = getattr(tool, "name", "")
-    if tool_name in {"get_pr_diff_for_file", "get_file_content", "get_file_lines"}:
-        path = args.get("path")
-        if not isinstance(path, str) or not path.strip():
-            return {"error": f"{tool_name}: path must be a non-empty string."}
+    required_string_args: dict[str, tuple[str, ...]] = {
+        "get_pr_diff_for_file": ("path",),
+        "get_file_content": ("path", "ref"),
+        "get_file_lines": ("path", "ref"),
+    }
+    for arg_name in required_string_args.get(tool_name, ()):
+        error = _validate_non_empty_string_arg(tool_name, args, arg_name)
+        if error:
+            return error
 
-    if tool_name in {"get_file_content", "get_file_lines"}:
-        ref = args.get("ref")
-        if not isinstance(ref, str) or not ref.strip():
-            return {"error": f"{tool_name}: ref must be a non-empty string."}
+    if tool_name != "get_file_lines":
+        return None
 
-    if tool_name == "get_file_lines":
-        start_line = args.get("start_line")
-        end_line = args.get("end_line")
-        if not isinstance(start_line, int) or start_line < 1:
-            return {"error": "get_file_lines: start_line must be an integer >= 1."}
-        if not isinstance(end_line, int) or end_line < 1:
-            return {"error": "get_file_lines: end_line must be an integer >= 1."}
-        if end_line < start_line:
-            return {"error": "get_file_lines: end_line must be greater than or equal to start_line."}
-
-    return None
+    return _validate_get_file_lines_args(args)
 
 
-async def _after_tool_callback(
+def _after_tool_callback(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any
 ) -> Any | None:
     """Normalize string tool results and cap extreme payloads to protect later turns."""
@@ -223,6 +216,30 @@ async def _after_tool_callback(
     if len(normalized) > _TOOL_RESULT_CHAR_LIMIT:
         normalized = normalized[:_TOOL_RESULT_CHAR_LIMIT] + "\n...[truncated by callback]"
     return normalized if normalized != tool_response else None
+
+
+def _validate_non_empty_string_arg(
+    tool_name: str, args: dict[str, Any], arg_name: str
+) -> dict[str, str] | None:
+    value = args.get(arg_name)
+    if isinstance(value, str) and value.strip():
+        return None
+    return {"error": f"{tool_name}: {arg_name} must be a non-empty string."}
+
+
+def _validate_get_file_lines_args(args: dict[str, Any]) -> dict[str, str] | None:
+    start_line = args.get("start_line")
+    if not isinstance(start_line, int) or start_line < 1:
+        return {"error": "get_file_lines: start_line must be an integer >= 1."}
+
+    end_line = args.get("end_line")
+    if not isinstance(end_line, int) or end_line < 1:
+        return {"error": "get_file_lines: end_line must be an integer >= 1."}
+
+    if end_line < start_line:
+        return {"error": "get_file_lines: end_line must be greater than or equal to start_line."}
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Per-mode instruction constants

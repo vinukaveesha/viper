@@ -1,6 +1,7 @@
 """Tests for LLM_DISABLE_TOOL_CALLS debug mode in create_review_agent (Phase 1.1)."""
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -337,7 +338,9 @@ class _FakeLlmRequest:
 
 
 def _run(coro):
-    return asyncio.run(coro)
+    if inspect.isawaitable(coro):
+        return asyncio.run(coro)
+    return coro
 
 
 @pytest.mark.parametrize(

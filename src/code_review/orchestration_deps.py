@@ -857,9 +857,7 @@ def _suppress_ssl_teardown_errors(loop, context: dict) -> None:
     loop.default_exception_handler(context)
 
 
-async def _collect_response_async(
-    runner, session_service, session_id: str, content: types.Content
-) -> str:
+async def _collect_response_async(runner, session_id: str, content: types.Content) -> str:
     """Run agent once via run_async and return concatenated final response text.
 
     When CODE_REVIEW_LOG_LEVEL=DEBUG, log the raw final text we received from the LLM.
@@ -891,11 +889,11 @@ def _run_agent_and_collect_response(
     runner, session_service, session_id: str, content: types.Content
 ) -> str:
     """Run agent once and return concatenated final response text (uses async API)."""
-    return asyncio.run(_collect_response_async(runner, session_service, session_id, content))
+    return asyncio.run(_collect_response_async(runner, session_id, content))
 
 
 async def _collect_final_response_texts_async(
-    runner, session_service, session_id: str, content: types.Content
+    runner, session_id: str, content: types.Content
 ) -> list[tuple[str, str]]:
     """Run agent once and collect text-bearing final responses per participating agent."""
     asyncio.get_running_loop().set_exception_handler(_suppress_ssl_teardown_errors)
@@ -923,7 +921,6 @@ def _run_agent_and_collect_responses(
     return asyncio.run(
         _collect_final_response_texts_async(
             runner,
-            session_service,
             session_id,
             content,
         )

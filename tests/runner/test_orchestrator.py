@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,9 @@ from code_review.orchestration_deps import (
 from tests.conftest import runner_run_async_returning
 
 
+TEST_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
 def test_canonical_orchestrator_imports_without_circular_dependency():
     """Directly importing the canonical orchestrator module should not trip lazy imports."""
     result = subprocess.run(
@@ -25,12 +29,12 @@ def test_canonical_orchestrator_imports_without_circular_dependency():
             "-c",
             (
                 "import sys; "
-                "sys.path.insert(0, 'viper/src'); "
+                "sys.path.insert(0, 'src'); "
                 "import code_review.orchestration.orchestrator; "
                 "print('ok')"
             ),
         ],
-        cwd="/home/raditha/workspace/python/code-review",
+        cwd=TEST_REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
