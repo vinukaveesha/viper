@@ -33,7 +33,10 @@ class FindingV1(BaseModel):
     )
     evidence: str | None = Field(
         default=None,
-        description="Optional short factual justification citing the visible code that supports the finding",
+        description=(
+            "Optional short factual justification citing the visible code "
+            "that supports the finding"
+        ),
     )
     anchor: str | None = Field(
         default=None,
@@ -76,5 +79,8 @@ class FindingsBatchV1(BaseModel):
 
     findings: list[FindingV1] = Field(
         default_factory=list,
-        description="Structured list of code review findings. Use an empty list when no issues exist.",
+        description=(
+            "Structured list of code review findings. "
+            "Use an empty list when no issues exist."
+        ),
     )

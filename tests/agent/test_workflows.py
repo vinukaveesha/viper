@@ -28,7 +28,10 @@ def test_create_sequential_batch_review_agent_builds_one_sub_agent_per_batch(
             segments=(
                 ReviewSegment(
                     path="a.py",
-                    diff_text="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n old\n+new\n",
+                    diff_text=(
+                        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+                        "@@ -1,1 +1,2 @@\n old\n+new\n"
+                    ),
                     estimated_tokens=5,
                     segment_index=0,
                     total_segments=1,
@@ -43,7 +46,10 @@ def test_create_sequential_batch_review_agent_builds_one_sub_agent_per_batch(
             segments=(
                 ReviewSegment(
                     path="c.py",
-                    diff_text="diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n@@ -10,1 +10,2 @@\n old\n+newer\n",
+                    diff_text=(
+                        "diff --git a/c.py b/c.py\n--- a/c.py\n+++ b/c.py\n"
+                        "@@ -10,1 +10,2 @@\n old\n+newer\n"
+                    ),
                     estimated_tokens=8,
                     segment_index=0,
                     total_segments=1,

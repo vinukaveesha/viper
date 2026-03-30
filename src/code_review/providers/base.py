@@ -654,9 +654,9 @@ class ProviderInterface(ABC):
         pr_number: int,
         thread_context: ReviewThreadDismissalContext,
         triggered_comment_id: str,
-    ) -> None:  # noqa: B027
+    ) -> None:
         """Resolve a review thread/discussion after an agreed dismissal verdict."""
-        pass
+        raise NotImplementedError("resolve_review_thread not implemented for this provider")
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
         """

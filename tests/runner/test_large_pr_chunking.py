@@ -1,8 +1,7 @@
 """Large PR fixture: validate batch-mode review execution."""
 
 from contextlib import ExitStack
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from code_review.providers.base import FileInfo, ProviderCapabilities
 from tests.conftest import runner_run_async_returning
@@ -96,7 +95,10 @@ def _invoke_run_review(
             )
         stack.enter_context(patch("google.adk.runners.Runner", return_value=runner_instance))
         stack.enter_context(
-            patch("google.adk.sessions.InMemorySessionService", return_value=_make_session_service())
+            patch(
+                "google.adk.sessions.InMemorySessionService",
+                return_value=_make_session_service(),
+            )
         )
         run_review(*args, **kwargs)
 

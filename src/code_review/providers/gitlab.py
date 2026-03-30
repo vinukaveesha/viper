@@ -564,11 +564,23 @@ class GitLabProvider(ProviderInterface):
     ) -> None:
         discussion_id = (thread_context.thread_id or "").strip()
         if not discussion_id:
-            ctx = self.get_review_thread_dismissal_context(owner, repo, pr_number, triggered_comment_id)
+            ctx = self.get_review_thread_dismissal_context(
+                owner,
+                repo,
+                pr_number,
+                triggered_comment_id,
+            )
             discussion_id = (ctx.thread_id or "").strip() if ctx is not None else ""
         if not discussion_id:
             raise ValueError("GitLab discussion id is required to resolve the thread")
-        path = self._path(owner, repo, "merge_requests", str(pr_number), "discussions", discussion_id)
+        path = self._path(
+            owner,
+            repo,
+            "merge_requests",
+            str(pr_number),
+            "discussions",
+            discussion_id,
+        )
         self._put(path, {"resolved": True})
 
     def post_pr_summary_comment(self, owner: str, repo: str, pr_number: int, body: str) -> None:

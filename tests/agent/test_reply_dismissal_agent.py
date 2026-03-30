@@ -78,10 +78,14 @@ def test_reply_dismissal_verdict_repairs_python_style_apostrophe_escape():
     assert v.verdict == "disagreed"
     assert "XML-safe escaping" in v.reply_text
     assert "\\'" not in v.reply_text
+
+
 def test_reply_dismissal_verdict_invalid_returns_none():
     assert reply_dismissal_verdict_from_llm_text("not json") is None
     assert (
-        reply_dismissal_verdict_from_llm_text('Prefix {"verdict": "agreed", "reply_text": ""} suffix')
+        reply_dismissal_verdict_from_llm_text(
+            'Prefix {"verdict": "agreed", "reply_text": ""} suffix'
+        )
         is None
     )
     assert reply_dismissal_verdict_from_llm_text('{"verdict": "disagreed"}') is None

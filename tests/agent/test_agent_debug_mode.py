@@ -185,14 +185,17 @@ def test_tool_enabled_review_uses_tool_enabled_instruction(
 
 
 def test_findings_only_instruction_contains_line_number_guidance():
-    """TOOL_ENABLED_REVIEW_INSTRUCTION must contain line number guidance based on <L{n}> annotations.
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must contain line number guidance.
 
     In tool-enabled review the agent reads a diff returned from get_pr_diff_for_file.
     The diff is pre-annotated with <L{n}> prefixes on visible new-file lines.
     The instruction must tell the agent to use these annotations as the 'line'
     value in findings so it does not have to compute line numbers from hunk headers.
     """
-    assert "<L{n}>" in TOOL_ENABLED_REVIEW_INSTRUCTION or "<L" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+    assert (
+        "<L{n}>" in TOOL_ENABLED_REVIEW_INSTRUCTION
+        or "<L" in TOOL_ENABLED_REVIEW_INSTRUCTION
+    ), (
         "TOOL_ENABLED_REVIEW_INSTRUCTION must explain the <L{n}> line number annotation format"
     )
     assert "annotation" in TOOL_ENABLED_REVIEW_INSTRUCTION.lower(), (
@@ -201,7 +204,7 @@ def test_findings_only_instruction_contains_line_number_guidance():
 
 
 def test_findings_only_instruction_restricts_to_visible_diff_lines():
-    """TOOL_ENABLED_REVIEW_INSTRUCTION must tell the agent to only report lines visible in the diff."""
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must restrict findings to visible diff lines."""
     instr = TOOL_ENABLED_REVIEW_INSTRUCTION
     # Must tell the agent to drop findings for lines with no annotation
     assert "annotation" in instr.lower() or "annotated" in instr.lower(), (
@@ -212,7 +215,7 @@ def test_findings_only_instruction_restricts_to_visible_diff_lines():
 
 
 def test_findings_only_instruction_head_sha_ref_guidance():
-    """TOOL_ENABLED_REVIEW_INSTRUCTION must tell the agent to use head_sha as ref for get_file_lines."""
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must tell the agent to use head_sha as ref."""
     assert "head_sha" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
         "TOOL_ENABLED_REVIEW_INSTRUCTION must guide the agent to use head_sha as the ref parameter "
         "for get_file_lines and get_file_content so it reads the correct revision"
@@ -226,7 +229,10 @@ def test_findings_only_instruction_category_field():
         "so the agent populates it with values like Correctness, Security, etc."
     )
     # Must provide example values so the agent knows what to put there
-    assert "Correctness" in TOOL_ENABLED_REVIEW_INSTRUCTION or "Security" in TOOL_ENABLED_REVIEW_INSTRUCTION, (
+    assert (
+        "Correctness" in TOOL_ENABLED_REVIEW_INSTRUCTION
+        or "Security" in TOOL_ENABLED_REVIEW_INSTRUCTION
+    ), (
         "TOOL_ENABLED_REVIEW_INSTRUCTION must list example category values"
     )
 
@@ -244,13 +250,16 @@ def test_embedded_diff_review_instruction_category_field():
     assert "category" in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
         "EMBEDDED_DIFF_REVIEW_INSTRUCTION must mention the optional 'category' field"
     )
-    assert "Correctness" in EMBEDDED_DIFF_REVIEW_INSTRUCTION or "Security" in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
+    assert (
+        "Correctness" in EMBEDDED_DIFF_REVIEW_INSTRUCTION
+        or "Security" in EMBEDDED_DIFF_REVIEW_INSTRUCTION
+    ), (
         "EMBEDDED_DIFF_REVIEW_INSTRUCTION must list example category values"
     )
 
 
 def test_embedded_diff_review_instruction_prefers_omission_over_weak_speculation():
-    """EMBEDDED_DIFF_REVIEW_INSTRUCTION should tell the model to omit contradicted or weak findings."""
+    """EMBEDDED_DIFF_REVIEW_INSTRUCTION should prefer omission over weak findings."""
     lowered = EMBEDDED_DIFF_REVIEW_INSTRUCTION.lower()
     assert "omit the finding" in lowered
     assert "prefer omission over weak speculation" in lowered
@@ -313,7 +322,8 @@ def test_shared_agent_fix_and_examples_appear_in_both_instructions():
         "TOOL_ENABLED_REVIEW_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
     )
     assert _SHARED_AGENT_FIX_AND_EXAMPLES in EMBEDDED_DIFF_REVIEW_INSTRUCTION, (
-        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must contain the shared agent_fix_prompt/examples fragment"
+        "EMBEDDED_DIFF_REVIEW_INSTRUCTION must contain the shared "
+        "agent_fix_prompt/examples fragment"
     )
 
 

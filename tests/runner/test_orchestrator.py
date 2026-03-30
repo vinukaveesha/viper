@@ -41,7 +41,10 @@ def test_review_orchestrator_imports_without_circular_dependency():
 
 @contextmanager
 def _orchestrator_run_env(
-    findings_json: str = '{"findings":[{"path":"foo.py","line":1,"severity":"low","code":"c","message":"m"}]}',
+    findings_json: str = (
+        '{"findings":[{"path":"foo.py","line":1,"severity":"low","code":"c",'
+        '"message":"m"}]}'
+    ),
 ):
     """Context manager: patch config/provider and ADK Runner; yield (provider, mock_runner)."""
     from code_review.providers.base import FileInfo
@@ -263,7 +266,7 @@ def test_create_agent_and_runner_uses_sequential_batch_workflow(
         head_sha="sha1",
         context_brief_attached=False,
     )
-    assert getattr(runner, "_uses_sequential_batch_review") is True
+    assert runner._uses_sequential_batch_review is True
 
 
 @patch("code_review.orchestration_deps._run_agent_and_collect_responses")
@@ -496,7 +499,9 @@ def test_create_agent_and_runner_returns_session_id_service_runner(mock_create_a
     with (
         patch("google.adk.runners.Runner") as MockRunner,
         patch("google.adk.sessions.InMemorySessionService") as MockSessionService,
-        patch("code_review.agent.workflows.create_sequential_batch_review_agent") as mock_create_batch,
+        patch(
+            "code_review.agent.workflows.create_sequential_batch_review_agent"
+        ) as mock_create_batch,
     ):
         mock_svc = MagicMock()
         MockSessionService.return_value = mock_svc

@@ -870,7 +870,12 @@ class GitHubProvider(ProviderInterface):
     ) -> None:
         thread_id = (thread_context.thread_id or "").strip()
         if not thread_id:
-            ctx = self.get_review_thread_dismissal_context(owner, repo, pr_number, triggered_comment_id)
+            ctx = self.get_review_thread_dismissal_context(
+                owner,
+                repo,
+                pr_number,
+                triggered_comment_id,
+            )
             thread_id = (ctx.thread_id or "").strip() if ctx is not None else ""
         if not thread_id:
             raise ValueError("GitHub review thread id is required to resolve the thread")

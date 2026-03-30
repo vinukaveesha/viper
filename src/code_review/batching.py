@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Literal
 
 from code_review.diff.parser import DiffHunk, parse_unified_diff
 from code_review.providers.base import FileInfo
@@ -259,7 +260,14 @@ def _extract_diff_header_lines(diff_text: str) -> list[str]:
 def _render_hunk_group(header_lines: Sequence[str], hunks: Sequence[DiffHunk]) -> str:
     lines = list(header_lines)
     for hunk in hunks:
-        lines.append(_render_hunk_header(hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count))
+        lines.append(
+            _render_hunk_header(
+                hunk.old_start,
+                hunk.old_count,
+                hunk.new_start,
+                hunk.new_count,
+            )
+        )
         lines.extend(_render_hunk_lines(hunk.lines))
     return "\n".join(lines).strip()
 

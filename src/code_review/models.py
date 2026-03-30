@@ -1,10 +1,10 @@
 """Model factory and model metadata helpers."""
 
+import json
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
-import json
-import os
 from typing import Any
 
 from code_review.config import get_llm_config
@@ -88,7 +88,10 @@ def get_model_metadata_catalog() -> dict[tuple[str, str], ModelMetadata]:
     return dict(_load_model_metadata_catalog())
 
 
-def get_model_metadata(provider: str | None = None, model: str | None = None) -> ModelMetadata | None:
+def get_model_metadata(
+    provider: str | None = None,
+    model: str | None = None,
+) -> ModelMetadata | None:
     """Look up static metadata for a provider/model pair."""
     if provider is None or model is None:
         config = get_llm_config()

@@ -44,7 +44,8 @@ def eval(
     total_failed = 0
     for summary in summaries:
         typer.echo(
-            f"{summary.suite_name}: {summary.passed}/{summary.total} passed, {summary.failed} failed"
+            f"{summary.suite_name}: {summary.passed}/{summary.total} "
+            f"passed, {summary.failed} failed"
         )
         for result in summary.results:
             status = "PASS" if result.passed else "FAIL"

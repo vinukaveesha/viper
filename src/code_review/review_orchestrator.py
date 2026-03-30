@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from code_review.batching import ReviewBatch, build_review_batch_budget
 from code_review import orchestration_deps as runner_mod
 from code_review import review_execution as execution_mod
+from code_review.batching import ReviewBatch, build_review_batch_budget
 
 
 class ReviewOrchestrator:
@@ -1412,7 +1412,9 @@ class ReviewOrchestrator:
         )
         self._log_review_batch_plan(batches, paths, incremental_base_sha)
         if not batches:
-            runner_mod.logger.info("Prepared zero review batches from the scoped diff; skipping LLM run")
+            runner_mod.logger.info(
+                "Prepared zero review batches from the scoped diff; skipping LLM run"
+            )
             return self._record_observability_and_build_result(
                 trace_id,
                 start_time,

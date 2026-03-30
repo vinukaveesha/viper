@@ -8,30 +8,29 @@ import json
 import logging
 import os
 import re
-import time
+import time  # noqa: F401
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from google.genai import types
-from litellm import AuthenticationError
 
 import code_review
-from code_review import observability
-from code_review.agent import create_review_agent, reply_dismissal_verdict_from_llm_text
+from code_review import observability  # noqa: F401
+from code_review.agent import (
+    create_review_agent,  # noqa: F401
+    reply_dismissal_verdict_from_llm_text,  # noqa: F401
+)
 from code_review.config import (
-    get_code_review_app_config,
-    get_context_aware_config,
-    get_llm_config,
-    get_scm_config,
+    get_code_review_app_config,  # noqa: F401
+    get_context_aware_config,  # noqa: F401
+    get_llm_config,  # noqa: F401
+    get_scm_config,  # noqa: F401
 )
-from code_review.context import (
-    ContextAwareFatalError,
-    build_context_brief_for_pr,
-    extract_context_references,
-    validate_context_aware_sources,
-)
+from code_review.context.errors import ContextAwareFatalError  # noqa: F401
+from code_review.context.extract import extract_context_references  # noqa: F401
+from code_review.context.pipeline import build_context_brief_for_pr  # noqa: F401
+from code_review.context.validation import validate_context_aware_sources  # noqa: F401
 from code_review.diff.fingerprint import (
     build_fingerprint,
     format_comment_body_with_marker,
@@ -45,27 +44,29 @@ from code_review.diff.parser import (
 )
 from code_review.diff.position import get_diff_hunk_for_line
 from code_review.formatters.comment import finding_to_comment_body, infer_severity_from_comment_body
-from code_review.models import get_context_window, get_max_output_tokens
-from code_review.providers import get_provider
+from code_review.models import (
+    get_context_window,  # noqa: F401
+    get_max_output_tokens,  # noqa: F401
+)
+from code_review.providers import get_provider  # noqa: F401
 from code_review.providers.base import (
     BotAttributionIdentity,
     InlineComment,
-    RateLimitError,
+    RateLimitError,  # noqa: F401
     ReviewDecision,
     UnresolvedReviewItem,
     unified_diff_for_path,
 )
-from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
-from code_review.schemas.findings import FindingV1
-from code_review.schemas.findings import FindingsBatchV1
-from code_review.schemas.reply_dismissal import ReplyDismissalVerdictV1
+from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT  # noqa: F401
+from code_review.schemas.findings import FindingsBatchV1, FindingV1
+from code_review.schemas.reply_dismissal import ReplyDismissalVerdictV1  # noqa: F401
 from code_review.schemas.review_decision_event import (
     ReviewDecisionEventContext,
-    event_allows_decision_only_skip_when_bot_not_blocking,
-    review_decision_event_context_from_env,
+    event_allows_decision_only_skip_when_bot_not_blocking,  # noqa: F401
 )
 from code_review.schemas.review_thread_dismissal import ReviewThreadDismissalContext
-from code_review.standards import detect_from_paths, get_review_standards
+from code_review.standards.detector import detect_from_paths  # noqa: F401
+from code_review.standards.prompts import get_review_standards  # noqa: F401
 
 APP_NAME = "code_review"
 USER_ID = "reviewer"
@@ -1582,7 +1583,14 @@ def _run_agent_and_collect_responses(
     runner, session_service, session_id: str, content: types.Content
 ) -> list[tuple[str, str]]:
     """Run agent once and return text-bearing final responses from all participating agents."""
-    return asyncio.run(_collect_final_response_texts_async(runner, session_service, session_id, content))
+    return asyncio.run(
+        _collect_final_response_texts_async(
+            runner,
+            session_service,
+            session_id,
+            content,
+        )
+    )
 
 
 def _normalize_scm_identity_fragment(value: str) -> str:

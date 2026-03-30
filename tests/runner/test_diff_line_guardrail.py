@@ -187,7 +187,8 @@ def test_runner_keeps_context_line_findings(
 
     # Line 8 is a context line visible in the diff — it should NOT be filtered.
     context_line_finding = (
-        '{"findings":[{"path":"foo.py","line":8,"severity":"medium","code":"c","message":"context line issue"}]}'
+        '{"findings":[{"path":"foo.py","line":8,"severity":"medium","code":"c",'
+        '"message":"context line issue"}]}'
     )
 
     findings = _run_review_with_mocked_bitbucket_runner(

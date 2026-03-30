@@ -198,7 +198,10 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
         provider.post_review_comments.side_effect = RuntimeError("inline failure")
         provider.post_pr_summary_comment = MagicMock()
 
-    findings_json = '{"findings":[{"path":"foo.py","line":2,"severity":"high","code":"x","message":"Fix now."}]}'
+    findings_json = (
+        '{"findings":[{"path":"foo.py","line":2,"severity":"high","code":"x",'
+        '"message":"Fix now."}]}'
+    )
     to_post, provider = _exercise_error_path(
         mock_get_scm_config,
         mock_get_provider,
@@ -246,7 +249,8 @@ def test_batch_mode_rate_limit_error_is_fatal(
             if calls["count"] == 1:
                 yield _final_batch_event(
                     "batch_review_0",
-                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x","message":"Fix a."}]}',
+                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x",'
+                    '"message":"Fix a."}]}',
                 )
                 raise RateLimitError("HTTP 429 Too Many Requests")
             raise RateLimitError("HTTP 429 Too Many Requests")
@@ -324,7 +328,8 @@ def test_batch_mode_propagates_rate_limit_error_for_whole_run(
             if calls["count"] == 2:
                 yield _final_batch_event(
                     "batch_review_0",
-                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x","message":"Fix a."}]}',
+                    '{"findings":[{"path":"a.py","line":1,"severity":"medium","code":"x",'
+                    '"message":"Fix a."}]}',
                 )
                 return
             raise RateLimitError("HTTP 429 Too Many Requests")
@@ -414,7 +419,10 @@ def test_run_marker_comment_posted_for_omit_marker_providers(
         provider.post_pr_summary_comment = MagicMock()
         provider.get_pr_info.return_value = MagicMock(description="x" * 50, title="title")
 
-    findings_json = '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]}'
+    findings_json = (
+        '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x",'
+        '"message":"Fix."}]}'
+    )
     to_post, provider = _exercise_error_path(
         mock_get_scm_config,
         mock_get_provider,
@@ -456,7 +464,10 @@ def test_run_marker_comment_not_posted_for_standard_providers(
         provider.post_review_comments = MagicMock()
         provider.post_pr_summary_comment = MagicMock()
 
-    findings_json = '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]}'
+    findings_json = (
+        '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x",'
+        '"message":"Fix."}]}'
+    )
     _to_post, provider = _exercise_error_path(
         mock_get_scm_config,
         mock_get_provider,
@@ -497,7 +508,10 @@ def test_run_marker_pr_summary_posted_when_inline_succeeds_for_omit_marker_provi
         provider.post_pr_summary_comment = MagicMock()
         provider.get_pr_info.return_value = MagicMock(description="x" * 50, title="title")
 
-    findings_json = '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]}'
+    findings_json = (
+        '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x",'
+        '"message":"Fix."}]}'
+    )
     _to_post, provider = _exercise_error_path(
         mock_get_scm_config,
         mock_get_provider,

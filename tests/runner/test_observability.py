@@ -34,7 +34,10 @@ def test_run_review_emits_trace_id_and_run_complete(
     mock_get_provider.return_value = provider
     mock_context_window.return_value = 1_000_000
 
-    findings_json = '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x","message":"Fix."}]}'
+    findings_json = (
+        '{"findings":[{"path":"foo.py","line":1,"severity":"medium","code":"x",'
+        '"message":"Fix."}]}'
+    )
     mock_event = MagicMock()
     mock_event.is_final_response.return_value = True
     mock_event.content = MagicMock()
@@ -60,7 +63,10 @@ def test_run_review_emits_trace_id_and_run_complete(
             )
         )
 
-    with patch("code_review.orchestration_deps._log_run_complete", side_effect=capture_run_complete):
+    with patch(
+        "code_review.orchestration_deps._log_run_complete",
+        side_effect=capture_run_complete,
+    ):
         with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
             run_review("o", "r", 1, head_sha="abc123", dry_run=False)
 
@@ -128,7 +134,10 @@ def test_run_review_emits_run_complete_on_early_exit(
             )
         )
 
-    with patch("code_review.orchestration_deps._log_run_complete", side_effect=capture_run_complete):
+    with patch(
+        "code_review.orchestration_deps._log_run_complete",
+        side_effect=capture_run_complete,
+    ):
         result = run_review("o", "r", 1, head_sha="abc", dry_run=False)
 
     assert result == []

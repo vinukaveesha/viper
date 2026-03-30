@@ -27,13 +27,15 @@ def _batch_instruction_suffix(batch: ReviewBatch, head_sha: str) -> str:
         )
 
     return (
-        "For this run, ignore any generic wording about reviewing a complete PR diff in the user message. "
+        "For this run, ignore any generic wording about reviewing a complete PR diff "
+        "in the user message. "
         "Review exactly one prepared batch from this PR."
         + head_sha_clause
         + f" This batch covers these file paths: {', '.join(batch.paths)}."
         + " Only report findings for code that appears in the batch segments below."
         + " Use the <L{n}> annotation value as the line field in each finding."
-        + " If a file appears in multiple segments, treat them as partial views of the same file and still use the true file path."
+        + " If a file appears in multiple segments, treat them as partial views "
+        "of the same file and still use the true file path."
         + ' Output a JSON object of the form {"findings": [...]} for this batch only.'
         + ' If there are no issues in this batch, output exactly {"findings": []}.'
         + "\n\nPrepared batch segments:\n"

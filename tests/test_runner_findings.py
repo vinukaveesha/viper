@@ -17,7 +17,11 @@ def test_build_ignore_set_from_dicts():
 
 
 def test_parse_findings_json_markdown_wrapped():
-    text = '```json\n{"findings":[{"path":"y","line":2,"severity":"medium","code":"s","message":"msg"}]}\n```'
+    text = (
+        "```json\n"
+        '{"findings":[{"path":"y","line":2,"severity":"medium","code":"s","message":"msg"}]}'
+        "\n```"
+    )
     out = _parse_findings_json(text)
     assert out["findings"][0]["path"] == "y"
 

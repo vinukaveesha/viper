@@ -18,6 +18,7 @@ def create_agent_and_runner(
     """Build the batch-review SequentialAgent, session service, and ADK Runner."""
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
+
     from code_review.agent.workflows import create_sequential_batch_review_agent
 
     agent = create_sequential_batch_review_agent(
@@ -35,7 +36,7 @@ def create_agent_and_runner(
         session_service=session_service,
         auto_create_session=True,
     )
-    setattr(runner, "_uses_sequential_batch_review", True)
+    runner._uses_sequential_batch_review = True
     return (session_id, session_service, runner)
 
 
@@ -118,7 +119,7 @@ def _run_sequential_batch_review_mode(
                 prompt_suffix=prompt_suffix,
                 error=exc.cause,
             )
-        raise exc.cause
+        raise exc.cause from exc
     return findings_from_batch_responses(responses)
 
 
@@ -231,7 +232,7 @@ def _recover_rate_limited_batches(
                     exc.cause,
                 )
                 continue
-            raise exc.cause
+            raise exc.cause from exc
         all_findings.extend(findings_from_batch_responses(responses))
     return all_findings
 

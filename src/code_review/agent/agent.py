@@ -6,8 +6,7 @@ Uses google.adk Agent (LlmAgent), tools, and generate_content_config.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from code_review.agent.tools.gitea_tools import create_findings_only_tools
 from code_review.config import get_llm_config
@@ -142,7 +141,7 @@ _TOOL_RESULT_CHAR_LIMIT = 200_000
 
 
 async def _before_model_callback(
-    callback_context: "CallbackContext", llm_request: "LlmRequest"
+    callback_context: CallbackContext, llm_request: LlmRequest
 ) -> None:
     """Append compact runtime guardrails that depend on the current tool set."""
     del callback_context
@@ -168,7 +167,7 @@ async def _before_model_callback(
 
 
 async def _after_model_callback(
-    callback_context: "CallbackContext", llm_response: "LlmResponse"
+    callback_context: CallbackContext, llm_response: LlmResponse
 ) -> None:
     """Log raw text-bearing model responses at DEBUG for schema and prompt debugging."""
     if not logger.isEnabledFor(logging.DEBUG):
@@ -185,7 +184,7 @@ async def _after_model_callback(
 
 
 async def _before_tool_callback(
-    tool: "BaseTool", args: dict[str, Any], tool_context: "ToolContext"
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
 ) -> dict[str, str] | None:
     """Reject obviously invalid tool calls before they hit provider-backed helpers."""
     del tool_context
@@ -214,7 +213,7 @@ async def _before_tool_callback(
 
 
 async def _after_tool_callback(
-    tool: "BaseTool", args: dict[str, Any], tool_context: "ToolContext", tool_response: Any
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any
 ) -> Any | None:
     """Normalize string tool results and cap extreme payloads to protect later turns."""
     del tool, args, tool_context

@@ -49,7 +49,8 @@ you may still agree even for medium/high findings. If the reply is weak or dismi
 especially reluctant to agree for medium/high findings.
 
 Output rules (critical):
-- Respond with a single JSON object matching the required schema. Do not include prose before or after it.
+- Respond with a single JSON object matching the required schema.
+  Do not include prose before or after it.
 - Schema:
   - "verdict": "agreed" OR "disagreed"
   - "reply_text": string — required when verdict is "disagreed": a short, professional reply \

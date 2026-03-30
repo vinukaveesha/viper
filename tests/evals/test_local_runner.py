@@ -46,8 +46,10 @@ def test_run_local_golden_pr_review_eval_adk_mode(
             text=(
                 '{"findings":[{"path":"service.py","line":11,"severity":"medium",'
                 '"code":"missing-none-guard","category":"Correctness","confidence":"high",'
-                '"message":"Guard payload.get(\\"items\\") before calling len(...) because it may be None.",'
-                '"evidence":"The new code calls len(payload.get(\\"items\\")) directly, and dict.get returns None when the key is absent.",'
+                '"message":"Guard payload.get(\\"items\\") before calling len(...) '
+                'because it may be None.",'
+                '"evidence":"The new code calls len(payload.get(\\"items\\")) directly,'
+                ' and dict.get returns None when the key is absent.",'
                 '"anchor":"count = len(payload.get(\\"items\\"))"}]}'
             )
         )
