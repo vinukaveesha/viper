@@ -132,11 +132,11 @@ def _capture_create_batch_agent(batch_agents_created):
     return capture_create_batch_agent
 
 
-@patch("code_review.orchestration_deps.get_max_output_tokens", return_value=4096)
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_max_output_tokens", return_value=4096)
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_large_pr_batch_mode_posts_findings_without_duplicates(
     mock_scm, mock_get_provider, mock_llm, mock_context_window, mock_get_max_output_tokens
 ):
@@ -194,11 +194,11 @@ def test_large_pr_batch_mode_posts_findings_without_duplicates(
     assert {(c.path, c.line) for c in all_comments} == {("a.py", 1), ("b.py", 1)}
 
 
-@patch("code_review.orchestration_deps.get_max_output_tokens", return_value=4096)
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_max_output_tokens", return_value=4096)
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_large_pr_batch_mode_uses_one_session(
     mock_scm, mock_get_provider, mock_llm, mock_context_window, mock_get_max_output_tokens
 ):
@@ -247,11 +247,11 @@ def test_large_pr_batch_mode_uses_one_session(
     assert len(session_ids_used) == 1
 
 
-@patch("code_review.orchestration_deps.get_max_output_tokens", return_value=4096)
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_max_output_tokens", return_value=4096)
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_large_pr_batch_mode_builds_multiple_batches_in_stable_order(
     mock_scm, mock_get_provider, mock_llm, mock_context_window, mock_get_max_output_tokens
 ):
@@ -312,11 +312,11 @@ def test_large_pr_batch_mode_builds_multiple_batches_in_stable_order(
     assert list(dict.fromkeys(flattened_paths))[:3] == ["a.py", "b.py", "c.py"]
 
 
-@patch("code_review.orchestration_deps.get_max_output_tokens", return_value=4096)
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_max_output_tokens", return_value=4096)
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_incremental_large_review_builds_batches_from_incremental_diff(
     mock_scm, mock_get_provider, mock_llm, mock_context_window, mock_get_max_output_tokens
 ):

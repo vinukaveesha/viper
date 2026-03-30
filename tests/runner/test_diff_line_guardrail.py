@@ -15,8 +15,8 @@ to drop any finding whose line is not in that set before posting.
 
 from unittest.mock import MagicMock, patch
 
+from code_review.orchestration_deps import _diff_visible_new_lines, _normalize_path_for_anchor
 from code_review.providers.base import FileInfo
-from code_review.runner import _diff_visible_new_lines, _normalize_path_for_anchor
 from tests.conftest import runner_run_async_returning
 
 # A minimal unified diff that changes only lines 10-11 of foo.py.
@@ -143,10 +143,10 @@ def _run_review_with_mocked_bitbucket_runner(
         return run_review("owner", "repo", 1, head_sha=head_sha, dry_run=True)
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_runner_drops_findings_for_lines_outside_diff(
     mock_scm, mock_get_provider, mock_llm, mock_context_window
 ) -> None:
@@ -176,10 +176,10 @@ def test_runner_drops_findings_for_lines_outside_diff(
     assert findings[0].line == 10
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_runner_keeps_context_line_findings(
     mock_scm, mock_get_provider, mock_llm, mock_context_window
 ) -> None:

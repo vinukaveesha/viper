@@ -134,10 +134,10 @@ def _final_batch_event(author: str, findings_json: str) -> MagicMock:
     return event
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_post_review_comments_always_one_by_one(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -179,10 +179,10 @@ def test_post_review_comments_always_one_by_one(
     provider.post_review_comment.assert_not_called()
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_post_review_comment_skipped_not_fallback_to_pr_summary(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -230,10 +230,10 @@ def test_post_review_comment_skipped_not_fallback_to_pr_summary(
         )
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_batch_mode_rate_limit_error_is_fatal(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -268,10 +268,10 @@ def test_batch_mode_rate_limit_error_is_fatal(
     assert [(finding.path, finding.message) for finding in results] == [("a.py", "Fix a.")]
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_batch_mode_propagates_rate_limit_error_for_whole_run(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -344,10 +344,10 @@ def test_batch_mode_propagates_rate_limit_error_for_whole_run(
     assert [(finding.path, finding.message) for finding in findings] == [("a.py", "Fix a.")]
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_batch_mode_generic_error_is_fatal(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -367,10 +367,10 @@ def test_batch_mode_generic_error_is_fatal(
         )
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_batch_mode_authentication_error_is_fatal(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -397,10 +397,10 @@ def test_batch_mode_authentication_error_is_fatal(
         )
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_run_marker_comment_posted_for_omit_marker_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -444,10 +444,10 @@ def test_run_marker_comment_posted_for_omit_marker_providers(
     assert any("inline comment" in str(b).lower() for b in bodies)
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_run_marker_comment_not_posted_for_standard_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -487,10 +487,10 @@ def test_run_marker_comment_not_posted_for_standard_providers(
         )
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_run_marker_pr_summary_posted_when_inline_succeeds_for_omit_marker_providers(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
