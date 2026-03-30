@@ -1220,7 +1220,7 @@ def test_fallback_preserves_line_type_for_bitbucket_server():
     lines this results in HTTP 409 because the lineType doesn't match the diff line.
     The fix is to call post_review_comments([c]) which passes the full InlineComment.
     """
-    from code_review.runner import _post_comments_one_by_one
+    from code_review.orchestration_deps import _post_comments_one_by_one
 
     provider = MagicMock()
     provider.post_review_comments = MagicMock()
@@ -1250,7 +1250,7 @@ def test_fallback_no_pr_summary_when_inline_fails():
     When individual inline posting fails, the comment is simply skipped (logged as WARNING).
     This mirrors the current tool-based inline-posting behaviour.
     """
-    from code_review.runner import _post_comments_one_by_one
+    from code_review.orchestration_deps import _post_comments_one_by_one
 
     provider = MagicMock()
     provider.post_review_comments.side_effect = RuntimeError("409 Conflict")

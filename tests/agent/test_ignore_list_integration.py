@@ -7,10 +7,10 @@ from code_review.providers.base import FileInfo, ProviderCapabilities, ReviewCom
 from tests.conftest import runner_run_async_returning, sample_unified_diff
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
-@patch("code_review.orchestration_deps._fingerprint_for_finding")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod._fingerprint_for_finding")
 def test_manually_resolved_comment_does_not_block_changed_code(
     mock_fingerprint_for_finding,
     mock_get_scm_config,
@@ -80,7 +80,7 @@ def test_manually_resolved_comment_does_not_block_changed_code(
     provider.post_pr_summary_comment = MagicMock()
 
     with (
-        patch("code_review.orchestration_deps.get_provider", return_value=provider),
+        patch("code_review.orchestration.orchestrator.runner_mod.get_provider", return_value=provider),
         patch("google.adk.runners.Runner", return_value=mock_runner_instance),
     ):
         to_post = run_review("o", "r", 1, head_sha="abc123", dry_run=False)

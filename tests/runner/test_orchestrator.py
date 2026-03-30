@@ -8,16 +8,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_review.runner import (
-    ReviewOrchestrator,
+from code_review.orchestration.orchestrator import ReviewOrchestrator
+from code_review.orchestration_deps import (
+    _build_idempotency_key,
     _generate_auto_pr_description,
     _maybe_post_started_review_comment,
 )
 from tests.conftest import runner_run_async_returning
 
 
-def test_review_orchestrator_imports_without_circular_dependency():
-    """Directly importing review_orchestrator should not trip runner's lazy back-import."""
+def test_canonical_orchestrator_imports_without_circular_dependency():
+    """Directly importing the canonical orchestrator module should not trip lazy imports."""
     result = subprocess.run(
         [
             sys.executable,
@@ -25,7 +26,7 @@ def test_review_orchestrator_imports_without_circular_dependency():
             (
                 "import sys; "
                 "sys.path.insert(0, 'viper/src'); "
-                "import code_review.review_orchestrator; "
+                "import code_review.orchestration.orchestrator; "
                 "print('ok')"
             ),
         ],
@@ -57,10 +58,10 @@ def _orchestrator_run_env(
     mock_runner_instance.run_async = runner_run_async_returning([mock_event])
 
     with (
-        patch("code_review.orchestration_deps.get_context_window", return_value=1_000_000),
-        patch("code_review.orchestration_deps.get_provider") as mock_get_provider,
-        patch("code_review.orchestration_deps.get_scm_config") as mock_scm,
-        patch("code_review.orchestration_deps.get_llm_config") as mock_llm,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_context_window", return_value=1_000_000),
+        patch("code_review.orchestration.orchestrator.runner_mod.get_provider") as mock_get_provider,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config") as mock_scm,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config") as mock_llm,
         patch("google.adk.runners.Runner", return_value=mock_runner_instance),
     ):
         mock_scm.return_value = MagicMock(
@@ -93,9 +94,9 @@ def _orchestrator_run_env(
 # --- ReviewOrchestrator._load_config_and_provider() ---
 
 
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_calls_deps_and_returns_tuple(
     mock_get_scm_config, mock_get_llm_config, mock_get_provider
 ):
@@ -125,9 +126,9 @@ def test_load_config_and_provider_calls_deps_and_returns_tuple(
     assert result == (cfg, llm_cfg, provider)
 
 
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_unwraps_secret_str(
     mock_get_scm_config, mock_get_llm_config, mock_get_provider
 ):
@@ -154,9 +155,9 @@ def test_load_config_and_provider_unwraps_secret_str(
     )
 
 
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_uses_plain_token_when_no_get_secret_value(
     mock_get_scm_config, mock_get_llm_config, mock_get_provider
 ):
@@ -178,8 +179,8 @@ def test_load_config_and_provider_uses_plain_token_when_no_get_secret_value(
     )
 
 
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_propagates_scm_config_exception(
     mock_get_scm_config, mock_get_llm_config
 ):
@@ -193,9 +194,9 @@ def test_load_config_and_provider_propagates_scm_config_exception(
     mock_get_llm_config.assert_not_called()
 
 
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_propagates_get_provider_exception(
     mock_get_scm_config, mock_get_llm_config, mock_get_provider
 ):
@@ -269,7 +270,7 @@ def test_create_agent_and_runner_uses_sequential_batch_workflow(
     assert runner._uses_sequential_batch_review is True
 
 
-@patch("code_review.orchestration_deps._run_agent_and_collect_responses")
+@patch("code_review.orchestration.execution.runner_mod._run_agent_and_collect_responses")
 def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
     mock_collect_responses,
 ):
@@ -301,49 +302,43 @@ def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
     ]
 
 
-# --- Step 2: _determine_skip_reason, _load_existing_comments_and_markers,
-#            _compute_idempotency_and_maybe_short_circuit ---
+# --- Step 2: ReviewFilter, CommentManager, _compute_idempotency_and_maybe_short_circuit ---
 
 
-def test_determine_skip_reason_returns_none_when_no_skip_config():
-    """When cfg has no skip_label or skip_title_pattern, _determine_skip_reason returns None."""
+def test_review_filter_should_skip_returns_none_when_no_config():
+    """ReviewFilter.should_skip returns None when cfg has no skip_label or skip_title_pattern."""
+    from code_review.orchestration.filter import ReviewFilter
+
     cfg = MagicMock(skip_label="", skip_title_pattern="")
-    provider = MagicMock()
-    o = ReviewOrchestrator("o", "r", 1)
-    result = o._determine_skip_reason(provider, cfg, "trace-1", 0.0, MagicMock())
-    assert result is None
-    provider.get_pr_info.assert_not_called()
+    rf = ReviewFilter()
+    assert rf.should_skip(MagicMock(), cfg) is None
 
 
-def test_determine_skip_reason_returns_empty_list_when_pr_has_skip_label():
-    """When PR has the skip label, _determine_skip_reason returns [] and emits observability."""
-    cfg = MagicMock()
-    cfg.skip_label = "skip-review"
-    cfg.skip_title_pattern = ""
-    provider = MagicMock()
-    provider.get_pr_info.return_value = MagicMock(labels=["skip-review", "other"], title="Fix bug")
-    o = ReviewOrchestrator("o", "r", 1)
-    with (
-        patch("code_review.orchestration_deps._log_run_complete"),
-        patch("code_review.orchestration_deps.observability") as mock_obs,
-    ):
-        result = o._determine_skip_reason(provider, cfg, "trace-1", 0.0, MagicMock())
-    assert result == []
-    mock_obs.finish_run.assert_called_once()
+def test_review_filter_should_skip_returns_reason_when_label_matches():
+    """ReviewFilter.should_skip returns a non-empty reason string when label is present."""
+    from code_review.orchestration.filter import ReviewFilter
 
-
-def test_determine_skip_reason_returns_none_when_pr_info_is_none():
-    """When get_pr_info returns None, _determine_skip_reason returns None."""
     cfg = MagicMock(skip_label="skip-review", skip_title_pattern="")
-    provider = MagicMock()
-    provider.get_pr_info.return_value = None
-    o = ReviewOrchestrator("o", "r", 1)
-    result = o._determine_skip_reason(provider, cfg, "trace-1", 0.0, MagicMock())
-    assert result is None
+    pr_info = MagicMock(labels=["skip-review", "other"], title="Fix bug")
+    rf = ReviewFilter()
+    reason = rf.should_skip(pr_info, cfg)
+    assert reason is not None
+    assert "skip-review" in reason
 
 
-def test_load_existing_comments_and_markers_returns_ignore_and_resolved_sets():
-    """_load_existing_comments_and_markers returns existing, dicts, ignore_set, resolved sets."""
+def test_review_filter_should_skip_returns_none_when_pr_info_is_none():
+    """ReviewFilter.should_skip returns None when pr_info is None."""
+    from code_review.orchestration.filter import ReviewFilter
+
+    cfg = MagicMock(skip_label="skip-review", skip_title_pattern="")
+    rf = ReviewFilter()
+    assert rf.should_skip(None, cfg) is None
+
+
+def test_comment_manager_load_existing_comments_builds_ignore_set():
+    """CommentManager.load_existing_comments populates ignore_set and existing_comments."""
+    from code_review.comments.manager import CommentManager
+
     provider = MagicMock()
     comment = MagicMock()
     comment.model_dump.return_value = {"path": "a.py", "body": "Hello"}
@@ -352,18 +347,32 @@ def test_load_existing_comments_and_markers_returns_ignore_and_resolved_sets():
     comment.resolved = False
     provider.get_existing_review_comments.return_value = [comment]
 
-    o = ReviewOrchestrator("o", "r", 1)
-    existing, existing_dicts, ignore_set, resolved_comments, resolved_body_set, resolved_fp_set = (
-        o._load_existing_comments_and_markers(provider)
-    )
+    mgr = CommentManager()
+    mgr.load_existing_comments(provider, "o", "r", 1)
 
-    assert len(existing) == 1
-    assert existing_dicts == [{"path": "a.py", "body": "Hello"}]
-    assert len(ignore_set) >= 1  # body_hash at least
-    assert resolved_comments == []
-    assert resolved_body_set == set()
-    assert resolved_fp_set == set()
+    assert len(mgr.existing_comments) == 1
+    assert len(mgr.ignore_set) >= 1  # body_hash at least
+    assert mgr.resolved_fingerprints == set()
     provider.get_existing_review_comments.assert_called_once_with("o", "r", 1)
+
+
+def test_comment_manager_filter_duplicates_returns_to_post():
+    """CommentManager.filter_duplicates returns (finding, fp) pairs and blocks duplicates."""
+    from code_review.comments.manager import CommentManager
+    from code_review.schemas.findings import FindingV1
+
+    mgr = CommentManager()  # empty ignore_set
+    finding = FindingV1(path="foo.py", line=1, severity="low", code="X", message="msg")
+    fp_fn = lambda f: "fp-abc"
+
+    to_post = mgr.filter_duplicates([finding], fp_fn)
+
+    assert len(to_post) == 1
+    assert to_post[0][0] is finding
+    assert isinstance(to_post[0][1], str)
+    # Calling again with the same finding should be deduped
+    to_post2 = mgr.filter_duplicates([finding], fp_fn)
+    assert to_post2 == []
 
 
 def test_compute_idempotency_and_maybe_short_circuit_returns_none_when_no_head_sha():
@@ -391,16 +400,14 @@ def test_compute_idempotency_and_maybe_short_circuit_returns_none_when_key_not_s
 
 def test_compute_idempotency_and_maybe_short_circuit_returns_empty_list_when_key_seen():
     """When idempotency key is seen in comments, returns [] and emits observability."""
-    from code_review.runner import _build_idempotency_key
-
     cfg = MagicMock(provider="gitea", url="https://x.com", token="x")
     llm_cfg = MagicMock(provider="gemini", model="m")
     run_id = _build_idempotency_key(cfg, llm_cfg, "o", "r", 1, "abc")
     existing_dicts = [{"path": "a.py", "body": f"<!-- code-review-agent:run={run_id} -->\nDone."}]
     o = ReviewOrchestrator("o", "r", 1, head_sha="abc")
     with (
-        patch("code_review.orchestration_deps._log_run_complete"),
-        patch("code_review.orchestration_deps.observability") as mock_obs,
+        patch("code_review.orchestration.orchestrator.runner_mod._log_run_complete"),
+        patch("code_review.orchestration.orchestrator.runner_mod.observability") as mock_obs,
     ):
         result = o._compute_idempotency_and_maybe_short_circuit(
             cfg, llm_cfg, existing_dicts, "trace", 0.0, MagicMock()
@@ -411,8 +418,6 @@ def test_compute_idempotency_and_maybe_short_circuit_returns_empty_list_when_key
 
 def test_compute_idempotency_and_maybe_short_circuit_uses_incremental_base_in_key():
     """A different incremental base_sha must not short-circuit as the same run."""
-    from code_review.runner import _build_idempotency_key
-
     cfg = MagicMock(provider="gitea", url="https://x.com", token="x", base_sha="base-new")
     llm_cfg = MagicMock(provider="gemini", model="m")
     run_id = _build_idempotency_key(cfg, llm_cfg, "o", "r", 1, "abc", "base-old")
@@ -426,8 +431,7 @@ def test_compute_idempotency_and_maybe_short_circuit_uses_incremental_base_in_ke
     assert result is None
 
 
-# --- Step 3: _fetch_pr_files_and_diffs, _build_ignore_set_and_filter_files,
-#            _detect_languages_for_files ---
+# --- Step 3: _fetch_review_files_and_diffs, _detect_languages_for_files ---
 
 
 def test_incremental_base_sha_uses_cfg_head_sha_when_parameter_missing():
@@ -438,8 +442,8 @@ def test_incremental_base_sha_uses_cfg_head_sha_when_parameter_missing():
     assert result == "base123"
 
 
-def test_fetch_pr_files_and_diffs_returns_files_paths_and_full_diff():
-    """_fetch_pr_files_and_diffs returns (files, paths, full_diff) from provider."""
+def test_fetch_review_files_and_diffs_returns_files_paths_and_full_diff():
+    """_fetch_review_files_and_diffs returns (files, paths, full_diff, base_sha)."""
     from code_review.providers.base import FileInfo
 
     provider = MagicMock()
@@ -450,21 +454,16 @@ def test_fetch_pr_files_and_diffs_returns_files_paths_and_full_diff():
     provider.get_pr_diff.return_value = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py"
 
     o = ReviewOrchestrator("o", "r", 1)
-    files, paths, full_diff = o._fetch_pr_files_and_diffs(provider)
+    files, paths, full_diff, incremental_base_sha = o._fetch_review_files_and_diffs(
+        provider, MagicMock(base_sha="", head_sha="")
+    )
 
     assert len(files) == 2
     assert paths == ["foo.py", "bar.go"]
     assert "diff --git" in full_diff
+    assert incremental_base_sha == ""
     provider.get_pr_files.assert_called_once_with("o", "r", 1)
     provider.get_pr_diff.assert_called_once_with("o", "r", 1)
-
-
-def test_build_ignore_set_and_filter_files_returns_paths_unchanged():
-    """_build_ignore_set_and_filter_files currently returns paths unchanged (no filtering)."""
-    o = ReviewOrchestrator("o", "r", 1)
-    paths = ["a.py", "b.go", "c.rs"]
-    result = o._build_ignore_set_and_filter_files(paths)
-    assert result == ["a.py", "b.go", "c.rs"]
 
 
 def test_detect_languages_for_files_returns_detected_and_review_standards():
@@ -483,13 +482,11 @@ def test_detect_languages_for_files_returns_detected_and_review_standards():
 # --- Step 4: _create_agent_and_runner ---
 
 
-@patch("code_review.orchestration_deps.create_review_agent")
-def test_create_agent_and_runner_returns_session_id_service_runner(mock_create_agent):
+def test_create_agent_and_runner_returns_session_id_service_runner():
     """_create_agent_and_runner returns (session_id, session_service, runner).
 
     Batch mode always constructs a SequentialAgent workflow over prepared batches.
     """
-    del mock_create_agent
     provider = MagicMock()
     review_standards = "### Python"
     batch_agent = MagicMock()
@@ -533,38 +530,19 @@ def test_create_agent_and_runner_returns_session_id_service_runner(mock_create_a
     )
 
 
-# --- Step 5: _run_agent_and_collect_findings, _attach_fingerprints_and_filter_findings,
-#            _post_findings_and_summary ---
+def test_comment_manager_filter_duplicates_via_orchestrator_run():
+    """_filter_findings_by_diff_scope integration: orchestrator.run() returns correct findings.
 
-
-def test_attach_fingerprints_and_filter_findings_returns_to_post():
-    """_attach_fingerprints_and_filter_findings filters by ignore set.
-
-    Returns list of (finding, fp).
+    This is an implicit integration test verifying CommentManager.filter_duplicates is wired
+    into the full run() path.
     """
-    from code_review.schemas.findings import FindingV1
+    with _orchestrator_run_env() as (provider, _):
+        orchestrator = ReviewOrchestrator("o", "r", 1, head_sha="abc123", dry_run=True)
+        result = orchestrator.run()
 
-    o = ReviewOrchestrator("o", "r", 1, head_sha="abc")
-    finding = FindingV1(path="foo.py", line=1, severity="low", code="X", message="msg")
-    all_findings = [finding]
-    provider = MagicMock()
-    provider.get_file_content.return_value = "line1\nline2\n"
-    ignore_set = set()
-    resolved_body_set = set()
-    resolved_fp_set = set()
-
-    to_post = o._attach_fingerprints_and_filter_findings(
-        all_findings,
-        provider,
-        ignore_set,
-        resolved_body_set,
-        resolved_fp_set,
-    )
-
-    assert len(to_post) == 1
-    assert to_post[0][0] is finding
-    assert isinstance(to_post[0][1], str)
-    assert len(ignore_set) >= 1
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].path == "foo.py"
 
 
 def test_post_findings_and_summary_returns_zero_when_dry_run():
@@ -593,8 +571,8 @@ def test_record_observability_and_build_result_returns_findings_and_emits_log():
     finding = FindingV1(path="a.py", line=1, severity="low", code="X", message="m")
     to_post = [(finding, "fp1")]
     with (
-        patch("code_review.orchestration_deps._log_run_complete") as mock_log,
-        patch("code_review.orchestration_deps.observability") as mock_obs,
+        patch("code_review.orchestration.orchestrator.runner_mod._log_run_complete") as mock_log,
+        patch("code_review.orchestration.orchestrator.runner_mod.observability") as mock_obs,
     ):
         result = o._record_observability_and_build_result(
             "trace-1", 0.0, MagicMock(), ["a.py"], [finding], 1, to_post
@@ -698,10 +676,10 @@ def test_run_batch_mode_message_includes_head_sha_and_batch_count():
     from code_review.providers.base import FileInfo
 
     with (
-        patch("code_review.orchestration_deps.get_context_window", return_value=10),
-        patch("code_review.orchestration_deps.get_provider") as mock_get_provider,
-        patch("code_review.orchestration_deps.get_scm_config") as mock_scm,
-        patch("code_review.orchestration_deps.get_llm_config") as mock_llm,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_context_window", return_value=10),
+        patch("code_review.orchestration.orchestrator.runner_mod.get_provider") as mock_get_provider,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config") as mock_scm,
+        patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config") as mock_llm,
         patch("google.adk.runners.Runner") as mock_runner_cls,
         patch("google.adk.sessions.InMemorySessionService") as mock_session_svc_cls,
     ):

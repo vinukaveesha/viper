@@ -3,18 +3,18 @@
 from unittest.mock import MagicMock, patch
 
 from code_review.diff.fingerprint import format_comment_body_with_marker
-from code_review.providers.base import FileInfo, ProviderCapabilities
-from code_review.runner import (
+from code_review.orchestration_deps import (
     AGENT_VERSION,
     _build_idempotency_key,
     _idempotency_key_seen_in_comments,
-    run_review,
 )
+from code_review.providers.base import FileInfo, ProviderCapabilities
+from code_review.runner import run_review
 from tests.conftest import sample_unified_diff
 
 
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_build_idempotency_key_format(mock_scm, mock_llm):
     mock_scm.return_value = MagicMock(provider="gitea", url="https://gitea.example.com", token="x")
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
@@ -27,8 +27,8 @@ def test_build_idempotency_key_format(mock_scm, mock_llm):
     assert "config/" in key
 
 
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_build_idempotency_key_includes_incremental_base(mock_scm, mock_llm):
     mock_scm.return_value = MagicMock(provider="gitea", url="https://gitea.example.com", token="x")
     mock_llm.return_value = MagicMock(provider="gemini", model="gemini-2.5-flash")
@@ -49,10 +49,10 @@ def test_idempotency_key_seen_in_comments():
     assert _idempotency_key_seen_in_comments(comments_with_run, "other-run") is False
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_run_review_skips_when_idempotency_key_seen(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
@@ -93,10 +93,10 @@ def test_run_review_skips_when_idempotency_key_seen(
     provider.post_review_comments.assert_not_called()
 
 
-@patch("code_review.orchestration_deps.get_context_window")
-@patch("code_review.orchestration_deps.get_llm_config")
-@patch("code_review.orchestration_deps.get_provider")
-@patch("code_review.orchestration_deps.get_scm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_run_review_skips_when_omit_marker_pr_summary_contains_run_id(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):

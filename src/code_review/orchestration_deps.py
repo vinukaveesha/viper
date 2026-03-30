@@ -31,11 +31,16 @@ from code_review.context.errors import ContextAwareFatalError  # noqa: F401
 from code_review.context.extract import extract_context_references  # noqa: F401
 from code_review.context.pipeline import build_context_brief_for_pr  # noqa: F401
 from code_review.context.validation import validate_context_aware_sources  # noqa: F401
+from code_review.diff.analyzer import DiffAnalyzer as _DiffAnalyzer  # noqa: F401
 from code_review.diff.fingerprint import (
     build_fingerprint,
     format_comment_body_with_marker,
     parse_marker_from_comment_body,
     surrounding_content_hash,
+)
+from code_review.diff.line_index import (
+    build_diff_line_index as _build_diff_line_index,  # noqa: F401
+    build_per_file_line_index as _build_per_file_line_index,  # noqa: F401
 )
 from code_review.diff.parser import (
     annotate_diff_with_line_numbers,
@@ -43,6 +48,23 @@ from code_review.diff.parser import (
     parse_unified_diff,
 )
 from code_review.diff.position import get_diff_hunk_for_line
+from code_review.refinement.filters.anchor_relocator import (
+    _ANCHOR_RELOCATION_WINDOW,  # noqa: F401
+    _find_closest_anchor_line,  # noqa: F401
+    _maybe_relocate_finding,  # noqa: F401
+    relocate_findings_by_anchor as _relocate_findings_by_anchor,  # noqa: F401
+)
+from code_review.refinement.filters.contradiction import (
+    _message_describes_syntax_or_missing_token_issue,  # noqa: F401
+    filter_obviously_contradicted_findings as _filter_obviously_contradicted_findings,  # noqa: F401
+)
+from code_review.refinement.filters.patch_validator import (
+    validate_suggested_patches as _validate_suggested_patches,  # noqa: F401
+)
+from code_review.refinement.filters.self_retraction import (
+    _finding_message_looks_self_retracted,  # noqa: F401
+    filter_self_retracted_findings as _filter_self_retracted_finding_messages,  # noqa: F401
+)
 from code_review.formatters.comment import finding_to_comment_body, infer_severity_from_comment_body
 from code_review.models import (
     get_context_window,  # noqa: F401
@@ -82,8 +104,7 @@ except ValueError:
 
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimate (chars / 4) for diff and context budget checks."""
-    return max(0, len(text) // 4)
+    return _DiffAnalyzer.estimate_tokens(text)
 
 
 def _format_review_prompt_supplement(
@@ -165,21 +186,7 @@ def _trim_context_brief(context_brief: str, remaining_chars: int | None) -> str:
 
 
 def _normalize_path_for_anchor(file_path: str) -> str:
-    """Normalize path like Bitbucket provider for diff line matching.
-
-    Strips ``dst://``, ``src://``, ``a/``, and ``b/`` prefixes.
-    """
-    p = (file_path or "").strip()
-    for prefix in ("dst://", "src://"):
-        if p.lower().startswith(prefix):
-            p = p[len(prefix) :].lstrip("/")
-            break
-    p = p.lstrip("/")
-    for prefix in ("a/", "b/"):
-        if p.startswith(prefix):
-            p = p[len(prefix) :]
-            break
-    return p.lstrip("/") or file_path or ""
+    return _DiffAnalyzer.normalize_path(file_path)
 
 
 def _added_lines_in_diff(diff_text: str) -> set[tuple[str, int]]:
@@ -210,484 +217,6 @@ def _diff_visible_new_lines(diff_text: str) -> set[tuple[str, int]]:
     return out
 
 
-def _build_diff_line_index(diff_text: str) -> dict[tuple[str, int], str]:
-    """Build a mapping of (normalized_path, new_line) -> stripped line content from the diff.
-
-    Only includes lines visible in the new-file view (ADDED '+' and CONTEXT ' ').
-    Used by _validate_suggested_patches to check whether a patch is anchored to the
-    correct line.
-    """
-    index: dict[tuple[str, int], str] = {}
-    for hunk in parse_unified_diff(diff_text):
-        norm_path = _normalize_path_for_anchor(hunk.path)
-        for content, _old_ln, new_ln in hunk.lines:
-            if new_ln is not None:
-                index[(norm_path, new_ln)] = content.strip()
-    return index
-
-
-def _patch_tokens(text: str) -> set[str]:
-    """Return a set of non-trivial tokens (len >= 3) from a code string, lower-cased.
-
-    Used for a rough content-similarity check between a suggested_patch and the
-    actual diff line it is anchored to.
-    """
-    return {tok.lower() for tok in re.split(r"\W+", text) if len(tok) >= 3}
-
-
-def _normalize_code_for_comparison(text: str) -> str:
-    """Remove whitespace outside quoted literals so formatting-only changes compare equal."""
-    if not text:
-        return ""
-
-    out: list[str] = []
-    quote_char: str | None = None
-    escaped = False
-
-    for ch in text:
-        if quote_char is not None:
-            out.append(ch)
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == quote_char:
-                quote_char = None
-            continue
-
-        if ch in {'"', "'", "`"}:
-            quote_char = ch
-            out.append(ch)
-            continue
-
-        if ch.isspace():
-            continue
-
-        out.append(ch)
-
-    return "".join(out)
-
-
-_SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        r"\bmissing\s+(?:a\s+)?(?:comma|semicolon|colon|parenthesis|paren|bracket|brace|quote)\b",
-        re.I,
-    ),
-    re.compile(r"\bsyntax\s+error\b", re.I),
-    re.compile(r"\b(?:invalid|malformed)\s+(?:\w+\s+)?code\b", re.I),
-    re.compile(r"\b(?:invalid|malformed)\s+(?:annotation|statement|expression)\b", re.I),
-    re.compile(r"\b(?:won['\u2019]?t|will\s+not)\s+compile\b", re.I),
-    re.compile(r"\bcompiler?\s+error\b", re.I),
-)
-
-_QUOTE_DELIMITERS = frozenset({"`", "'", '"'})
-_MISSING_COMMA_BEFORE_FRAGMENT_PATTERN = re.compile(
-    r"\bmissing\s+(?:a\s+)?comma\s+before\s+(?:`([^`]+)`|\"([^\"]+)\"|'([^']+)')",
-    re.I,
-)
-
-
-def _contains_word(text: str, word: str) -> bool:
-    """Return True when word appears delimited by non-word characters."""
-    start = 0
-    while True:
-        index = text.find(word, start)
-        if index == -1:
-            return False
-        before_ok = index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")
-        after_index = index + len(word)
-        after_ok = after_index == len(text) or not (
-            text[after_index].isalnum() or text[after_index] == "_"
-        )
-        if before_ok and after_ok:
-            return True
-        start = index + len(word)
-
-
-def _message_mentions_missing_quoted_fragment_before_or_after(message: str) -> bool:
-    """Detect messages like 'missing `x` before ...' without broad backtracking regexes."""
-    lowered = message.lower()
-    search_from = 0
-    while True:
-        missing_index = lowered.find("missing", search_from)
-        if missing_index == -1:
-            return False
-
-        fragment_start = missing_index + len("missing")
-        while fragment_start < len(message) and message[fragment_start].isspace():
-            fragment_start += 1
-
-        if fragment_start >= len(message) or message[fragment_start] not in _QUOTE_DELIMITERS:
-            search_from = missing_index + len("missing")
-            continue
-
-        delimiter = message[fragment_start]
-        fragment_end = message.find(delimiter, fragment_start + 1)
-        if fragment_end == -1:
-            return False
-
-        trailing_text = lowered[fragment_end + 1 :]
-        if _contains_word(trailing_text, "before") or _contains_word(trailing_text, "after"):
-            return True
-        search_from = fragment_end + 1
-
-
-def _message_describes_syntax_or_missing_token_issue(message: str) -> bool:
-    """True when the finding text claims a token/syntax defect rather than a semantic issue."""
-    if not message or not str(message).strip():
-        return False
-    return any(p.search(message) for p in _SYNTAX_OR_MISSING_TOKEN_MESSAGE_PATTERNS) or (
-        _message_mentions_missing_quoted_fragment_before_or_after(message)
-    )
-
-
-def _extract_missing_comma_fragment(message: str) -> str | None:
-    """Extract the cited fragment from messages like 'missing comma before `nullable = false`'."""
-    if not message:
-        return None
-    match = _MISSING_COMMA_BEFORE_FRAGMENT_PATTERN.search(message)
-    if not match:
-        return None
-    for group in match.groups():
-        if group and group.strip():
-            return group.strip()
-    return None
-
-
-def _window_text(lines_map: dict[int, str], line: int, radius: int = 2) -> str:
-    """Join nearby visible diff lines into a small searchable context window."""
-    window_lines = [
-        content for ln, content in sorted(lines_map.items()) if line - radius <= ln <= line + radius
-    ]
-    return "\n".join(window_lines)
-
-
-def _non_empty_patch_lines(suggested_patch: str) -> list[str]:
-    """Return stripped non-empty lines from a suggested patch block."""
-    return [ln.strip() for ln in suggested_patch.splitlines() if ln.strip()]
-
-
-def _drop_or_strip_identical_patch_finding(
-    finding: FindingV1,
-    *,
-    actual_content: str,
-    message: str,
-) -> FindingV1 | None:
-    """Drop contradicted syntax findings or strip redundant suggestions."""
-    if not finding.suggested_patch:
-        return finding
-
-    non_empty_lines = _non_empty_patch_lines(finding.suggested_patch)
-    if len(non_empty_lines) != 1:
-        return finding
-
-    matches_current_line = _normalize_code_for_comparison(
-        non_empty_lines[0]
-    ) == _normalize_code_for_comparison(actual_content)
-    if not matches_current_line:
-        return finding
-
-    if _message_describes_syntax_or_missing_token_issue(message):
-        logger.info(
-            "Dropping contradicted syntax/token finding %s:%d: "
-            "suggested patch is identical to current diff line",
-            finding.path,
-            finding.line,
-        )
-        return None
-
-    return finding.model_copy(update={"suggested_patch": None})
-
-
-def _contradicted_missing_comma_fragment(message: str, window_text: str) -> str | None:
-    """Return the contradicted fragment when nearby diff already contains `,<fragment>`."""
-    fragment = _extract_missing_comma_fragment(message)
-    if not fragment:
-        return None
-
-    fragment_patterns = (
-        f", {fragment}",
-        f",{fragment}",
-    )
-    if any(pattern in window_text for pattern in fragment_patterns):
-        return fragment
-    return None
-
-
-def _filter_obviously_contradicted_findings(
-    findings: list[FindingV1],
-    diff_text: str,
-) -> list[FindingV1]:
-    """Drop findings whose own message is directly contradicted by visible diff code.
-
-    This is intentionally conservative and only handles a few high-signal cases:
-    - a syntax/token complaint whose suggested patch is identical to the current line
-    - a message claiming a missing comma before a quoted fragment when the nearby diff
-      already contains `,<fragment>`
-    """
-    if not diff_text or not findings:
-        return findings
-
-    line_index = _build_diff_line_index(diff_text)
-    file_lines = _build_per_file_line_index(diff_text)
-    kept: list[FindingV1] = []
-
-    for f in findings:
-        norm_path = _normalize_path_for_anchor(f.path)
-        actual_content = line_index.get((norm_path, f.line))
-        lines_map = file_lines.get(norm_path, {})
-        if actual_content is None:
-            kept.append(f)
-            continue
-
-        message = f.message or ""
-        window_text = _window_text(lines_map, f.line)
-        f = _drop_or_strip_identical_patch_finding(
-            f,
-            actual_content=actual_content,
-            message=message,
-        )
-        if f is None:
-            continue
-
-        fragment = _contradicted_missing_comma_fragment(message, window_text)
-        if fragment is not None:
-            logger.info(
-                "Dropping contradicted missing-comma finding %s:%d: "
-                "nearby diff already contains comma before %r",
-                f.path,
-                f.line,
-                fragment,
-            )
-            continue
-
-        kept.append(f)
-
-    return kept
-
-
-def _validate_suggested_patches(
-    findings: list[FindingV1],
-    diff_text: str,
-) -> list[FindingV1]:
-    """Strip suggested_patch from findings where the patch doesn't match the anchored line.
-
-    For each finding with a suggested_patch, look up the actual content of finding.line
-    in the diff. If there is no meaningful token overlap between the patch's first line
-    and the actual diff line, the patch is almost certainly misplaced (the LLM named a
-    visible line but wrote a patch for a completely different piece of code).
-
-    In that case, clear suggested_patch and log a warning so the finding is still posted
-    as a plain comment rather than an incorrectly-placed suggestion block.
-
-    Findings without a suggested_patch are returned unchanged.
-    """
-    if not diff_text or not findings:
-        return findings
-
-    line_index = _build_diff_line_index(diff_text)
-    result: list[FindingV1] = []
-    for f in findings:
-        if not f.suggested_patch:
-            result.append(f)
-            continue
-
-        norm_path = _normalize_path_for_anchor(f.path)
-        actual_content = line_index.get((norm_path, f.line))
-        if actual_content is None:
-            # Line not in diff at all (will be caught by the visibility guardrail); keep as-is.
-            result.append(f)
-            continue
-
-        # Use the first non-empty line of the patch for comparison (the replacement).
-        patch_first_line = next(
-            (ln.strip() for ln in f.suggested_patch.splitlines() if ln.strip()), ""
-        )
-
-        actual_tokens = _patch_tokens(actual_content)
-        patch_tokens = _patch_tokens(patch_first_line)
-
-        # If neither side has meaningful tokens, keep the patch as-is (degenerate case).
-        if not actual_tokens or not patch_tokens:
-            result.append(f)
-            continue
-
-        overlap = actual_tokens & patch_tokens
-        # Require at least one shared token OR the actual line is very short (could be
-        # a single symbol like '{' or a blank line that the LLM replaces entirely).
-        is_plausible = bool(overlap) or len(actual_content) <= 5
-
-        if not is_plausible:
-            logger.warning(
-                "Stripping misplaced suggested_patch from finding %s:%d: "
-                "patch first line %r has no token overlap with actual diff line %r",
-                f.path,
-                f.line,
-                patch_first_line,
-                actual_content,
-            )
-            # Build a new FindingV1 without the patch.  FindingV1 is a Pydantic model;
-            # model_copy(update=...) is the safe, idiomatic way to produce a mutated copy.
-            f = f.model_copy(update={"suggested_patch": None})
-
-        result.append(f)
-    return result
-
-
-# Model sometimes emits stream-of-consciousness findings then retracts them in the same message.
-# Patterns tie the walk-back to the model / this finding (I, this, that, it), not domain jargon.
-_SELF_RETRACTION_MESSAGE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\b(?:i\s+will|i['\u2019]ll)\s+retract\b", re.I),
-    re.compile(r"\bi\s+retract\b", re.I),
-    re.compile(r"\bretract(?:ed|ing)?\s+this\s+finding\b", re.I),
-    re.compile(r"\bretract\s+this\b", re.I),
-    re.compile(r"\b(?:this|that|it)\s+is\s+(?:a\s+)?false\s+positive\b", re.I),
-    re.compile(r"\bthat\s+was\s+(?:a\s+)?false\s+positive\b", re.I),
-    re.compile(r"\bit's\s+(?:a\s+)?false\s+positive\b", re.I),
-    re.compile(r"\bwithdraw\s+this\s+finding\b", re.I),
-    re.compile(r"\bdisregard\s+this\b", re.I),
-    re.compile(r"\bignore\s+this\s+(?:finding|comment)\b", re.I),
-    re.compile(r"\b(?:i|we)\s+no\s+longer\s+(?:believe|think)\b", re.I),
-    re.compile(r"\bi\s+was\s+wrong\b", re.I),
-    re.compile(r"\bi\s+was\s+mistaken\b", re.I),
-    re.compile(r"\bmy\s+mistake\b", re.I),
-    re.compile(r"\bon\s+second\s+thought\b", re.I),
-    re.compile(r"\bupon\s+reflection\b", re.I),
-    re.compile(r"\b(?:sorry|apologies),?\s+(?:ignore|disregard)\b", re.I),
-    re.compile(r"\bactually,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
-    re.compile(r"\bhowever,?\s+this\s+is\s+(?:fine|correct|acceptable)\b", re.I),
-)
-
-
-def _finding_message_looks_self_retracted(message: str) -> bool:
-    """True when the model walked back or disowned the issue inside the same message."""
-    if not message or not str(message).strip():
-        return False
-    return any(p.search(message) for p in _SELF_RETRACTION_MESSAGE_PATTERNS)
-
-
-def _filter_self_retracted_finding_messages(findings: list[FindingV1]) -> list[FindingV1]:
-    """Drop findings whose message text retracts or negates the issue (non-actionable noise)."""
-    if not findings:
-        return findings
-    kept: list[FindingV1] = []
-    for f in findings:
-        if _finding_message_looks_self_retracted(f.message):
-            logger.info(
-                "Dropping finding with self-retracted or withdrawn message text: %s:%d",
-                f.path,
-                f.line,
-            )
-            continue
-        kept.append(f)
-    return kept
-
-
-# Default search radius for anchor-based line relocation (lines above & below finding.line).
-_ANCHOR_RELOCATION_WINDOW = 20
-
-
-def _build_per_file_line_index(
-    diff_text: str,
-) -> dict[str, dict[int, str]]:
-    """Build {normalized_path: {new_line_no: stripped_content}} from a unified diff.
-
-    Only includes lines visible in the new-file view (ADDED and CONTEXT).
-    """
-    file_lines: dict[str, dict[int, str]] = {}
-    for hunk in parse_unified_diff(diff_text):
-        norm_path = _normalize_path_for_anchor(hunk.path)
-        bucket = file_lines.setdefault(norm_path, {})
-        for content, _old_ln, new_ln in hunk.lines:
-            if new_ln is not None:
-                bucket[new_ln] = content.strip()
-    return file_lines
-
-
-def _find_closest_anchor_line(
-    lines_map: dict[int, str],
-    anchor_text: str,
-    reported_line: int,
-    window: int,
-) -> int | None:
-    """Return the closest line number whose content contains *anchor_text* (case-insensitive).
-
-    Only considers lines within *window* of *reported_line*.  Returns ``None``
-    when no match is found or the best match is the reported line itself.
-    """
-    anchor_lower = anchor_text.lower()
-    best_line: int | None = None
-    best_distance = window + 1
-    for ln, content in lines_map.items():
-        if anchor_lower not in content.lower():
-            continue
-        distance = abs(ln - reported_line)
-        if distance <= window and distance < best_distance:
-            best_line = ln
-            best_distance = distance
-    return best_line
-
-
-def _relocate_findings_by_anchor(
-    findings: list[FindingV1],
-    diff_text: str,
-    window: int = _ANCHOR_RELOCATION_WINDOW,
-) -> list[FindingV1]:
-    """Correct finding line numbers when the anchor text doesn't match the reported line.
-
-    The LLM sometimes identifies the right code issue but reports a line number
-    that is off by a few lines.  When a finding has a non-empty ``anchor`` or
-    ``fingerprint_hint``, this function checks whether that text appears in the
-    diff content at ``finding.line``.  If not, it searches nearby visible lines
-    (within *window* lines above and below) in the same file and relocates the
-    finding to the closest line whose content contains the anchor substring.
-
-    Findings without an anchor/fingerprint_hint, or whose anchor already matches
-    at the reported line, are returned unchanged.
-    """
-    if not diff_text or not findings:
-        return findings
-
-    file_lines = _build_per_file_line_index(diff_text)
-
-    result: list[FindingV1] = []
-    for f in findings:
-        result.append(_maybe_relocate_finding(f, file_lines, window))
-    return result
-
-
-def _maybe_relocate_finding(
-    f: FindingV1,
-    file_lines: dict[str, dict[int, str]],
-    window: int,
-) -> FindingV1:
-    """Return *f* relocated to the correct line if anchor text doesn't match, else unchanged."""
-    anchor_text = (f.anchor or f.fingerprint_hint or "").strip()
-    if not anchor_text:
-        return f
-
-    norm_path = _normalize_path_for_anchor(f.path)
-    lines_map = file_lines.get(norm_path)
-    if not lines_map:
-        return f
-
-    # Anchor already present at the reported line — nothing to do.
-    current_content = lines_map.get(f.line, "")
-    if anchor_text.lower() in current_content.lower():
-        return f
-
-    best_line = _find_closest_anchor_line(lines_map, anchor_text, f.line, window)
-    if best_line is not None and best_line != f.line:
-        logger.info(
-            "Relocating finding %s:%d -> %d (anchor %r found at line %d)",
-            f.path,
-            f.line,
-            best_line,
-            anchor_text,
-            best_line,
-        )
-        return f.model_copy(update={"line": best_line})
-    return f
 
 
 def _build_idempotency_key(
@@ -722,41 +251,10 @@ def _idempotency_key_seen_in_comments(comments: list, key: str) -> bool:
     return False
 
 
-def _should_skip_finding_for_dedup(
-    path: str,
-    body_hash: str,
-    fp: str,
-    ignore_set: set[tuple[str, str]],
-    resolved_body_set: set[tuple[str, str]],
-    resolved_fp_set: set[tuple[str, str]],
-) -> bool:
-    """Return True if this finding should be skipped (duplicate or resolved)."""
-    if fp and (path, fp) in resolved_fp_set:
-        return True
-    if (path, body_hash) in ignore_set and (path, body_hash) not in resolved_body_set:
-        return True
-    if fp and (path, fp) in ignore_set and (path, fp) not in resolved_fp_set:
-        return True
-    return False
-
-
-def _build_ignore_set(comments: list) -> set[tuple[str, str]]:
-    """
-    Build set of (path, key) from existing review comments.
-    Key is fingerprint (from marker) or body_hash for dedup and manually-resolved ignore.
-    """
-    out: set[tuple[str, str]] = set()
-    for c in comments:
-        path = getattr(c, "path", None) or (c.get("path") if isinstance(c, dict) else "")
-        body = getattr(c, "body", None) or (c.get("body") if isinstance(c, dict) else "")
-        if not path or not body:
-            continue
-        body_hash = hashlib.sha256(body.encode()).hexdigest()
-        out.add((path, body_hash))
-        parsed = parse_marker_from_comment_body(body)
-        if parsed.get("fingerprint"):
-            out.add((path, parsed["fingerprint"]))
-    return out
+from code_review.comments.manager import (  # noqa: E402
+    _build_ignore_set,
+    _should_skip_finding_for_dedup,
+)
 
 
 def _get_file_lines_by_path(
@@ -1121,124 +619,24 @@ def _post_omit_marker_pr_summary_comment(
         )
 
 
-def _quality_gate_dedupe_key_for_item(item: UnresolvedReviewItem) -> str:
-    """Stable key so the same issue is not double-counted (marker fingerprint preferred)."""
-    parsed = parse_marker_from_comment_body(item.body)
-    fp = parsed.get("fingerprint")
-    if fp:
-        return f"fp:{fp}"
-    if item.thread_id:
-        return f"thread:{item.thread_id}"
-    return f"id:{item.stable_id}"
 
 
-def _quality_gate_dedupe_key_for_new_finding(finding: FindingV1, fp: str) -> str:
-    if fp:
-        return f"fp:{fp}"
-    return f"new:{finding.path}:{finding.line}:{finding.code}"
 
 
-def _quality_gate_fetch_unresolved_items(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-) -> list[Any]:
-    try:
-        items = provider.get_unresolved_review_items_for_quality_gate(owner, repo, pr_number)
-    except Exception as e:
-        logger.warning(
-            "get_unresolved_review_items_for_quality_gate failed owner=%s repo=%s pr_number=%s: %s",
-            owner,
-            repo,
-            pr_number,
-            e,
-        )
-        return []
-    return items if isinstance(items, list) else []
-
-
-def _quality_gate_bump_seen(
-    seen_keys: set[str],
-    high_count: int,
-    medium_count: int,
-    key: str,
-    severity: str,
-) -> tuple[int, int]:
-    if key in seen_keys:
-        return high_count, medium_count
-    seen_keys.add(key)
-    if severity == "high":
-        return high_count + 1, medium_count
-    if severity == "medium":
-        return high_count, medium_count + 1
-    return high_count, medium_count
-
-
-def _quality_gate_high_medium_counts(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
-    *,
-    excluded_stable_ids: frozenset[str] | None = None,
-) -> tuple[int, int]:
-    """Count distinct open high/medium signals: existing unresolved items plus net-new findings."""
-    items = _quality_gate_fetch_unresolved_items(provider, owner, repo, pr_number)
-    skip_ids = excluded_stable_ids or frozenset()
-    seen_keys: set[str] = set()
-    high_count = 0
-    medium_count = 0
-
-    for raw in items:
-        if not isinstance(raw, UnresolvedReviewItem):
-            continue
-        if raw.stable_id in skip_ids:
-            continue
-        sev = raw.inferred_severity
-        if sev not in ("high", "medium"):
-            continue
-        high_count, medium_count = _quality_gate_bump_seen(
-            seen_keys, high_count, medium_count, _quality_gate_dedupe_key_for_item(raw), sev
-        )
-
-    for finding, fp in to_post:
-        sev = finding.severity
-        if sev not in ("high", "medium"):
-            continue
-        high_count, medium_count = _quality_gate_bump_seen(
-            seen_keys,
-            high_count,
-            medium_count,
-            _quality_gate_dedupe_key_for_new_finding(finding, fp),
-            sev,
-        )
-
-    return high_count, medium_count
-
-
-def _compute_review_decision_from_counts(
-    high_count: int,
-    medium_count: int,
-    *,
-    high_threshold: int,
-    medium_threshold: int,
-) -> ReviewDecision:
-    """Return REQUEST_CHANGES or APPROVE from aggregated open high/medium counts."""
-    if high_count >= high_threshold or medium_count >= medium_threshold:
-        return "REQUEST_CHANGES"
-    return "APPROVE"
-
-
-@dataclass(frozen=True)
-class QualityGateReviewOutcome:
-    """Aggregated quality-gate counts and derived review decision (single source of truth)."""
-
-    high_count: int
-    medium_count: int
-    decision: ReviewDecision
-    submission_reason: str
+from code_review.quality.gate import (  # noqa: E402
+    _log_quality_gate_review_outcome,
+    _compute_quality_gate_review_outcome,
+    _compute_review_decision_from_counts,
+    _quality_gate_dedupe_key_for_item,
+    _quality_gate_dedupe_key_for_new_finding,
+    _quality_gate_fetch_unresolved_items,
+    _quality_gate_bump_seen,
+    _quality_gate_high_medium_counts,
+)
+from code_review.quality.outcome import (  # noqa: E402
+    QualityGateOutcome,
+    QualityGateReviewOutcome,
+)
 
 
 @dataclass(frozen=True)
@@ -1247,57 +645,6 @@ class PartialResponseCollectionError(Exception):
 
     responses: list[tuple[str, str]]
     cause: Exception
-
-
-def _log_quality_gate_review_outcome(context: str, gate_outcome: QualityGateReviewOutcome) -> None:
-    """Emit a stable log line for the computed quality gate and derived PR decision."""
-    logger.info(
-        "%s quality gate: open_high=%d open_medium=%d => decision=%s",
-        context,
-        gate_outcome.high_count,
-        gate_outcome.medium_count,
-        gate_outcome.decision,
-    )
-
-
-def _compute_quality_gate_review_outcome(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
-    cfg,
-    *,
-    excluded_gate_stable_ids: frozenset[str] | None = None,
-) -> QualityGateReviewOutcome:
-    """Combine provider unresolved items with planned posts; apply thresholds; build reason text."""
-    high_count, medium_count = _quality_gate_high_medium_counts(
-        provider,
-        owner,
-        repo,
-        pr_number,
-        to_post,
-        excluded_stable_ids=excluded_gate_stable_ids,
-    )
-    high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
-    medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
-    decision = _compute_review_decision_from_counts(
-        high_count,
-        medium_count,
-        high_threshold=high_threshold,
-        medium_threshold=medium_threshold,
-    )
-    submission_reason = (
-        f"Auto decision by Viper: aggregated open high={high_count} (threshold {high_threshold}), "
-        f"open medium={medium_count} (threshold {medium_threshold}) "
-        f"=> {decision}."
-    )
-    return QualityGateReviewOutcome(
-        high_count=high_count,
-        medium_count=medium_count,
-        decision=decision,
-        submission_reason=submission_reason,
-    )
 
 
 def _resolve_head_sha_for_review_decision_submission(

@@ -14,32 +14,32 @@ This checklist tracks the implementation of the [Architectural Refactor Plan](AR
 - [x] Reduce `runner.py` to a thin (~60-line) public entry point delegating to `ReviewOrchestrator`.
 
 ## Phase 1: Foundation (Logic Extraction)
-- [ ] Create `src/code_review/diff/analyzer.py` with `DiffAnalyzer` class; migrate `_estimate_tokens` and `_normalize_path_for_anchor` from `orchestration_deps.py`.
-- [ ] Create `src/code_review/diff/line_index.py`; migrate `_build_diff_line_index` and `_build_per_file_line_index` from `orchestration_deps.py`.
-- [ ] Create `src/code_review/refinement/` package; migrate `_relocate_findings_by_anchor`, `_filter_self_retracted_finding_messages`, and `_filter_obviously_contradicted_findings` from `orchestration_deps.py`.
-- [ ] Update `orchestration_deps.py` to re-export moved symbols for backward compatibility.
-- [ ] Verify: Run `pytest tests/diff/` and `pytest tests/agent/`.
+- [x] Create `src/code_review/diff/analyzer.py` with `DiffAnalyzer` class; migrate `_estimate_tokens` and `_normalize_path_for_anchor` from `orchestration_deps.py`.
+- [x] Create `src/code_review/diff/line_index.py`; migrate `_build_diff_line_index` and `_build_per_file_line_index` from `orchestration_deps.py`.
+- [x] Create `src/code_review/refinement/` package; migrate `_relocate_findings_by_anchor`, `_filter_self_retracted_finding_messages`, and `_filter_obviously_contradicted_findings` from `orchestration_deps.py`.
+- [x] Update `orchestration_deps.py` to re-export moved symbols for backward compatibility.
+- [x] Verify: Run `pytest tests/diff/` and `pytest tests/agent/`.
 
 ## Phase 2: State Delegation (Manager Implementation)
-- [ ] Create `src/code_review/comments/manager.py` with `CommentManager`.
-- [ ] Implement `CommentManager.load_existing_comments()` absorbing logic from `ReviewOrchestrator._load_existing_comments_and_markers` (in `review_orchestrator.py`).
-- [ ] Implement `CommentManager.filter_duplicates()` absorbing logic from `ReviewOrchestrator._attach_fingerprints_and_filter_findings` (in `review_orchestrator.py`) and `orchestration_deps._build_ignore_set`.
-- [ ] Create `src/code_review/quality/gate.py` with `QualityGate`; migrate `_compute_quality_gate_review_outcome` and the `QualityGateReviewOutcome` dataclass from `orchestration_deps.py`.
-- [ ] Verify: Run `pytest tests/runner/test_idempotency.py` and `pytest tests/runner/test_orchestrator.py`.
+- [x] Create `src/code_review/comments/manager.py` with `CommentManager`.
+- [x] Implement `CommentManager.load_existing_comments()` absorbing logic from `ReviewOrchestrator._load_existing_comments_and_markers` (in `review_orchestrator.py`).
+- [x] Implement `CommentManager.filter_duplicates()` absorbing logic from `ReviewOrchestrator._attach_fingerprints_and_filter_findings` (in `review_orchestrator.py`) and `orchestration_deps._build_ignore_set`.
+- [x] Create `src/code_review/quality/gate.py` with `QualityGate`; migrate `_compute_quality_gate_review_outcome` and the `QualityGateReviewOutcome` dataclass from `orchestration_deps.py`.
+- [x] Verify: Run `pytest tests/runner/test_idempotency.py` and `pytest tests/runner/test_orchestrator.py`.
 
 ## Phase 3: Orchestrator Slimming and Module Consolidation
-- [ ] Create the `src/code_review/orchestration/` package (`__init__.py`).
-- [ ] Move `review_orchestrator.py` → `orchestration/orchestrator.py`; add backward-compatible re-export at the old location.
-- [ ] Move `review_execution.py` → `orchestration/execution.py`; add backward-compatible re-export at the old location.
-- [ ] Create `src/code_review/orchestration/filter.py` with `ReviewFilter` (PR skip-label/title-pattern logic from `ReviewOrchestrator._determine_skip_reason`).
-- [ ] Refactor `ReviewOrchestrator.run()` to delegate to `DiffAnalyzer`, `CommentManager`, `QualityGate`, and `FindingRefinementPipeline`.
-- [ ] Delegate post-processing to `FindingRefinementPipeline`.
-- [ ] Verify: Run all runner and integration tests (`pytest tests/runner/` and `pytest tests/integration/`).
+- [x] Create the `src/code_review/orchestration/` package (`__init__.py`).
+- [x] Move `review_orchestrator.py` → `orchestration/orchestrator.py`; add backward-compatible re-export at the old location.
+- [x] Move `review_execution.py` → `orchestration/execution.py`; add backward-compatible re-export at the old location.
+- [x] Create `src/code_review/orchestration/filter.py` with `ReviewFilter` (PR skip-label/title-pattern logic from `ReviewOrchestrator._determine_skip_reason`).
+- [x] Refactor `ReviewOrchestrator.run()` to delegate to `DiffAnalyzer`, `CommentManager`, `QualityGate`, and `FindingRefinementPipeline`. *(ReviewFilter, CommentManager, QualityGate, and FindingRefinementPipeline all wired; three obsolete private methods deleted. Test migration is still incomplete and tracked in Phase 4.)*
+- [x] Delegate post-processing to `FindingRefinementPipeline`. *(Pipeline wired into `_filter_findings_by_diff_scope`; individual filter calls removed.)*
+- [x] Verify: Run all runner and integration tests (`pytest tests/runner/` and `pytest tests/integration/`).
 
-## Phase 4: Finalization
-- [ ] Delete `src/code_review/orchestration_deps.py` (all consumers now import from domain-specific modules).
-- [ ] Remove backward-compatibility shims added in Phases 1–3.
-- [ ] Remove the `from code_review.orchestration_deps import *` star import from `src/code_review/runner.py` and replace with explicit imports from the new modules.
-- [ ] Update all remaining imports in tests that rely on `code_review.runner` as a re-export hub (e.g., `tests/runner/test_orchestrator.py`).
-- [ ] Final full test pass including E2E (if possible).
-- [ ] Update `docs/DEVELOPER_GUIDE.md` to reflect the new architecture.
+## Phase 4: Finalization (In Progress)
+- [ ] Delete `src/code_review/orchestration_deps.py` (all consumers now import from domain-specific modules). *(Not done yet: runtime code and tests still import or patch `code_review.orchestration_deps`.)*
+- [ ] Remove backward-compatibility shims added in Phases 1–3. *(Not done yet: `review_orchestrator.py` and `review_execution.py` still exist as import shims, and `runner.py` still re-exports compatibility helpers for tests.)*
+- [x] Remove the `from code_review.orchestration_deps import *` star import from `src/code_review/runner.py` and replace with explicit imports from the new modules.
+- [ ] Update all remaining imports in tests that rely on `code_review.runner` as a re-export hub (e.g., `tests/runner/test_orchestrator.py`). *(Not done yet: tests still import internal helpers and types from `code_review.runner` instead of canonical module locations.)*
+- [x] Final full test pass including E2E (if possible). *(717 unit/integration tests pass; E2E skipped per standard `--ignore=tests/e2e` convention.)*
+- [x] Update `docs/DEVELOPER_GUIDE.md` to reflect the new architecture.
