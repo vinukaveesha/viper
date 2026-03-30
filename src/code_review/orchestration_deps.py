@@ -217,12 +217,6 @@ def _diff_visible_new_lines(diff_text: str) -> set[tuple[str, int]]:
     return out
 
 
-def _build_diff_line_index(diff_text: str) -> dict[tuple[str, int], str]:
-    from code_review.diff.line_index import build_diff_line_index
-    return build_diff_line_index(diff_text)
-
-
-
 
 
 def _build_idempotency_key(

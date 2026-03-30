@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from code_review.diff.analyzer import DiffAnalyzer
 from code_review.diff.line_index import build_diff_line_index
+from code_review.refinement.filters.contradiction import _patch_tokens
 from code_review.schemas.findings import FindingV1
 
 logger = logging.getLogger(__name__)
-
-
-def _patch_tokens(text: str) -> set[str]:
-    return {tok.lower() for tok in re.split(r"\W+", text) if len(tok) >= 3}
 
 
 def validate_suggested_patches(
