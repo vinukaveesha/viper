@@ -251,41 +251,10 @@ def _idempotency_key_seen_in_comments(comments: list, key: str) -> bool:
     return False
 
 
-def _should_skip_finding_for_dedup(
-    path: str,
-    body_hash: str,
-    fp: str,
-    ignore_set: set[tuple[str, str]],
-    resolved_body_set: set[tuple[str, str]],
-    resolved_fp_set: set[tuple[str, str]],
-) -> bool:
-    """Return True if this finding should be skipped (duplicate or resolved)."""
-    if fp and (path, fp) in resolved_fp_set:
-        return True
-    if (path, body_hash) in ignore_set and (path, body_hash) not in resolved_body_set:
-        return True
-    if fp and (path, fp) in ignore_set and (path, fp) not in resolved_fp_set:
-        return True
-    return False
-
-
-def _build_ignore_set(comments: list) -> set[tuple[str, str]]:
-    """
-    Build set of (path, key) from existing review comments.
-    Key is fingerprint (from marker) or body_hash for dedup and manually-resolved ignore.
-    """
-    out: set[tuple[str, str]] = set()
-    for c in comments:
-        path = getattr(c, "path", None) or (c.get("path") if isinstance(c, dict) else "")
-        body = getattr(c, "body", None) or (c.get("body") if isinstance(c, dict) else "")
-        if not path or not body:
-            continue
-        body_hash = hashlib.sha256(body.encode()).hexdigest()
-        out.add((path, body_hash))
-        parsed = parse_marker_from_comment_body(body)
-        if parsed.get("fingerprint"):
-            out.add((path, parsed["fingerprint"]))
-    return out
+from code_review.comments.manager import (  # noqa: E402
+    _build_ignore_set,
+    _should_skip_finding_for_dedup,
+)
 
 
 def _get_file_lines_by_path(
@@ -650,124 +619,24 @@ def _post_omit_marker_pr_summary_comment(
         )
 
 
-def _quality_gate_dedupe_key_for_item(item: UnresolvedReviewItem) -> str:
-    """Stable key so the same issue is not double-counted (marker fingerprint preferred)."""
-    parsed = parse_marker_from_comment_body(item.body)
-    fp = parsed.get("fingerprint")
-    if fp:
-        return f"fp:{fp}"
-    if item.thread_id:
-        return f"thread:{item.thread_id}"
-    return f"id:{item.stable_id}"
 
 
-def _quality_gate_dedupe_key_for_new_finding(finding: FindingV1, fp: str) -> str:
-    if fp:
-        return f"fp:{fp}"
-    return f"new:{finding.path}:{finding.line}:{finding.code}"
 
 
-def _quality_gate_fetch_unresolved_items(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-) -> list[Any]:
-    try:
-        items = provider.get_unresolved_review_items_for_quality_gate(owner, repo, pr_number)
-    except Exception as e:
-        logger.warning(
-            "get_unresolved_review_items_for_quality_gate failed owner=%s repo=%s pr_number=%s: %s",
-            owner,
-            repo,
-            pr_number,
-            e,
-        )
-        return []
-    return items if isinstance(items, list) else []
-
-
-def _quality_gate_bump_seen(
-    seen_keys: set[str],
-    high_count: int,
-    medium_count: int,
-    key: str,
-    severity: str,
-) -> tuple[int, int]:
-    if key in seen_keys:
-        return high_count, medium_count
-    seen_keys.add(key)
-    if severity == "high":
-        return high_count + 1, medium_count
-    if severity == "medium":
-        return high_count, medium_count + 1
-    return high_count, medium_count
-
-
-def _quality_gate_high_medium_counts(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
-    *,
-    excluded_stable_ids: frozenset[str] | None = None,
-) -> tuple[int, int]:
-    """Count distinct open high/medium signals: existing unresolved items plus net-new findings."""
-    items = _quality_gate_fetch_unresolved_items(provider, owner, repo, pr_number)
-    skip_ids = excluded_stable_ids or frozenset()
-    seen_keys: set[str] = set()
-    high_count = 0
-    medium_count = 0
-
-    for raw in items:
-        if not isinstance(raw, UnresolvedReviewItem):
-            continue
-        if raw.stable_id in skip_ids:
-            continue
-        sev = raw.inferred_severity
-        if sev not in ("high", "medium"):
-            continue
-        high_count, medium_count = _quality_gate_bump_seen(
-            seen_keys, high_count, medium_count, _quality_gate_dedupe_key_for_item(raw), sev
-        )
-
-    for finding, fp in to_post:
-        sev = finding.severity
-        if sev not in ("high", "medium"):
-            continue
-        high_count, medium_count = _quality_gate_bump_seen(
-            seen_keys,
-            high_count,
-            medium_count,
-            _quality_gate_dedupe_key_for_new_finding(finding, fp),
-            sev,
-        )
-
-    return high_count, medium_count
-
-
-def _compute_review_decision_from_counts(
-    high_count: int,
-    medium_count: int,
-    *,
-    high_threshold: int,
-    medium_threshold: int,
-) -> ReviewDecision:
-    """Return REQUEST_CHANGES or APPROVE from aggregated open high/medium counts."""
-    if high_count >= high_threshold or medium_count >= medium_threshold:
-        return "REQUEST_CHANGES"
-    return "APPROVE"
-
-
-@dataclass(frozen=True)
-class QualityGateReviewOutcome:
-    """Aggregated quality-gate counts and derived review decision (single source of truth)."""
-
-    high_count: int
-    medium_count: int
-    decision: ReviewDecision
-    submission_reason: str
+from code_review.quality.gate import (  # noqa: E402
+    _log_quality_gate_review_outcome,
+    _compute_quality_gate_review_outcome,
+    _compute_review_decision_from_counts,
+    _quality_gate_dedupe_key_for_item,
+    _quality_gate_dedupe_key_for_new_finding,
+    _quality_gate_fetch_unresolved_items,
+    _quality_gate_bump_seen,
+    _quality_gate_high_medium_counts,
+)
+from code_review.quality.outcome import (  # noqa: E402
+    QualityGateOutcome,
+    QualityGateReviewOutcome,
+)
 
 
 @dataclass(frozen=True)
@@ -776,57 +645,6 @@ class PartialResponseCollectionError(Exception):
 
     responses: list[tuple[str, str]]
     cause: Exception
-
-
-def _log_quality_gate_review_outcome(context: str, gate_outcome: QualityGateReviewOutcome) -> None:
-    """Emit a stable log line for the computed quality gate and derived PR decision."""
-    logger.info(
-        "%s quality gate: open_high=%d open_medium=%d => decision=%s",
-        context,
-        gate_outcome.high_count,
-        gate_outcome.medium_count,
-        gate_outcome.decision,
-    )
-
-
-def _compute_quality_gate_review_outcome(
-    provider,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    to_post: list[tuple[FindingV1, str]],
-    cfg,
-    *,
-    excluded_gate_stable_ids: frozenset[str] | None = None,
-) -> QualityGateReviewOutcome:
-    """Combine provider unresolved items with planned posts; apply thresholds; build reason text."""
-    high_count, medium_count = _quality_gate_high_medium_counts(
-        provider,
-        owner,
-        repo,
-        pr_number,
-        to_post,
-        excluded_stable_ids=excluded_gate_stable_ids,
-    )
-    high_threshold = int(getattr(cfg, "review_decision_high_threshold", 1))
-    medium_threshold = int(getattr(cfg, "review_decision_medium_threshold", 3))
-    decision = _compute_review_decision_from_counts(
-        high_count,
-        medium_count,
-        high_threshold=high_threshold,
-        medium_threshold=medium_threshold,
-    )
-    submission_reason = (
-        f"Auto decision by Viper: aggregated open high={high_count} (threshold {high_threshold}), "
-        f"open medium={medium_count} (threshold {medium_threshold}) "
-        f"=> {decision}."
-    )
-    return QualityGateReviewOutcome(
-        high_count=high_count,
-        medium_count=medium_count,
-        decision=decision,
-        submission_reason=submission_reason,
-    )
 
 
 def _resolve_head_sha_for_review_decision_submission(
