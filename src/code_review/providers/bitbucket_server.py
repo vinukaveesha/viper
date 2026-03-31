@@ -1098,9 +1098,10 @@ class BitbucketServerProvider(ProviderInterface):
             data = self._get(path, params={"start": start, "limit": 100})
         except httpx.HTTPStatusError as e:
             status = e.response.status_code if e.response is not None else 0
-            if status == 404:
+            if status in (400, 404):
                 logger.debug(
-                    "Bitbucket Server comments endpoint unavailable owner=%s repo=%s pr=%s",
+                    "Bitbucket Server comments endpoint unavailable (status=%d) owner=%s repo=%s pr=%s",
+                    status,
                     owner,
                     repo,
                     pr_number,

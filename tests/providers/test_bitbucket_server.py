@@ -953,6 +953,50 @@ def test_get_unresolved_review_items_continues_when_activities_fails(mock_client
     assert items[0].inferred_severity == "high"
 
 
+@patch("code_review.providers.bitbucket_server.httpx.Client")
+def test_get_unresolved_review_items_continues_when_comments_endpoint_returns_400(mock_client):
+    """Quality gate must handle 400 on /comments gracefully (happens when path is missing)."""
+
+    def _get_side_effect(url: str, params=None, **kwargs):
+        mock_r = MagicMock()
+        mock_r.headers = {"content-type": "application/json"}
+        u = str(url)
+        if u.endswith("/comments"):
+            mock_r.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "400", request=MagicMock(), response=MagicMock(status_code=400)
+            )
+        elif "/activities" in u:
+            mock_r.raise_for_status = MagicMock()
+            mock_r.json.return_value = {
+                "isLastPage": True,
+                "values": [
+                    {
+                        "action": "COMMENTED",
+                        "comment": {
+                            "id": 1,
+                            "text": "note",
+                            "state": "OPEN",
+                            "anchor": {"path": "f.java", "line": 2},
+                        },
+                    }
+                ],
+            }
+        elif "/tasks" in u:
+            mock_r.json.return_value = {"isLastPage": True, "values": []}
+        else:
+            mock_r.raise_for_status = MagicMock()
+            mock_r.json.return_value = {}
+        return mock_r
+
+    mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
+
+    p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
+    items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
+    # Should still have the comment from /activities
+    assert len(items) == 1
+    assert items[0].stable_id == "comment:1"
+
+
 def test_extract_commit_id_string_latestcommit():
     """Bitbucket Server commonly returns latestCommit as a plain string hash."""
     ref = {
