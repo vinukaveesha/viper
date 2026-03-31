@@ -53,12 +53,15 @@ CRITICAL — Output format: Your final response must be a valid JSON object matc
 - If you find zero issues: output exactly {"findings": []}.
 - Do not respond with only prose (e.g. "I found no issues"); always return the JSON object so it can be parsed.
 
-Each finding must have: path (str), line (int), severity ("high"|"medium"|"low"|"nit"),
+- Each finding must have: path (str), line (int), severity ("high"|"medium"|"low"|"nit"),
 code (str, e.g. unused-var), and message (str).
 Optional fields: end_line, category (e.g. "Correctness", "Security", "Performance",
 "Maintainability", "Tests", "Style"), confidence ("high"|"medium"|"low"), evidence,
-anchor, fingerprint_hint,
-suggested_patch, agent_fix_prompt.
+anchor, fingerprint_hint.
+
+CRITICAL - Fix guidance fields:
+- suggested_patch: Optional but highly recommended for fixable issues.
+- agent_fix_prompt: Whenever a patch is provided or a fix is identified, you MUST include a concise but complete natural-language prompt that a downstream AI coding agent can use to implement the fix.
 
 IMPORTANT — Finding messages (decisive, no self-retraction):
 - Each `message` must state one clear, actionable problem and (when helpful) the fix. Keep it short.
@@ -102,15 +105,14 @@ output is valid JSON; do not put literal line breaks inside string values."""
 
 # agent_fix_prompt guidance + output examples — identical in both modes.
 _SHARED_AGENT_FIX_AND_EXAMPLES = """\
-agent_fix_prompt (optional) is a natural-language prompt that another AI
-coding agent can use to verify and implement the fix for this specific issue.
-When the issue is fixable with code changes, include a concise but complete
-agent_fix_prompt that:
-- Mentions the file path and line(s)
-- Describes the problem and the desired fix
-- Includes any relevant project-specific constraints or context
+agent_fix_prompt: Inclusion is MANDATORY whenever you provide a `suggested_patch` or identify
+a specific fix. It provides the necessary context for another AI agent to implement the fix.
+Your agent_fix_prompt must:
+- Mention the file path and line(s).
+- Explicitly describe the problem and provide a detailed instruction for the fix.
+- Include any relevant project-specific constraints or context.
 
-Example (one finding): {
+Example (one finding with fix): {
   "findings": [
     {
       "path": "src/foo.py",
@@ -122,11 +124,12 @@ Example (one finding): {
       "message": "Rename variable foo to user_id for clarity.",
       "evidence": "The assignment uses the generic name foo even though request.user_id is the value.",
       "anchor": "foo = request.user_id",
-      "suggested_patch": "user_id = request.user_id"
+      "suggested_patch": "user_id = request.user_id",
+      "agent_fix_prompt": "Update src/foo.py on line 42 to rename the variable 'foo' to 'user_id'. This improves clarity as the variable stores a user identifier from the request object."
     }
   ]
 }
-Example (multiline suggested_patch): "suggested_patch": "if x:\\n    return None"
+Example (multiline suggested_patch): "suggested_patch": "if x:\\n    return None", "agent_fix_prompt": "In src/bar.py, add a null-check at line 20 before accessing the object to prevent a potential crash. If the object is null, return None early."
 Example (no issues): {"findings": []}"""
 
 # When the runner attaches distilled issue/ticket context, extend both modes with this.
