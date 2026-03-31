@@ -74,6 +74,8 @@ def _exercise_batch_mode_failure(
     mock_get_llm_config,
     mock_get_context_window,
     run_async_side_effect,
+    *,
+    dry_run: bool = False,
 ):
     """Helper: run batch mode with a custom run_async side effect."""
     from code_review.runner import run_review
@@ -120,7 +122,7 @@ def _exercise_batch_mode_failure(
     mock_runner_instance.run_async = run_async_side_effect
 
     with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
-        results = run_review("o", "r", 1, head_sha="abc123", dry_run=False)
+        results = run_review("o", "r", 1, head_sha="abc123", dry_run=dry_run)
 
     return results
 
@@ -276,46 +278,6 @@ def test_batch_mode_propagates_rate_limit_error_for_whole_run(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
     """A workflow-level 429 falls back to isolated batches and skips only the rate-limited ones."""
-    from code_review.runner import run_review
-
-    mock_get_scm_config.return_value = MagicMock(
-        provider="gitea",
-        url="https://x.com",
-        token="x",
-        skip_label="",
-        skip_title_pattern="",
-    )
-    mock_get_llm_config.return_value = MagicMock(provider="gemini", model="gemini-3.1")
-    mock_get_context_window.return_value = 1_000_000
-
-    provider = MagicMock()
-    provider.capabilities.return_value = ProviderCapabilities(
-        resolvable_comments=False, supports_suggestions=False
-    )
-    provider.get_pr_files.return_value = [
-        FileInfo(path="a.py", status="modified"),
-        FileInfo(path="b.py", status="modified"),
-    ]
-    provider.get_pr_diff.return_value = (
-        "diff --git a/a.py b/a.py\n"
-        "--- a/a.py\n"
-        "+++ b/a.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        "-old_a\n"
-        "+new_a\n"
-        "diff --git a/b.py b/b.py\n"
-        "--- a/b.py\n"
-        "+++ b/b.py\n"
-        "@@ -1,1 +1,2 @@\n"
-        "-old_b\n"
-        "+new_b\n"
-    )
-    provider.get_file_content.return_value = ""
-    provider.get_existing_review_comments.return_value = []
-    mock_get_provider.return_value = provider
-
-    mock_runner_instance = MagicMock()
-
     calls = {"count": 0}
 
     def run_async_side_effect(*, new_message, **kwargs):
@@ -336,10 +298,14 @@ def test_batch_mode_propagates_rate_limit_error_for_whole_run(
 
         return _agen()
 
-    mock_runner_instance.run_async = run_async_side_effect
-
-    with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
-        findings = run_review("o", "r", 1, head_sha="abc123", dry_run=True)
+    findings = _exercise_batch_mode_failure(
+        mock_get_scm_config,
+        mock_get_provider,
+        mock_get_llm_config,
+        mock_get_context_window,
+        run_async_side_effect,
+        dry_run=True,
+    )
 
     assert [(finding.path, finding.message) for finding in findings] == [("a.py", "Fix a.")]
 
