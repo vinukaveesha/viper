@@ -21,6 +21,12 @@
 pipeline {
     agent any
 
+    environment {
+        SCM_REVIEW_DECISION_ENABLED = 'true'
+        CODE_REVIEW_REPLY_DISMISSAL_ENABLED = 'false'
+        CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING = 'true'
+    }
+
     options {
         withFolderProperties()
     }
@@ -35,8 +41,9 @@ pipeline {
         string(name: 'SCM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_PROVIDER (set provider via folder/global env; do not use a param named SCM_PROVIDER — it shadows env)')
         string(name: 'SCM_URL_OVERRIDE', defaultValue: '', description: 'Optional: overrides env SCM_URL')
         string(name: 'LLM_PROVIDER_OVERRIDE', defaultValue: '', description: 'Optional: overrides env LLM_PROVIDER (folder/global env; LLM_API_KEY credential unchanged)')
+        string(name: 'LLM_MODEL_OVERRIDE', defaultValue: '', description: 'Optional override')
         string(name: 'COMPOSE_PROJECT_NAME', defaultValue: 'code-review', description: 'Docker Compose project name')
-        string(name: 'IMAGE_NAME', defaultValue: 'e4c5/code-review-agent:1.0.0', description: 'Container image name (e.g. user/name:tag); must match published image when using container agent. Pinning to a specific version (e.g. :1.2.3) is recommended over :latest.')
+        string(name: 'IMAGE_NAME', defaultValue: 'docker.io/e4c5/code-review-agent:1.0.1', description: 'Container image name (e.g. user/name:tag); must match published image when using container agent. Pinning to a specific version (e.g. :1.2.3) is recommended over :latest.')
     }
 
     stages {
@@ -47,7 +54,7 @@ pipeline {
                     if (params.SCM_PROVIDER_OVERRIDE?.trim()) env.SCM_PROVIDER = params.SCM_PROVIDER_OVERRIDE.trim()
                     if (params.SCM_URL_OVERRIDE?.trim()) env.SCM_URL = params.SCM_URL_OVERRIDE.trim()
 
-                    def image = env.IMAGE_NAME?.trim() ?: params.IMAGE_NAME?.trim() ?: 'code-review-agent'
+                    def image = params.IMAGE_NAME?.trim() ?: env.IMAGE_NAME?.trim() ?: 'docker.io/e4c5/code-review-agent:1.0.1'
                     def projectName = env.COMPOSE_PROJECT_NAME ?: params.COMPOSE_PROJECT_NAME
                     def network = "${projectName}_code-review-net"
                     def scmOwner = params.SCM_OWNER ?: env.SCM_OWNER
@@ -60,7 +67,7 @@ pipeline {
                     def eventActorLogin = env.CODE_REVIEW_EVENT_ACTOR_LOGIN?.trim() ?: ''
                     def eventActorId = env.CODE_REVIEW_EVENT_ACTOR_ID?.trim() ?: ''
                     def llmProvider = params.LLM_PROVIDER_OVERRIDE?.trim() ?: env.LLM_PROVIDER?.trim() ?: 'gemini'
-                    def llmModel = env.LLM_MODEL?.trim() ?: 'gemini-2.5-flash'
+                    def llmModel = params.LLM_MODEL_OVERRIDE?.trim() ?: env.LLM_MODEL?.trim() ?: 'gemini-2.5-flash'
                     echo "Resolved LLM_PROVIDER=${llmProvider} LLM_MODEL=${llmModel} (override params or folder/global env LLM_*)"
                     def containerRuntime = env.CONTAINER_RUNTIME ?: 'docker'
                     // Optional Bitbucket Server/DC: username slug of SCM_TOKEN user (review decisions); from global/folder/job env
@@ -71,12 +78,12 @@ pipeline {
                     def reviewDecisionMedium = env.SCM_REVIEW_DECISION_MEDIUM_THRESHOLD?.trim() ?: ''
                     def codeReviewLogLevel = env.CODE_REVIEW_LOG_LEVEL?.trim() ?: 'INFO'
 
-                    def scmProvider = env.SCM_PROVIDER ?: 'gitea'
+                    def scmProvider = env.SCM_PROVIDER?.trim() ?: 'gitea'
                     // Bitbucket Data Center sends eventKey like pr:opened; infer provider if not set
                     def isBitbucket = (scmProvider == 'bitbucket_server') || (prAction?.startsWith('pr:'))
                     if (isBitbucket && scmProvider != 'bitbucket_server') scmProvider = 'bitbucket_server'
                     def scmUrl = isBitbucket
-                        ? (env.SCM_URL ?: '')
+                        ? (env.BB_URL_CODE_REVIEW_AGENT ?: '')
                         : (env.SCM_URL ?: 'http://gitea:3000')
                     // Bitbucket Data Center uses pr:* for all PR eventKeys; allow any pr:* when Bitbucket
                     def allowedActions = isBitbucket
