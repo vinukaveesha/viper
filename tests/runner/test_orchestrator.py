@@ -280,6 +280,43 @@ def test_create_agent_and_runner_uses_sequential_batch_workflow(
     assert runner._uses_sequential_batch_review is True
 
 
+@patch("code_review.orchestration.orchestrator.execution_mod._run_sequential_batch_review_mode")
+def test_orchestrator_sequential_batch_wrapper_forwards_supported_args_only(mock_run_batch_mode):
+    """Wrapper should match the execution helper signature and not pass session_service."""
+    provider = MagicMock()
+    orchestrator = ReviewOrchestrator("o", "r", 42, head_sha="abc123")
+    runner = MagicMock()
+    batches = [MagicMock()]
+    mock_run_batch_mode.return_value = []
+
+    result = orchestrator._run_sequential_batch_review_mode(
+        provider,
+        "review standards",
+        runner,
+        "session-1",
+        batches=batches,
+        batch_count=1,
+        context_brief_attached=True,
+        prompt_suffix="extra context",
+    )
+
+    assert result == []
+    mock_run_batch_mode.assert_called_once_with(
+        "o",
+        "r",
+        42,
+        "abc123",
+        provider,
+        "review standards",
+        runner,
+        "session-1",
+        batches=batches,
+        batch_count=1,
+        context_brief_attached=True,
+        prompt_suffix="extra context",
+    )
+
+
 @patch("code_review.orchestration.execution.runner_mod._run_agent_and_collect_responses")
 def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
     mock_collect_responses,
