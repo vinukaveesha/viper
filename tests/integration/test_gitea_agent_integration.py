@@ -41,7 +41,10 @@ index 123..456 100644
 @pytest.mark.respx(assert_all_mocked=True, assert_all_called=False)
 @patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
-@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window", return_value=1_000_000)
+@patch(
+    "code_review.orchestration.orchestrator.runner_mod.get_context_window",
+    return_value=1_000_000,
+)
 @patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
 @patch("google.adk.runners.Runner")
 def test_agent_vs_gitea_posts_findings_to_mocked_api(

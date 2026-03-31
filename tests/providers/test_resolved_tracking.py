@@ -115,7 +115,10 @@ def _run_with_single_stale_comment(
 
     # Patch provider factory and ADK Runner so run_review sees no findings (empty array).
     with (
-        patch("code_review.orchestration.orchestrator.runner_mod.get_provider", return_value=provider),
+        patch(
+            "code_review.orchestration.orchestrator.runner_mod.get_provider",
+            return_value=provider,
+        ),
         patch("google.adk.runners.Runner") as mock_runner_cls,
     ):
         findings_json = '{"findings":[]}'
