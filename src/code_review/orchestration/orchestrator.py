@@ -199,6 +199,9 @@ class ReviewOrchestrator:
             self.repo,
             self.pr_number,
         )
+        cfg, llm_cfg, provider = self._load_config_and_provider()
+        app_cfg = runner_mod.get_code_review_app_config()
+        review_decision_handler, standard_review_handler = self._build_handlers()
         run_handle = observability.start_run(trace_id)
         run_observability = ReviewRunObservability(
             trace_id,
@@ -206,9 +209,6 @@ class ReviewOrchestrator:
             log_run_complete=_log_run_complete,
             finish_run=observability.finish_run,
         )
-        cfg, llm_cfg, provider = self._load_config_and_provider()
-        app_cfg = runner_mod.get_code_review_app_config()
-        review_decision_handler, standard_review_handler = self._build_handlers()
         decision_only = bool(self._review_decision_only) or bool(app_cfg.review_decision_only)
         if decision_only:
             return review_decision_handler.run_review_decision_only(

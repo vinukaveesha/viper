@@ -313,6 +313,19 @@ def test_review_orchestrator_run_returns_list_of_findings():
     assert result[0].message == "m"
 
 
+def test_review_orchestrator_run_does_not_start_observability_when_preflight_fails():
+    orchestrator = ReviewOrchestrator("o", "r", 1, head_sha="abc123", dry_run=True)
+
+    with (
+        patch.object(orchestrator, "_load_config_and_provider", side_effect=RuntimeError("boom")),
+        patch("code_review.orchestration.orchestrator.observability.start_run") as mock_start_run,
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            orchestrator.run()
+
+    mock_start_run.assert_not_called()
+
+
 @patch("google.adk.sessions.InMemorySessionService")
 @patch("google.adk.runners.Runner")
 @patch("code_review.agent.workflows.create_sequential_batch_review_agent")
@@ -397,6 +410,24 @@ def test_execution_run_agent_and_collect_response_uses_canonical_runner_helper(
 
     assert result == "final response"
     mock_collect_response.assert_called_once_with(runner, "session-1", content)
+
+
+@pytest.mark.asyncio
+async def test_collect_response_async_bypasses_adk_templating_for_single_response_runs():
+    from code_review.orchestration.runner_utils import _collect_response_async
+
+    agent = SimpleNamespace(instruction="Keep literal braces like {path} in prompts.")
+    event = MagicMock()
+    event.is_final_response.return_value = True
+    event.content = MagicMock()
+    event.content.parts = [MagicMock(text="final response")]
+    runner = SimpleNamespace(agent=agent, run_async=runner_run_async_returning([event]))
+
+    result = await _collect_response_async(runner, "session-1", MagicMock())
+
+    assert result == "final response"
+    assert callable(agent.instruction)
+    assert agent.instruction(None) == "Keep literal braces like {path} in prompts."
 
 
 @patch("code_review.orchestration.execution.runner_mod._run_agent_and_collect_responses")
@@ -904,6 +935,9 @@ def test_maybe_post_started_review_comment_skips_when_description_is_short_but_i
     paths = ["foo.py"]
 
     _maybe_post_started_review_comment(provider, PRContext("o", "r", 1), pr_info, paths)
+
+    provider.update_pr_description.assert_not_called()
+    provider.post_pr_summary_comment.assert_not_called()
 
 
 def test_run_does_not_post_started_review_comment_in_dry_run():

@@ -86,6 +86,7 @@ def _bypass_adk_templating(agent: Any) -> None:
 async def _collect_response_async(runner, session_id: str, content: types.Content) -> str:
     """Run agent once via run_async and return concatenated final response text."""
     asyncio.get_running_loop().set_exception_handler(_suppress_ssl_teardown_errors)
+    _bypass_adk_templating(runner.agent)
 
     parts: list[str] = []
     async for event in runner.run_async(
