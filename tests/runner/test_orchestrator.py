@@ -1,5 +1,7 @@
 """Unit tests for ReviewOrchestrator and its extracted helpers (RUN_REVIEW_REFACTOR_PLAN)."""
 
+import logging
+import os
 import hashlib
 import subprocess
 import sys
@@ -10,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_review.config import reset_config_cache
 from code_review.models import PRContext
 from code_review.orchestration.orchestrator import ReviewOrchestrator
 from code_review.orchestration_deps import (
@@ -21,6 +24,67 @@ from tests.conftest import runner_run_async_returning
 
 TEST_REPO_ROOT = Path(__file__).resolve().parents[2]
 TEST_SRC_ROOT = TEST_REPO_ROOT / "src"
+
+
+def test_build_batch_review_content_logs_user_prompt_when_enabled(caplog):
+    from code_review.orchestration.execution import build_batch_review_content
+
+    with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
+        reset_config_cache()
+        try:
+            caplog.set_level(logging.INFO)
+            build_batch_review_content(
+                pr_ctx=PRContext("o", "r", 1, head_sha="abc123"),
+                batch_count=2,
+                prompt_suffix="extra context",
+            )
+        finally:
+            reset_config_cache()
+
+    assert "LLM user prompt" in caplog.text
+    assert "extra context" in caplog.text
+
+
+@patch("google.adk.agents.SequentialAgent")
+@patch("code_review.agent.workflows.create_review_agent")
+def test_create_sequential_batch_review_agent_logs_instruction_when_enabled(
+    mock_create_review_agent, _mock_sequential_agent, caplog
+):
+    from code_review.agent.workflows import create_sequential_batch_review_agent
+    from code_review.batching import ReviewBatch, ReviewSegment
+
+    mock_create_review_agent.return_value = MagicMock(name="code_review_agent", instruction="base")
+    batch = ReviewBatch(
+        batch_index=0,
+        estimated_tokens=10,
+        paths=("foo.py",),
+        segments=(
+            ReviewSegment(
+                path="foo.py",
+                diff_text="diff --git a/foo.py b/foo.py\n@@ -1 +1 @@\n-old\n+new\n",
+                estimated_tokens=10,
+                split_strategy="whole_file",
+                segment_index=0,
+                total_segments=1,
+            ),
+        ),
+    )
+
+    with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
+        reset_config_cache()
+        try:
+            caplog.set_level(logging.INFO)
+            create_sequential_batch_review_agent(
+                provider=MagicMock(),
+                review_standards="### Python",
+                batches=[batch],
+                head_sha="abc123",
+            )
+        finally:
+            reset_config_cache()
+
+    assert "LLM instruction agent=batch_review_0" in caplog.text
+    assert "Review exactly one prepared batch from this PR." in caplog.text
 
 
 def test_canonical_orchestrator_imports_without_circular_dependency():

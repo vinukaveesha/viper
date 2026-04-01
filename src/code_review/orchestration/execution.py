@@ -142,7 +142,13 @@ def build_batch_review_content(
     )
     if prompt_suffix:
         msg += "\n\n" + prompt_suffix
-    if runner_mod.logger.isEnabledFor(runner_mod.logging.DEBUG):
+    if runner_mod.get_code_review_app_config().log_prompts:
+        runner_mod.logger.info(
+            "LLM user prompt session=%s prompt=%s",
+            "<dynamic>",
+            msg,
+        )
+    elif runner_mod.logger.isEnabledFor(runner_mod.logging.DEBUG):
         runner_mod.logger.debug(
             "LLM request (batch SequentialAgent) session=%s prompt=%s",
             "<dynamic>",

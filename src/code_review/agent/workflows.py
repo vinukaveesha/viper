@@ -6,6 +6,7 @@ import logging
 
 from code_review.agent.agent import create_review_agent
 from code_review.batching import ReviewBatch
+from code_review.config import get_code_review_app_config
 from code_review.diff.parser import annotate_diff_with_line_numbers
 from code_review.providers.base import ProviderInterface
 
@@ -76,6 +77,8 @@ def create_sequential_batch_review_agent(
         agent.instruction = agent.instruction.rstrip() + "\n\n" + _batch_instruction_suffix(
             batch, head_sha
         )
+        if get_code_review_app_config().log_prompts:
+            logger.info("LLM instruction agent=%s prompt=%s", agent.name, agent.instruction)
         # Prevent AutoFlow from adding the transfer_to_agent tool: each batch
         # sub-agent must return findings directly and must NOT transfer control
         # to peer or parent agents. Without these flags, ADK uses AutoFlow which

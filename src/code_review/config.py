@@ -282,6 +282,11 @@ class CodeReviewAppConfig(BaseSettings):
             "No effect when event context is empty or for non-reply events."
         ),
     )
+    log_prompts: bool = Field(
+        default=False,
+        validation_alias="CODE_REVIEW_LOG_PROMPTS",
+        description="Log the assembled LLM instruction and user prompt for debugging.",
+    )
     disable_idempotency: bool = Field(
         default=False,
         validation_alias="CODE_REVIEW_DISABLE_IDEMPOTENCY",

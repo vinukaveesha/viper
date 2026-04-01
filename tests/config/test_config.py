@@ -210,6 +210,12 @@ def test_code_review_app_disable_idempotency_from_env():
         assert cfg.disable_idempotency is True
 
 
+def test_code_review_app_log_prompts_from_env():
+    with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=True):
+        cfg = CodeReviewAppConfig()
+        assert cfg.log_prompts is True
+
+
 def test_code_review_app_reply_dismissal_enabled_by_default():
     with patch.dict(os.environ, {}, clear=True):
         cfg = CodeReviewAppConfig()
