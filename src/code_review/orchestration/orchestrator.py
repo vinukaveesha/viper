@@ -10,24 +10,19 @@ from code_review import orchestration_deps as runner_mod
 from code_review.batching import ReviewBatch, build_review_batch_budget
 from code_review.comments.manager import CommentManager
 from code_review.models import PRContext
+from code_review.orchestration.context_enricher import ContextEnricher
 from code_review.orchestration import execution as execution_mod
-from code_review.orchestration.events import (
-    ReplyDismissalContext,
-    _reply_added_event_authored_by_bot,
-    _reply_dismissal_diff_context_for_thread,
-    _reply_dismissal_scm_already_addressed_reason,
-)
 from code_review.orchestration.filter import ReviewFilter
 from code_review.orchestration.idempotency import _idempotency_key_seen_in_comments
 from code_review.orchestration.posting import CommentPoster
+from code_review.orchestration.reply_dismissal import ReplyDismissalHandler
+from code_review.orchestration.review_decision import ReviewDecisionHandler
 from code_review.orchestration.runner_utils import _log_run_complete, _run_reply_dismissal_llm
-from code_review.providers.base import BotAttributionIdentity, RateLimitError
+from code_review.providers.base import RateLimitError
 from code_review.quality.gate import QualityGate
 from code_review.refinement.pipeline import FindingRefinementPipeline
 from code_review.schemas.findings import FindingV1
-from code_review.schemas.reply_dismissal import ReplyDismissalVerdictV1
 from code_review.schemas.review_decision_event import ReviewDecisionEventContext
-from code_review.schemas.review_thread_dismissal import ReviewThreadDismissalContext
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +71,30 @@ class ReviewOrchestrator:
     @property
     def head_sha(self) -> str:
         return self.pr_ctx.head_sha
+
+    @property
+    def _context_enricher(self) -> ContextEnricher:
+        return ContextEnricher(self.pr_ctx)
+
+    @property
+    def _reply_dismissal_handler(self) -> ReplyDismissalHandler:
+        return ReplyDismissalHandler(
+            self.pr_ctx,
+            dry_run=self.dry_run,
+            event_context=self._event_context,
+            run_reply_dismissal_llm=_run_reply_dismissal_llm,
+        )
+
+    @property
+    def _review_decision_handler(self) -> ReviewDecisionHandler:
+        return ReviewDecisionHandler(
+            self.pr_ctx,
+            dry_run=self.dry_run,
+            event_context=self._event_context,
+            reply_dismissal_handler=self._reply_dismissal_handler,
+            result_builder=self._record_observability_and_build_result,
+            skip_if_needed=self._skip_if_needed,
+        )
 
     def _load_config_and_provider(self):
         """Load SCM/LLM config and create the provider instance.
@@ -571,12 +590,7 @@ class ReviewOrchestrator:
         return self._filter_findings_to_visible_diff_lines(pipeline_results, full_diff)
 
     def _load_commit_messages(self, provider, need_commits: bool) -> list[str]:
-        raw = (
-            provider.get_pr_commit_messages(self.owner, self.repo, self.pr_number)
-            if need_commits
-            else []
-        )
-        return raw if isinstance(raw, list) else []
+        return self._context_enricher.load_commit_messages(provider, need_commits)
 
     def _build_prompt_suffix(
         self,
@@ -588,38 +602,19 @@ class ReviewOrchestrator:
         full_diff: str,
         remaining_tokens: int,
     ) -> tuple[list[object], str | None, str]:
-        need_commits = app_cfg.include_commit_messages_in_prompt or ctx_cfg.enabled
-        commit_messages = self._load_commit_messages(provider, need_commits)
-        pr_title = (pr_info_for_metadata.title if pr_info_for_metadata else "") or ""
-        pr_desc = (pr_info_for_metadata.description if pr_info_for_metadata else "") or ""
-        refs = (
-            runner_mod.extract_context_references(
-                cfg.provider,
-                self.owner,
-                self.repo,
-                [pr_title, pr_desc, *commit_messages],
-                extract_github=ctx_cfg.github_issues_enabled,
-                extract_gitlab=ctx_cfg.gitlab_issues_enabled,
-                extract_jira=ctx_cfg.jira_enabled,
-                extract_confluence=ctx_cfg.confluence_enabled,
+        try:
+            return self._context_enricher.build_prompt_suffix(
+                provider,
+                cfg,
+                ctx_cfg,
+                app_cfg,
+                pr_info_for_metadata,
+                full_diff,
+                remaining_tokens,
             )
-            if ctx_cfg.enabled
-            else []
-        )
-        context_brief: str | None = None
-        if ctx_cfg.enabled and refs:
-            try:
-                context_brief = runner_mod.build_context_brief_for_pr(ctx_cfg, cfg, refs, full_diff)
-            except runner_mod.ContextAwareFatalError:
-                logger.exception("Context-aware fetch or distillation failed")
-                raise
-        prompt_suffix = runner_mod._format_review_prompt_supplement(
-            context_brief=context_brief,
-            commit_messages=commit_messages,
-            include_commit_messages=app_cfg.include_commit_messages_in_prompt,
-            remaining_tokens=remaining_tokens,
-        )
-        return (refs, context_brief, prompt_suffix)
+        except runner_mod.ContextAwareFatalError:
+            logger.exception("Context-aware fetch or distillation failed")
+            raise
 
     def _decision_only_try_skip_when_bot_not_blocking(
         self,
@@ -629,32 +624,12 @@ class ReviewOrchestrator:
         start_time: float,
         run_handle,
     ) -> list[FindingV1] | None:
-        if not (
-            app_cfg.review_decision_only_skip_if_bot_not_blocking
-            and runner_mod.event_allows_decision_only_skip_when_bot_not_blocking(
-                self._event_context
-            )
-        ):
-            return None
-        caps = provider.capabilities()
-        if not caps.supports_bot_blocking_state_query:
-            return None
-        if provider.get_bot_blocking_state(self.owner, self.repo, self.pr_number) != "NOT_BLOCKING":
-            return None
-        logger.info(
-            "Review-decision-only: skipping quality gate "
-            "(bot not blocking; "
-            "CODE_REVIEW_REVIEW_DECISION_ONLY_SKIP_IF_BOT_NOT_BLOCKING=1, "
-            "comment_id present)."
-        )
-        return self._record_observability_and_build_result(
+        return self._review_decision_handler.try_skip_when_bot_not_blocking(
+            provider,
+            app_cfg,
             trace_id,
             start_time,
             run_handle,
-            paths=[],
-            all_findings=[],
-            successful_post_count=0,
-            to_post=[],
         )
 
     def _decision_only_try_skip_when_event_actor_is_bot(
@@ -664,38 +639,11 @@ class ReviewOrchestrator:
         start_time: float,
         run_handle,
     ) -> list[FindingV1] | None:
-        """Skip review-decision-only runs triggered by the bot's own comment activity."""
-        ctx = self._event_context
-        if ctx is None:
-            return None
-        actor_login = (ctx.actor_login or "").strip()
-        actor_id = (ctx.actor_id or "").strip()
-        if not actor_login and (not actor_id):
-            return None
-        caps = provider.capabilities()
-        if not caps.supports_bot_attribution_identity_query:
-            return None
-        bot_id = provider.get_bot_attribution_identity(self.owner, self.repo, self.pr_number)
-        if not _reply_added_event_authored_by_bot(ctx, bot_id):
-            return None
-        if (ctx.comment_id or "").strip():
-            observability.record_reply_dismissal_outcome("skipped_bot_author")
-        logger.info(
-            "Review-decision-only: skipping bot-authored webhook event "
-            "(actor_login=%r actor_id=%r comment_id=%r source=%r)",
-            actor_login,
-            actor_id,
-            (ctx.comment_id or "").strip(),
-            (ctx.source or "").strip(),
-        )
-        return self._record_observability_and_build_result(
+        return self._review_decision_handler.try_skip_when_event_actor_is_bot(
+            provider,
             trace_id,
             start_time,
             run_handle,
-            paths=[],
-            all_findings=[],
-            successful_post_count=0,
-            to_post=[],
         )
 
     def _validate_context_sources_or_raise(
@@ -706,10 +654,8 @@ class ReviewOrchestrator:
         start_time: float,
     ) -> None:
         """Validate context-aware sources when enabled and finish observability on fatal config."""
-        if not ctx_cfg.enabled:
-            return
         try:
-            runner_mod.validate_context_aware_sources(ctx_cfg, cfg)
+            self._context_enricher.validate_context_sources_or_raise(ctx_cfg, cfg)
         except runner_mod.ContextAwareFatalError as e:
             logger.error("Context-aware review configuration error: %s", e)
             observability.finish_run(
@@ -742,29 +688,11 @@ class ReviewOrchestrator:
         provider,
         caps_rd,
         comment_id: str,
-        verdict: ReplyDismissalVerdictV1,
+        verdict,
     ) -> None:
-        if not caps_rd.supports_review_thread_reply:
-            logger.info(
-                "Reply-dismissal disagreed: provider does not support thread replies"
-            )
-            return
-        if self.dry_run:
-            truncated = (verdict.reply_text or "")[:500]
-            logger.info(
-                "Dry-run: would post review-thread reply (truncated): %s", truncated
-            )
-            return
-        try:
-            provider.post_review_thread_reply(
-                self.owner, self.repo, self.pr_number, comment_id, verdict.reply_text
-            )
-            logger.info(
-                "Reply-dismissal disagreed: posted follow-up reply to comment_id=%s",
-                comment_id,
-            )
-        except Exception as e:
-            logger.warning("post_review_thread_reply failed: %s", e)
+        self._reply_dismissal_handler.maybe_post_disagreed_thread_reply(
+            provider, caps_rd, comment_id, verdict
+        )
 
     def _decision_only_maybe_post_agreed_thread_reply(
         self,
@@ -772,244 +700,53 @@ class ReviewOrchestrator:
         caps_rd,
         comment_id: str,
     ) -> bool:
-        if not caps_rd.supports_review_thread_reply:
-            logger.info(
-                "Reply-dismissal agreed: provider does not support thread replies; "
-                "cannot persist accepted thread state"
-            )
-            return False
-        if self.dry_run:
-            logger.info(
-                "Dry-run: would post durable accepted-thread reply: %s",
-                runner_mod.REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
-            )
-            return False
-        try:
-            provider.post_review_thread_reply(
-                self.owner,
-                self.repo,
-                self.pr_number,
-                comment_id,
-                runner_mod.REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT,
-            )
-            logger.info(
-                "Reply-dismissal agreed: posted durable accepted-thread reply to comment_id=%s",
-                comment_id,
-            )
-            return True
-        except Exception as e:
-            logger.warning("post agreed accepted-thread reply failed: %s", e)
-            return False
+        return self._reply_dismissal_handler.maybe_post_agreed_thread_reply(
+            provider, caps_rd, comment_id
+        )
 
     def _decision_only_maybe_resolve_agreed_thread(
         self,
         provider,
         caps_rd,
         comment_id: str,
-        dctx: ReviewThreadDismissalContext,
+        dctx,
     ) -> bool:
-        if not caps_rd.supports_review_thread_resolution:
-            return self._decision_only_maybe_post_agreed_thread_reply(provider, caps_rd, comment_id)
-        if self.dry_run:
-            logger.info(
-                "Dry-run: would resolve review thread stable_id=%s thread_id=%s",
-                dctx.gate_exclusion_stable_id,
-                (dctx.thread_id or "").strip(),
-            )
-            return False
-        try:
-            provider.resolve_review_thread(
-                self.owner, self.repo, self.pr_number, dctx, comment_id
-            )
-            logger.info(
-                "Reply-dismissal agreed: resolved review thread stable_id=%s thread_id=%s",
-                dctx.gate_exclusion_stable_id,
-                (dctx.thread_id or "").strip(),
-            )
-            return True
-        except Exception as e:
-            logger.warning("resolve_review_thread failed: %s", e)
-            return self._decision_only_maybe_post_agreed_thread_reply(provider, caps_rd, comment_id)
+        return self._reply_dismissal_handler.maybe_resolve_agreed_thread(
+            provider, caps_rd, comment_id, dctx
+        )
 
     def _reply_dismissal_comment_id_or_none(self, app_cfg) -> str | None:
-        """Return event comment id when reply-dismissal should run, else ``None``."""
-        ctx = self._event_context
-        comment_id = (ctx.comment_id or "").strip() if ctx else ""
-        if not app_cfg.reply_dismissal_enabled:
-            if comment_id:
-                logger.info(
-                    "Reply-dismissal disabled: "
-                    "CODE_REVIEW_REPLY_DISMISSAL_ENABLED is explicitly false; "
-                    "skipping LLM for comment_id=%s",
-                    comment_id,
-                )
-            return None
-        if app_cfg.reply_dismissal_enabled and ctx is not None and (ctx.comment_id or "").strip():
-            return ctx.comment_id.strip()
-        logger.info(
-            "Reply-dismissal enabled but not run: requires "
-            "CODE_REVIEW_EVENT_COMMENT_ID; "
-            "got comment_id=%r ctx_present=%s",
-            comment_id or "",
-            ctx is not None,
-        )
-        return None
+        return self._reply_dismissal_handler.comment_id_or_none(app_cfg)
 
     def _reply_dismissal_precheck(
         self, provider, comment_id: str
-    ) -> tuple[BotAttributionIdentity, ReviewThreadDismissalContext] | None:
-        """Return bot identity and dismissal context when reply-dismissal can proceed."""
-        ctx = self._event_context
-        if ctx is None:
-            logger.info("Reply-dismissal skipped: no event context present")
-            return None
-        logger.info(
-            "Reply-dismissal candidate: loading thread context for comment_id=%s",
-            comment_id,
-        )
-        bot_id = provider.get_bot_attribution_identity(self.owner, self.repo, self.pr_number)
-        if _reply_added_event_authored_by_bot(ctx, bot_id):
-            observability.record_reply_dismissal_outcome("skipped_bot_author")
-            logger.info(
-                "Reply-dismissal skipped: reply_added actor matches bot "
-                "(actor_login=%r actor_id=%r)",
-                (ctx.actor_login or "").strip(),
-                (ctx.actor_id or "").strip(),
-            )
-            return None
-        caps_rd = provider.capabilities()
-        if not caps_rd.supports_review_thread_dismissal_context:
-            observability.record_reply_dismissal_outcome("skipped_no_capability")
-            logger.info(
-                "Reply-dismissal skipped: provider does not support review-thread context"
-            )
-            return None
-        dctx = provider.get_review_thread_dismissal_context(
-            self.owner, self.repo, self.pr_number, comment_id
-        )
-        if dctx is None or len(dctx.entries) < 2:
-            observability.record_reply_dismissal_outcome("skipped_insufficient_thread")
-            logger.info(
-                "Reply-dismissal skipped: insufficient thread context "
-                "for comment_id=%s (entries=%s)",
-                comment_id,
-                len(dctx.entries) if dctx is not None else 0,
-            )
-            return None
-        existing_bot_reply = ReplyDismissalContext(dctx, bot_id).existing_bot_reply_after_trigger(
-            comment_id
-        )
-        if existing_bot_reply is not None:
-            observability.record_reply_dismissal_outcome("skipped_already_replied")
-            logger.info(
-                "Reply-dismissal skipped: triggering comment_id=%s already has "
-                "a later bot reply in thread (comment_id=%s)",
-                comment_id,
-                (existing_bot_reply.comment_id or "").strip(),
-            )
-            return None
-        logger.info(
-            "Reply-dismissal thread loaded: comment_id=%s entries=%d stable_id=%s thread_id=%s",
-            comment_id,
-            len(dctx.entries),
-            dctx.gate_exclusion_stable_id,
-            (dctx.thread_id or "").strip(),
-        )
-        return (bot_id, dctx)
+    ) -> tuple[object, object] | None:
+        return self._reply_dismissal_handler.precheck(provider, comment_id)
 
     @staticmethod
-    def _reply_dismissal_parse_verdict(
-        raw_verdict: str,
-    ) -> ReplyDismissalVerdictV1 | None:
-        """Parse reply-dismissal LLM output and log a helpful truncated warning on failure."""
-        verdict = runner_mod.reply_dismissal_verdict_from_llm_text(raw_verdict)
-        if verdict is not None:
-            return verdict
-        observability.record_reply_dismissal_outcome("parse_failed")
-        snippet = (raw_verdict or "").strip()
-        if len(snippet) > 1500:
-            snippet = snippet[:1500] + "…"
-        logger.warning(
-            "Reply-dismissal LLM output could not be parsed as "
-            "ReplyDismissalVerdictV1; enable DEBUG for full request/response. "
-            "Raw (truncated): %r",
-            snippet or "(empty)",
-        )
-        return None
+    def _reply_dismissal_parse_verdict(raw_verdict: str):
+        return ReplyDismissalHandler.parse_verdict(raw_verdict)
 
     def _reply_dismissal_diff_context(
         self,
         provider,
-        dctx: ReviewThreadDismissalContext,
+        dctx,
     ) -> str:
-        path = (dctx.path or "").strip()
-        if not path:
-            return ""
-        if not provider.capabilities().supports_lightweight_pr_diff_for_file:
-            return ""
-        try:
-            return _reply_dismissal_diff_context_for_thread(
-                provider.get_pr_diff_for_file(self.owner, self.repo, self.pr_number, path), dctx
-            )
-        except Exception as e:
-            logger.warning(
-                "Reply-dismissal diff context unavailable for path=%s line=%s: %s",
-                path,
-                int(dctx.line or 0),
-                e,
-            )
-            return ""
+        return self._reply_dismissal_handler.diff_context(provider, dctx)
 
-    def _reply_dismissal_run_llm_and_parse(
-        self, user_msg: str
-    ) -> ReplyDismissalVerdictV1 | None:
-        try:
-            raw_verdict = _run_reply_dismissal_llm(user_msg)
-        except Exception as e:
-            logger.warning("Reply-dismissal LLM run failed: %s", e)
-            observability.record_reply_dismissal_outcome("llm_error")
-            return None
-        logger.info(
-            "Reply-dismissal LLM completed: response_chars=%d",
-            len((raw_verdict or "").strip()),
-        )
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Reply-dismissal raw LLM response: %s",
-                runner_mod._reply_dismissal_response_log_snippet(raw_verdict, limit=4000),
-            )
-        return self._reply_dismissal_parse_verdict(raw_verdict)
+    def _reply_dismissal_run_llm_and_parse(self, user_msg: str):
+        return self._reply_dismissal_handler.run_llm_and_parse(user_msg)
 
     def _reply_dismissal_excluded_gate_ids_from_verdict(
         self,
         provider,
         comment_id: str,
-        dctx: ReviewThreadDismissalContext,
-        verdict: ReplyDismissalVerdictV1,
+        dctx,
+        verdict,
     ) -> frozenset[str]:
-        if verdict.verdict == "agreed":
-            observability.record_reply_dismissal_outcome("agreed")
-            persisted = self._decision_only_maybe_resolve_agreed_thread(
-                provider, provider.capabilities(), comment_id, dctx
-            )
-            if persisted:
-                logger.info(
-                    "Reply-dismissal agreed; excluding gate stable_id=%s",
-                    dctx.gate_exclusion_stable_id,
-                )
-                return frozenset({dctx.gate_exclusion_stable_id})
-            logger.info(
-                "Reply-dismissal agreed but SCM persistence failed; "
-                "keeping gate stable_id=%s in quality gate",
-                dctx.gate_exclusion_stable_id,
-            )
-            return frozenset()
-        if verdict.verdict == "disagreed":
-            observability.record_reply_dismissal_outcome("disagreed")
-            self._decision_only_maybe_post_disagreed_thread_reply(
-                provider, provider.capabilities(), comment_id, verdict
-            )
-        return frozenset()
+        return self._reply_dismissal_handler.excluded_gate_ids_from_verdict(
+            provider, comment_id, dctx, verdict
+        )
 
     def _decision_only_reply_dismissal_excluded_gate_ids(
         self,
@@ -1017,125 +754,17 @@ class ReviewOrchestrator:
         app_cfg,
         trace_id: str,
     ) -> frozenset[str]:
-        """Stable ids to exclude from the quality gate after optional reply-dismissal LLM."""
-        comment_id = self._reply_dismissal_comment_id_or_none(app_cfg)
-        if comment_id is None:
-            return frozenset()
-        precheck = self._reply_dismissal_precheck(provider, comment_id)
-        if precheck is None:
-            return frozenset()
-        bot_id, dctx = precheck
-        scm_reason = _reply_dismissal_scm_already_addressed_reason(dctx)
-        if scm_reason:
-            observability.record_reply_dismissal_outcome("skipped_scm_already_addressed")
-            logger.info(
-                "Reply-dismissal skipped LLM: SCM already indicates thread "
-                "addressed (reason=%s stable_id=%s comment_id=%s)",
-                scm_reason,
-                dctx.gate_exclusion_stable_id,
-                comment_id,
-            )
-            return frozenset({dctx.gate_exclusion_stable_id})
-        diff_context = self._reply_dismissal_diff_context(provider, dctx)
-        user_msg = ReplyDismissalContext(dctx, bot_id).format_user_message(comment_id, diff_context)
-        logger.info(
-            "Reply-dismissal sending thread to LLM: comment_id=%s "
-            "entries=%d stable_id=%s path=%s line=%s diff_context=%s",
-            comment_id,
-            len(dctx.entries),
-            dctx.gate_exclusion_stable_id,
-            (dctx.path or "").strip(),
-            int(dctx.line or 0),
-            "yes" if diff_context else "no",
-        )
-        verdict = self._reply_dismissal_run_llm_and_parse(user_msg)
-        if verdict is None:
-            return frozenset()
-        logger.info(
-            "reply_dismissal_verdict trace_id=%s verdict=%s pr=%s/%s#%s",
-            trace_id,
-            verdict.verdict,
-            self.owner,
-            self.repo,
-            self.pr_number,
-        )
-        return self._reply_dismissal_excluded_gate_ids_from_verdict(
-            provider, comment_id, dctx, verdict
-        )
+        return self._reply_dismissal_handler.excluded_gate_ids(provider, app_cfg, trace_id)
 
     def _run_review_decision_only(
         self, trace_id: str, start_time: float, run_handle, cfg, provider
     ) -> list[FindingV1]:
-        """Recompute quality-gate counts from SCM state and submit review decision only."""
-        pr_url = self.pr_ctx.pr_url(cfg)
-        logger.info(
-            "Review-decision-only run for %s/%s PR %s (provider=%s) URL: %s",
-            self.owner,
-            self.repo,
-            self.pr_number,
-            cfg.provider,
-            pr_url,
-        )
-        print(f"Review-decision-only for PR: {pr_url}")
-        runner_mod._log_review_decision_event_if_present(self._event_context)
-        app_cfg = runner_mod.get_code_review_app_config()
-
-        skip_result = self._skip_if_needed(provider, cfg, trace_id, start_time, run_handle)
-        if skip_result is not None:
-            return skip_result
-        skip_bot_event = self._decision_only_try_skip_when_event_actor_is_bot(
-            provider, trace_id, start_time, run_handle
-        )
-        if skip_bot_event is not None:
-            return skip_bot_event
-        skip_early = self._decision_only_try_skip_when_bot_not_blocking(
-            provider, app_cfg, trace_id, start_time, run_handle
-        )
-        if skip_early is not None:
-            return skip_early
-        head_hint = runner_mod._head_sha_hint_for_decision_only(self.head_sha)
-        head_sha = runner_mod._resolve_head_sha_for_review_decision_submission(
-            provider, self.owner, self.repo, self.pr_number, head_hint
-        )
-        if not head_sha and (not self.dry_run):
-            logger.warning(
-                "Review-decision-only: head_sha missing after provider lookup; "
-                "submit_review_decision may omit commit id for some SCMs."
-            )
-        excluded_gate = self._decision_only_reply_dismissal_excluded_gate_ids(
-            provider, app_cfg, trace_id
-        )
-        gate_outcome = QualityGate(
-            provider, self.owner, self.repo, self.pr_number, cfg
-        ).evaluate(
-            [],
-            excluded_gate_stable_ids=excluded_gate if excluded_gate else None,
-        )
-        if gate_outcome is not None:
-            runner_mod._log_quality_gate_review_outcome("Review-decision-only", gate_outcome)
-        else:
-            logger.warning(
-                "Review-decision-only: skipping PR review decision because unresolved "
-                "review-item lookup failed."
-            )
-        runner_mod._maybe_submit_review_decision(
-            provider,
-            self.owner,
-            self.repo,
-            self.pr_number,
-            head_sha,
-            self.dry_run,
-            cfg,
-            gate_outcome=gate_outcome,
-        )
-        return self._record_observability_and_build_result(
+        return self._review_decision_handler.run_review_decision_only(
             trace_id,
             start_time,
             run_handle,
-            paths=[],
-            all_findings=[],
-            successful_post_count=0,
-            to_post=[],
+            cfg,
+            provider,
         )
 
     def _resolve_empty_scope_submission_head_sha(
@@ -1144,14 +773,10 @@ class ReviewOrchestrator:
         head_sha: str,
         pr_info_for_metadata: Any,
     ) -> str:
-        """Resolve the best head SHA to use when only refreshing the review decision."""
-        if head_sha:
-            return head_sha
-        api_head_sha = (getattr(pr_info_for_metadata, "head_sha", None) or "").strip()
-        if api_head_sha:
-            return api_head_sha
-        return runner_mod._resolve_head_sha_for_review_decision_submission(
-            provider, self.owner, self.repo, self.pr_number, ""
+        return self._review_decision_handler.resolve_empty_scope_submission_head_sha(
+            provider,
+            head_sha,
+            pr_info_for_metadata,
         )
 
     def _maybe_finish_empty_scope_review(
@@ -1165,40 +790,15 @@ class ReviewOrchestrator:
         paths: list[str],
         pr_info_for_metadata: Any,
     ) -> list[FindingV1] | None:
-        """Handle the empty-review-scope early return, including review-decision refresh."""
-        if paths:
-            return None
-        logger.info("No files to review")
-        if bool(getattr(cfg, "review_decision_enabled", False)):
-            logger.info(
-                "Recomputing PR review decision from unresolved SCM state "
-                "despite empty review scope"
-            )
-            gate_outcome = QualityGate(
-                provider, self.owner, self.repo, self.pr_number, cfg
-            ).evaluate([])
-            if gate_outcome is not None:
-                runner_mod._log_quality_gate_review_outcome("Empty-scope refresh", gate_outcome)
-            else:
-                logger.warning(
-                    "Empty-scope refresh: skipping PR review decision because unresolved "
-                    "review-item lookup failed."
-                )
-            submission_head_sha = self._resolve_empty_scope_submission_head_sha(
-                provider, head_sha, pr_info_for_metadata
-            )
-            runner_mod._maybe_submit_review_decision(
-                provider,
-                self.owner,
-                self.repo,
-                self.pr_number,
-                submission_head_sha,
-                self.dry_run,
-                cfg,
-                gate_outcome=gate_outcome,
-            )
-        return self._record_observability_and_build_result(
-            trace_id, start_time, run_handle, paths, [], 0, []
+        return self._review_decision_handler.maybe_finish_empty_scope_review(
+            provider,
+            cfg,
+            head_sha,
+            trace_id,
+            start_time,
+            run_handle,
+            paths,
+            pr_info_for_metadata,
         )
 
     def _log_context_aware_prompt_inputs(
