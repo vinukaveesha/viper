@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from abc import abstractmethod
 from collections.abc import Callable, Iterator
 from typing import Any, Literal
 
 import httpx
 
-from code_review.providers.base import FileInfo, ProviderInterface
+from code_review.providers.base import (
+    FileInfo,
+    PRInfo,
+    ProviderInterface,
+    _log_pr_info_warning,
+    pr_info_from_api_dict,
+)
 
 PaginationMode = Literal["page", "next", "start"]
 PageToken = str | int | None
@@ -103,6 +110,36 @@ class HttpXProvider(ProviderInterface):
 
     def _delete(self, path: str) -> None:
         self._request("DELETE", path)
+
+    def _get_pr_info_from_path(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        *,
+        path: str,
+        logger: logging.Logger,
+        description_key: str = "body",
+    ) -> PRInfo | None:
+        try:
+            data = self._get(path)
+            return pr_info_from_api_dict(data, description_key) if isinstance(data, dict) else None
+        except Exception as e:
+            _log_pr_info_warning(logger, owner, repo, pr_number, e)
+            return None
+
+    def _patch_pr_description(
+        self,
+        *,
+        path: str,
+        description: str,
+        title: str | None = None,
+        description_key: str = "body",
+    ) -> None:
+        payload: dict[str, str] = {description_key: description}
+        if title is not None:
+            payload["title"] = title
+        self._patch(path, payload)
 
     @staticmethod
     def _sha_guard_passes(base_sha: str, head_sha: str) -> bool:

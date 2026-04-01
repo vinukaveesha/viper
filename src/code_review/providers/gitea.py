@@ -19,10 +19,8 @@ from code_review.providers.base import (
     ReviewComment,
     ReviewDecision,
     _log_pr_commit_messages_warning,
-    _log_pr_info_warning,
     commit_messages_from_commit_list,
     file_infos_from_pull_file_list,
-    pr_info_from_api_dict,
 )
 from code_review.providers.bot_blocking_common import (
     blocking_state_from_token_and_github_style_review_list,
@@ -408,21 +406,23 @@ class GiteaProvider(HttpXProvider):
 
     def get_pr_info(self, owner: str, repo: str, pr_number: int) -> PRInfo | None:
         """Return PR title, labels, and description for skip-review and metadata."""
-        try:
-            data = self._get(f"/repos/{owner}/{repo}/pulls/{pr_number}")
-            return pr_info_from_api_dict(data, "body") if isinstance(data, dict) else None
-        except Exception as e:
-            _log_pr_info_warning(logger, owner, repo, pr_number, e)
-            return None
+        return self._get_pr_info_from_path(
+            owner,
+            repo,
+            pr_number,
+            path=f"/repos/{owner}/{repo}/pulls/{pr_number}",
+            logger=logger,
+        )
 
     def update_pr_description(
         self, owner: str, repo: str, pr_number: int, description: str, title: str | None = None
     ) -> None:
         """Update the PR body (and optionally title) via PATCH /repos/.../pulls/{index}."""
-        payload: dict[str, str] = {"body": description}
-        if title is not None:
-            payload["title"] = title
-        self._patch(f"/repos/{owner}/{repo}/pulls/{pr_number}", payload)
+        self._patch_pr_description(
+            path=f"/repos/{owner}/{repo}/pulls/{pr_number}",
+            description=description,
+            title=title,
+        )
 
     def capabilities(self) -> ProviderCapabilities:
         """
