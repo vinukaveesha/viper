@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from code_review import observability
+from code_review import __version__, observability
 from code_review import orchestration_deps as runner_mod
 from code_review.models import PRContext
 from code_review.orchestration.context_enricher import ContextEnricher
@@ -189,6 +189,14 @@ class ReviewOrchestrator:
     def run(self) -> list[FindingV1]:
         """Execute the full review flow and return the findings that were posted."""
         trace_id = str(uuid.uuid4())
+        logger.info(
+            "run_start agent_version=%s trace_id=%s pr=%s/%s#%s",
+            __version__,
+            trace_id,
+            self.owner,
+            self.repo,
+            self.pr_number,
+        )
         run_handle = observability.start_run(trace_id)
         run_observability = ReviewRunObservability(
             trace_id,

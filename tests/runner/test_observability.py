@@ -14,6 +14,7 @@ def test_run_review_emits_trace_id_and_run_complete(
     mock_scm, mock_get_provider, mock_llm, mock_context_window
 ):
     """run_review logs run_complete with trace_id, owner, repo, pr_number, counts, duration_ms."""
+    from code_review import __version__
     from code_review.runner import run_review
 
     mock_scm.return_value = MagicMock(
@@ -46,6 +47,7 @@ def test_run_review_emits_trace_id_and_run_complete(
     mock_runner_instance.run_async = runner_run_async_returning([mock_event])
 
     run_complete_calls = []
+    start_logs = []
 
     def capture_run_complete(
         trace_id, owner, repo, pr_number, files_count, findings_count, posts_count, duration_ms
@@ -63,14 +65,25 @@ def test_run_review_emits_trace_id_and_run_complete(
             )
         )
 
+    def capture_logger_info(message, *args, **kwargs):
+        if message.startswith("run_start agent_version="):
+            start_logs.append((message, args, kwargs))
+
     with patch(
         "code_review.orchestration.orchestrator._log_run_complete",
         side_effect=capture_run_complete,
     ):
-        with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
-            run_review("o", "r", 1, head_sha="abc123", dry_run=False)
+        with patch(
+            "code_review.orchestration.orchestrator.logger.info",
+            side_effect=capture_logger_info,
+        ):
+            with patch("google.adk.runners.Runner", return_value=mock_runner_instance):
+                run_review("o", "r", 1, head_sha="abc123", dry_run=False)
 
     assert len(run_complete_calls) == 1
+    assert len(start_logs) == 1
+    _, start_args, _ = start_logs[0]
+    assert start_args[0] == __version__
     (
         trace_id,
         owner,
