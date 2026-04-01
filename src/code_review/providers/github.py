@@ -20,7 +20,6 @@ from code_review.providers.base import (
     InlineComment,
     PRInfo,
     ProviderCapabilities,
-    ProviderInterface,
     ReviewComment,
     ReviewDecision,
     UnresolvedReviewItem,
@@ -33,68 +32,33 @@ from code_review.providers.base import (
 from code_review.providers.bot_blocking_common import (
     blocking_state_from_token_and_github_style_review_list,
 )
+from code_review.providers.http_base import HttpXProvider
 from code_review.providers.review_decision_common import github_style_pull_review_json
-from code_review.providers.safety import truncate_repo_content
+from code_review.providers.safety import MAX_REPO_FILE_BYTES, truncate_repo_content
 from code_review.schemas.review_thread_dismissal import (
     ReviewThreadDismissalContext,
     ReviewThreadDismissalEntry,
 )
 
-MAX_REPO_FILE_BYTES = 16 * 1024  # 16KB
 DEFAULT_BASE_URL = "https://api.github.com"
 JSON_MEDIA_TYPE = "application/json"
 logger = logging.getLogger(__name__)
 
 
-class GitHubProvider(ProviderInterface):
+class GitHubProvider(HttpXProvider):
     """GitHub API client for PR diff, file content, and review comments."""
 
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, token: str = "", timeout: float = 30.0):
-        self._base_url = base_url.rstrip("/")
-        self._token = token
-        self._timeout = timeout
+    _httpx_module = httpx
 
-    def _headers(self) -> dict[str, str]:
-        h: dict[str, str] = {
-            "Accept": "application/vnd.github+json",
-        }
-        if self._token:
-            h["Authorization"] = f"Bearer {self._token}"
-        return h
+    def _auth_header(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
-    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        url = f"{self._base_url}{path}"
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(url, headers=self._headers(), params=params or {})
-            r.raise_for_status()
-            if r.headers.get("content-type", "").startswith(JSON_MEDIA_TYPE):
-                return r.json()
-            return r.text
+    def _default_headers(self) -> dict[str, str]:
+        return {"Accept": "application/vnd.github+json"}
 
     def _get_diff(self, path: str) -> str:
         """GET with Accept application/vnd.github.v3.diff for unified diff."""
-        url = f"{self._base_url}{path}"
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.get(
-                url,
-                headers={**self._headers(), "Accept": "application/vnd.github.v3.diff"},
-            )
-            r.raise_for_status()
-            return r.text
-
-    def _post(self, path: str, json: Any) -> Any:
-        url = f"{self._base_url}{path}"
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.post(url, headers=self._headers(), json=json)
-            r.raise_for_status()
-            return r.json() if r.content else None
-
-    def _patch(self, path: str, json: Any) -> Any:
-        url = f"{self._base_url}{path}"
-        with httpx.Client(timeout=self._timeout) as client:
-            r = client.patch(url, headers=self._headers(), json=json)
-            r.raise_for_status()
-            return r.json() if r.content else None
+        return self._get_text(path, headers={"Accept": "application/vnd.github.v3.diff"})
 
     def _graphql_endpoint(self) -> str:
         u = self._base_url.rstrip("/")
@@ -471,7 +435,7 @@ class GitHubProvider(ProviderInterface):
         path = f"/repos/{owner}/{repo}/pulls/{pr_number}"
         return self._get_diff(path)
 
-    def get_incremental_pr_diff(
+    def _get_incremental_pr_diff(
         self,
         owner: str,
         repo: str,
@@ -480,8 +444,6 @@ class GitHubProvider(ProviderInterface):
         head_sha: str,
     ) -> str:
         """Return unified diff for the incremental compare range ``base_sha...head_sha``."""
-        if not base_sha or not head_sha or base_sha == head_sha:
-            return self.get_pr_diff(owner, repo, pr_number)
         path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
         try:
             return self._get_diff(path)
@@ -572,7 +534,7 @@ class GitHubProvider(ProviderInterface):
             page += 1
         return ""
 
-    def get_incremental_pr_files(
+    def _get_incremental_pr_files(
         self,
         owner: str,
         repo: str,
@@ -581,8 +543,6 @@ class GitHubProvider(ProviderInterface):
         head_sha: str,
     ) -> list[FileInfo]:
         """Return files changed in the incremental compare range ``base_sha...head_sha``."""
-        if not base_sha or not head_sha or base_sha == head_sha:
-            return self.get_pr_files(owner, repo, pr_number)
         path = f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
         try:
             data = self._get(path, params={"per_page": 100})
