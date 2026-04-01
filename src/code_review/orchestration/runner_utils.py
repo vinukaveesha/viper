@@ -69,21 +69,11 @@ def _bypass_adk_templating(agent: Any) -> None:
 
     instruction = getattr(agent, "instruction", None)
     if isinstance(instruction, str):
-        instr_str = instruction
-
-        async def _instr_provider(_: ReadonlyContext) -> str:
-            return instr_str
-
-        agent.instruction = _instr_provider
+        agent.instruction = lambda _: instruction
 
     global_instruction = getattr(agent, "global_instruction", None)
     if isinstance(global_instruction, str):
-        global_str = global_instruction
-
-        async def _global_instr_provider(_: ReadonlyContext) -> str:
-            return global_str
-
-        agent.global_instruction = _global_instr_provider
+        agent.global_instruction = lambda _: global_instruction
 
 
 # ---------------------------------------------------------------------------
