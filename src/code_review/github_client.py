@@ -65,6 +65,8 @@ class GitHubApiClient:
             headers=headers,
             input=body,
         )
+        if isinstance(data, dict) and "data" in data:
+            data = data["data"]
         if isinstance(data, bytes):
             return data.decode("utf-8", errors="replace")
         return str(data)
