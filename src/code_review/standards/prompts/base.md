@@ -53,3 +53,9 @@ Apply the following **only** when the changed file or the visible hunk is clearl
 - Do not claim truncation or syntax errors at file end without explicit evidence (compiler/linter output or a truncation marker).
 - When context is incomplete, describe the risk in shown code and ask for confirmation rather than asserting certainty.
 - Avoid speculative logging-level suggestions (for example, changing `warn`/`error` to `debug`/`info`) unless there is clear evidence of over-logging, duplicated noisy logs, or a documented project policy; be especially conservative in exception/catch paths where higher-severity logs are often intentional.
+
+## Depth of review
+- Prioritize findings that affect runtime behavior, compilation, security, or test reliability over style or cosmetic issues.
+- When a file contains deep logic bugs, do not dilute your review with multiple superficial findings (e.g., raw types, unused variables, missing type parameters) for the same file. Surface only the most impactful issues.
+- Do not report the same pattern at multiple lines in the same file; if a pattern-level issue is real, pick the single most impactful occurrence and then mention that it occurs at the other locations and provide line numbers.
+- For tests: verify that test setup and teardown properly isolate each test. Mutations to global/shared state without restoration cause order-dependent failures that are harder to debug than the bugs they were meant to catch.
