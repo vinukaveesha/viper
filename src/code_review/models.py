@@ -168,26 +168,35 @@ def get_configured_model() -> Any:
 
     resolved_model = _MODEL_ALIASES.get((config.provider, config.model), config.model)
 
-    # Prefix with provider so LiteLLM knows how to route the request
-    if config.provider == "gemini":
-        litellm_model = f"gemini/{resolved_model}"
-    elif config.provider == "vertex":
-        litellm_model = f"vertex_ai/{resolved_model}"
-    elif config.provider == "openai":
-        litellm_model = f"openai/{resolved_model}"
-    elif config.provider == "anthropic":
-        litellm_model = f"anthropic/{resolved_model}"
-    elif config.provider == "ollama":
-        litellm_model = f"ollama_chat/{resolved_model}"
-    elif config.provider == "openrouter":
-        litellm_model = f"openrouter/{resolved_model}"
-    else:
-        litellm_model = resolved_model
-
     try:
-        # Suppress the warning emitted when passing a Gemini model via LiteLLM
-        os.environ["ADK_SUPPRESS_GEMINI_LITELLM_WARNINGS"] = "true"
-        from google.adk.models.lite_llm import LiteLlm
+        from google.adk.models import Gemini, LiteLlm
+
+        if config.provider == "gemini":
+            kwargs = {"model": resolved_model}
+            if api_key:
+                kwargs["api_key"] = api_key
+            return Gemini(**kwargs)
+        
+        if config.provider == "vertex":
+            from google.adk.models import Vertex
+            kwargs = {"model": resolved_model}
+            # Note: Vertex usually relies on ADC rather than api_key parameter in ADK
+            # so we only pass it if explicitly requested
+            if api_key:
+                kwargs["api_key"] = api_key
+            return Vertex(**kwargs)
+
+        # Prefix with provider so LiteLLM knows how to route the request
+        if config.provider == "openai":
+            litellm_model = f"openai/{resolved_model}"
+        elif config.provider == "anthropic":
+            litellm_model = f"anthropic/{resolved_model}"
+        elif config.provider == "ollama":
+            litellm_model = f"ollama_chat/{resolved_model}"
+        elif config.provider == "openrouter":
+            litellm_model = f"openrouter/{resolved_model}"
+        else:
+            litellm_model = resolved_model
 
         kwargs = {"model": litellm_model}
         if api_key:
@@ -195,7 +204,7 @@ def get_configured_model() -> Any:
 
         return LiteLlm(**kwargs)
     except ImportError:
-        # Fallback if ADK LiteLLM not available
+        # Fallback if ADK not available
         return config.model
 
 

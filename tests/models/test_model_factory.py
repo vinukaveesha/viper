@@ -27,25 +27,25 @@ def _reset_injected_env_tracking():
 
 
 @patch("code_review.models.get_llm_config")
-def test_get_configured_model_gemini_uses_litellm_or_fallback(mock_get_config):
+def test_get_configured_model_gemini_uses_native_adk(mock_get_config):
     mock_get_config.return_value = MagicMock(
         provider="gemini", model="gemini-2.0-flash", api_key=None
     )
     result = get_configured_model()
     if hasattr(result, "model"):
-        assert result.model == "gemini/gemini-2.0-flash"
+        assert result.model == "gemini-2.0-flash"
     else:
         assert result == "gemini-2.0-flash"
 
 
 @patch("code_review.models.get_llm_config")
-def test_get_configured_model_vertex_uses_litellm_or_fallback(mock_get_config):
+def test_get_configured_model_vertex_uses_native_adk(mock_get_config):
     mock_get_config.return_value = MagicMock(
         provider="vertex", model="gemini-1.5-pro", api_key=None
     )
     result = get_configured_model()
     if hasattr(result, "model"):
-        assert result.model == "vertex_ai/gemini-1.5-pro"
+        assert result.model == "gemini-1.5-pro"
     else:
         assert result == "gemini-1.5-pro"
 
@@ -85,7 +85,7 @@ def test_get_configured_model_ollama_uses_litellm_or_fallback(mock_get_config):
 
 @patch("code_review.models.get_llm_config")
 def test_get_configured_model_litellm_import_error_returns_model_string(mock_get_config):
-    """When LiteLlm cannot be imported, return config.model as fallback."""
+    """When ADK models cannot be imported, return config.model as fallback."""
     import builtins
 
     mock_get_config.return_value = MagicMock(
@@ -94,8 +94,8 @@ def test_get_configured_model_litellm_import_error_returns_model_string(mock_get
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "google.adk.models.lite_llm":
-            raise ImportError("no lite_llm")
+        if name == "google.adk.models":
+            raise ImportError("no google.adk.models")
         return real_import(name, *args, **kwargs)
 
     with patch("builtins.__import__", side_effect=fake_import):
@@ -163,7 +163,7 @@ def test_get_configured_model_gemini_alias_resolves_to_runtime_model(mock_get_co
 
     result = get_configured_model()
     if hasattr(result, "model"):
-        assert result.model == "gemini/gemini-3-flash-preview"
+        assert result.model == "gemini-3-flash-preview"
     else:
         assert result == "gemini-3-flash-preview"
 
@@ -284,7 +284,7 @@ def test_get_configured_model_unknown_provider_uses_model_string_as_litellm(mock
 
 
 @patch("code_review.models.get_llm_config")
-@patch("google.adk.models.lite_llm.LiteLlm")
+@patch("google.adk.models.LiteLlm")
 def test_get_configured_model_sets_api_key_from_config(mock_lite_llm, mock_get_config):
     """When LLM_API_KEY is set, get_configured_model() passes it to the constructor."""
     from pydantic import SecretStr
@@ -308,7 +308,7 @@ def test_get_configured_model_sets_api_key_from_config(mock_lite_llm, mock_get_c
 
 
 @patch("code_review.models.get_llm_config")
-@patch("google.adk.models.lite_llm.LiteLlm")
+@patch("google.adk.models.LiteLlm")
 def test_get_configured_model_ignores_blank_api_key(mock_lite_llm, mock_get_config):
     """Blank API keys must not be passed to the constructor."""
     from pydantic import SecretStr
