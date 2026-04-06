@@ -99,8 +99,7 @@ Findings:
     )
     
     content = types.Content(role="user", parts=[types.Part(text=prompt)])
-    for _event in runner.run(session_id="summary_session", input_=content):
-        pass
+    list(runner.run(session_id="summary_session", input_=content))
         
     if runner.thread and runner.thread.last_message and runner.thread.last_message.text:
         return runner.thread.last_message.text
