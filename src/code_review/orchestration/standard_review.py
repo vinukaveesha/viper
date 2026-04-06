@@ -441,8 +441,9 @@ class StandardReviewHandler:
             try:
                 from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
                 summary_agent = create_summary_agent()
+                posted_findings = [f for f, _ in to_post]
                 summary_text = generate_pr_summary(
-                    summary_agent, pr_info_for_metadata, all_findings, paths
+                    summary_agent, pr_info_for_metadata, posted_findings, paths
                 )
                 CommentPoster(provider, self.pr_ctx).post_pr_summary(summary_text)
             except Exception as e:

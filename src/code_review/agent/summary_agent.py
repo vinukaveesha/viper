@@ -67,7 +67,9 @@ def generate_pr_summary(
     changed_paths: list[str],
 ) -> str:
     """Generate a Markdown summary using the summary agent."""
-    from google.adk.runners import AgentRunner
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
 
     # Prepare the prompt payload
     findings_summary = ""
@@ -88,10 +90,19 @@ Findings:
 {findings_summary}
 """
 
-    runner = AgentRunner(agent)
-    # Since we didn't provide a schema, we expect raw text response
-    response = runner.generate_content(prompt)
+    session_service = InMemorySessionService()
+    runner = Runner(
+        agent=agent,
+        app_name="code_review",
+        session_service=session_service,
+        auto_create_session=True,
+    )
     
-    # ADK Agent returns the text from the last message in the thread
-    # We can also use runner.thread.last_message.text
-    return response.text if hasattr(response, 'text') else str(response)
+    content = types.Content(role="user", parts=[types.Part(text=prompt)])
+    for _event in runner.run(session_id="summary_session", input_=content):
+        pass
+        
+    if runner.thread and runner.thread.last_message and runner.thread.last_message.text:
+        return runner.thread.last_message.text
+        
+    return ""

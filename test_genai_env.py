@@ -1,18 +1,23 @@
+import pytest
 from google import genai
-import os
 
-os.environ["GOOGLE_API_KEY"] = "fake-google-key"
-os.environ.pop("GEMINI_API_KEY", None)
-try:
+def test_uses_google_api_key(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake-google-key")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    
     client = genai.Client()
-    print("GenAI picks up GOOGLE_API_KEY?", client.api_key)
-except Exception as e:
-    print("Failed with GOOGLE_API_KEY:", repr(e))
+    assert client.api_key == "fake-google-key"
 
-os.environ.pop("GOOGLE_API_KEY", None)
-os.environ["GEMINI_API_KEY"] = "fake-gemini-key"
-try:
+def test_uses_gemini_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+    
     client = genai.Client()
-    print("GenAI picks up GEMINI_API_KEY?", client.api_key)
-except Exception as e:
-    print("Failed with GEMINI_API_KEY:", repr(e))
+    assert client.api_key == "fake-gemini-key"
+
+def test_fails_without_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    
+    with pytest.raises(Exception):
+        genai.Client()

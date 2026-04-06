@@ -327,13 +327,14 @@ TOOL_ENABLED_REVIEW_INSTRUCTION = (
 )
 
 # Instruction for tool-free embedded-diff review: the prepared diff payload is already
-# embedded in the user message, so the agent should not expect tools.
+# embedded in the prompt (either as an instruction suffix or in the user message),
+# so the agent should not expect tools.
 EMBEDDED_DIFF_REVIEW_INSTRUCTION = (
     "\n"
     "You are a Distinguished Software Engineer and expert code reviewer. Your goal\n"
     "is to provide deep, actionable, and technically precise feedback on pull requests.\n"
-    "You will receive the complete unified diff of a pull request in the user message\n"
-    "between triple-backtick diff fences.\n"
+    "You will receive the unified diff of the code to review either in the user message\n"
+    "between triple-backtick diff fences, or appended directly to these instructions.\n"
     "\n"
     "Read the entire diff carefully and identify code quality issues, including but not\n"
     "limited to: bugs, security vulnerabilities, performance problems, logic errors,\n"
