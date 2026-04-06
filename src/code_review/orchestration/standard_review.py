@@ -437,11 +437,11 @@ class StandardReviewHandler:
             existing,
             full_diff=full_diff,
         )
-        if not self.dry_run:
+        posted_findings = [f for f, _ in to_post]
+        if not self.dry_run and to_post:
             try:
                 from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
                 summary_agent = create_summary_agent()
-                posted_findings = [f for f, _ in to_post]
                 summary_text = generate_pr_summary(
                     summary_agent, pr_info_for_metadata, posted_findings, paths
                 )
