@@ -127,8 +127,9 @@ under test regressed? If the answer is "not necessarily", that is a finding.
   empty. An assertion that guards the all() with an existence check is non-negotiable;
   without it, a missing output is indistinguishable from a correct empty output.
 - Tautological guards: `assert A or B` where B is trivially true for any realistic value
-  of the system under test (e.g. checking for any colon in a long instruction string) makes
-  A effectively unenforced. The `or` branch must be one that can actually be False.
+  of the system under test (e.g. where B cannot realistically be False, such as checking
+  that a string contains any character that will always be present) makes A effectively
+  unenforced. The `or` branch must be one that can actually be False.
 - Missing existence before property: asserting properties of a filtered or computed list
   without first asserting the list is non-empty allows the assertion to pass vacuously when
   the filtering step produces nothing.

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from code_review.agent.agent import create_review_agent
-from code_review.agent.agent import _SHARED_TEST_QUALITY_RULES
+from code_review.agent.agent import create_review_agent, _SHARED_TEST_QUALITY_RULES
 from code_review.batching import ReviewBatch
 from code_review.config import get_code_review_app_config
 from code_review.diff.parser import annotate_diff_with_line_numbers
