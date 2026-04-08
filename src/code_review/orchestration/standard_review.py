@@ -416,16 +416,35 @@ class StandardReviewHandler:
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
+        llm_returned_count = len(all_findings)
         all_findings = self.filter_findings_by_diff_scope(all_findings, paths, full_diff)
+        after_scope_count = len(all_findings)
+
         to_post = comment_mgr.filter_duplicates(
             all_findings,
             self.make_fingerprint_fn(provider),
             use_collapsible_prompt=provider.capabilities().markup_supports_collapsible,
         )
+        after_unique_count = len(to_post)
+
+        try:
+            from code_review.agent.verification_agent import verify_findings
+            # Verification now only runs on findings we actually intend to post,
+            # saving LLM calls for duplicates.
+            to_verify = [f for f, _ in to_post]
+            verified_findings = verify_findings(to_verify, full_diff)
+            verified_set = set(verified_findings)
+            to_post = [item for item in to_post if item[0] in verified_set]
+        except Exception as exc:
+            logger.warning("Verification agent step failed; proceeding without it: %s", exc)
+        after_verification_count = len(to_post)
+
         logger.info(
-            "Agent returned %d finding(s), %d to post after filtering",
-            len(all_findings),
-            len(to_post),
+            "Funnel: LLM=%d → Scoped=%d → Unique=%d → Verified=%d",
+            llm_returned_count,
+            after_scope_count,
+            after_unique_count,
+            after_verification_count,
         )
         self.print_findings_summary(self.print_findings, to_post)
         successful_post_count = self.post_findings_and_summary(
