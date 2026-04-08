@@ -167,7 +167,7 @@ def _extract_snippet_from_annotated(  # NOSONAR — linear scan; splitting adds 
     for raw_line in annotated_diff.splitlines():
         # Detect file boundary via diff header
         if raw_line.startswith("diff --git"):
-            current_path = _parse_diff_header_path(raw_line)
+            current_path = normalize_path(_parse_diff_header_path(raw_line))
             in_file = current_path == norm_target
             if not in_file and window_lines:
                 break  # we've left our file after collecting some lines — done

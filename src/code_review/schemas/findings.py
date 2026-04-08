@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, model_validator
 class FindingV1(BaseModel):
     """A single code review finding with position and metadata for fingerprinting."""
 
+    model_config = {"frozen": True}
+
     version: str = Field(default="1", description="Schema version for output contract")
     path: str = Field(..., description="File path (relative to repo root)")
     line: int = Field(..., ge=1, description="Line number (or start line for ranges)")
