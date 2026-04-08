@@ -416,6 +416,11 @@ class StandardReviewHandler:
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
+        try:
+            from code_review.agent.verification_agent import verify_findings
+            all_findings = verify_findings(all_findings, full_diff)
+        except Exception as exc:
+            logger.warning("Verification agent step failed; proceeding without it: %s", exc)
         all_findings = self.filter_findings_by_diff_scope(all_findings, paths, full_diff)
         to_post = comment_mgr.filter_duplicates(
             all_findings,
