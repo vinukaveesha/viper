@@ -5,3 +5,6 @@
 - For React / Next.js code, check for missing dependency arrays in hooks, server/client component boundary misuse, and incorrect use of `use client`/`use server` directives.
 - For Angular code, check for missing unsubscribe in `Observables`, improper change detection usage, and unsafe direct DOM manipulation.
 - For Node.js code, check for untyped request bodies used as trusted input and missing middleware validation.
+- Non-null assertion operator `!`: flag `value!.property` where `value` can realistically be `null` or `undefined` at runtime. The `!` silences the TypeScript compiler but does not add a runtime guard; a null value produces an unhandled `TypeError`.
+- Unsafe `as` casts: flag `expr as SomeType` applied to API responses, parsed JSON, or any value typed as `unknown` / `any` without a runtime validation step (e.g. a Zod parse or a type guard function). The cast tells the compiler to trust the shape but provides no runtime guarantee.
+- Missing runtime validation for `unknown` inputs: flag function parameters, route handler bodies, or event payloads typed as `unknown` or `any` that are used directly without being passed through a schema validator or type guard first.

@@ -9,3 +9,7 @@
 - In Django code: check ORM query safety (N+1, missing select_related/prefetch_related), signal misuse, missing form validation, and unenforced permission checks.
 - In FastAPI/Starlette code: check dependency injection correctness, missing request validation, missing response model enforcement, and unhandled async lifespan events (startup/shutdown).
 - In Flask code: check improper use of g/session, missing input sanitization, and insecure default configs.
+- Shell injection via `os.system` / `subprocess` with `shell=True`: flag calls that build a shell command by interpolating user-controlled values. Prefer `subprocess.run([...], shell=False)` with arguments as a list; use `shlex.quote` only as a last resort.
+- `shelve` / `pickle` with untrusted data: flag `shelve.open`, `pickle.loads`, and `pickle.load` called on data from external sources (network, files, environment). Deserializing untrusted pickle data executes arbitrary code.
+- Django `bulk_create` / `bulk_update` without validation: flag calls that bypass model `full_clean()` and `save()` signal hooks — constraints enforced there (e.g. field validators, pre/post-save signals) are silently skipped.
+- `assert` in production code: flag `assert` statements used for input validation or invariant enforcement outside of test files. Python's `-O` (optimize) flag strips all `assert` statements at runtime, making them an unreliable guard.
