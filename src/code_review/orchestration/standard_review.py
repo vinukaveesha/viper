@@ -416,20 +416,27 @@ class StandardReviewHandler:
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
         )
+        llm_returned_count = len(all_findings)
         all_findings = self.filter_findings_by_diff_scope(all_findings, paths, full_diff)
+        after_scope_count = len(all_findings)
+
         try:
             from code_review.agent.verification_agent import verify_findings
             all_findings = verify_findings(all_findings, full_diff)
         except Exception as exc:
             logger.warning("Verification agent step failed; proceeding without it: %s", exc)
+        after_verification_count = len(all_findings)
+
         to_post = comment_mgr.filter_duplicates(
             all_findings,
             self.make_fingerprint_fn(provider),
             use_collapsible_prompt=provider.capabilities().markup_supports_collapsible,
         )
         logger.info(
-            "Agent returned %d finding(s), %d to post after filtering",
-            len(all_findings),
+            "Funnel: LLM=%d → Scoped=%d → Verified=%d → Unique=%d",
+            llm_returned_count,
+            after_scope_count,
+            after_verification_count,
             len(to_post),
         )
         self.print_findings_summary(self.print_findings, to_post)

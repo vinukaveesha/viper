@@ -35,8 +35,8 @@ _TEST_FILE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:^|/)[^/]+(?:Test|Tests|Spec)\.cs$"),
     re.compile(r"(?:^|/).*\.Tests?/"),          # project directory: Foo.Tests/
     # C (check / cmocka / Unity)
-    re.compile(r"(?:^|/)test_[^/]+\.(?:c|h)$"),
-    re.compile(r"(?:^|/)[^/]+_test\.(?:c|h)$"),
+    re.compile(r"(?:^|/)test_[^/]+\.[ch]$"),
+    re.compile(r"(?:^|/)[^/]+_test\.[ch]$"),
     # C++ (Google Test, Catch2, doctest)
     re.compile(r"(?:^|/)test_[^/]+\.(?:cpp|cc|cxx|hpp)$"),
     re.compile(r"(?:^|/)[^/]+_test\.(?:cpp|cc|cxx|hpp)$"),

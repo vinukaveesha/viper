@@ -136,7 +136,7 @@ def _parse_diff_header_path(header_line: str) -> str:
     return ""
 
 
-def _extract_snippet_from_annotated(
+def _extract_snippet_from_annotated(  # NOSONAR — linear scan; splitting adds no clarity
     finding: FindingV1,
     annotated_diff: str,
     diff_paths: frozenset[str],
