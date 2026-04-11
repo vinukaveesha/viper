@@ -211,7 +211,9 @@ def test_findings_only_instruction_restricts_to_changed_lines():
         "TOOL_ENABLED_REVIEW_INSTRUCTION must describe the n: annotation mechanism"
     )
     # Must distinguish added (+) vs context lines and forbid context by default.
-    assert "+" in instr, "TOOL_ENABLED_REVIEW_INSTRUCTION must mention '+' for added lines"
+    assert "Only report findings for added ``+`` lines with a ``n:`` annotation." in instr, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must explicitly restrict findings to added annotated lines"
+    )
     assert "Do NOT report findings on context" in instr
 
 
