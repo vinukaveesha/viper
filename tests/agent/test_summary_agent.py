@@ -57,6 +57,37 @@ def test_generate_pr_summary_incremental_prompt():
         # So here, since we provided it in the mock, it should be there.
         assert "PR Description: Test Desc" in prompt
 
+def test_generate_pr_summary_incremental_unknown_base():
+    agent = MagicMock()
+    pr_info = MagicMock()
+    pr_info.title = "Test PR"
+    pr_info.description = ""
+    findings = []
+    changed_paths = ["file.py"]
+    
+    with patch("google.adk.runners.Runner") as mock_runner_cls, \
+         patch("code_review.orchestration.runner_utils._run_agent_and_collect_response") as mock_run:
+        
+        mock_run.return_value = "Summary Text"
+        
+        generate_pr_summary(
+            agent, 
+            pr_info, 
+            findings, 
+            changed_paths, 
+            incremental_base_sha="", # Unknown base
+            incremental_commits=["New commit"]
+        )
+        
+        # Check the prompt
+        args, _ = mock_run.call_args
+        content = args[2]
+        prompt = content.parts[0].text
+        
+        assert "Incremental Review Context: from unknown base" in prompt
+        assert "Incremental commits in this update:" in prompt
+        assert "- New commit" in prompt
+
 def test_generate_pr_summary_non_incremental_prompt():
     agent = MagicMock()
     pr_info = MagicMock()
@@ -74,7 +105,7 @@ def test_generate_pr_summary_non_incremental_prompt():
         mock_event.is_final_response.return_value = True
         mock_event.author = "summary_agent"
         mock_event.content.parts = [MagicMock(text="Summary Text")]
-        mock_runner.run.return_value = [mock_event]
+        mock_runner.run.value = [mock_event]
         # Also mock run_async for completeness if it's used elsewhere
         mock_runner.run_async.return_value = MagicMock()
 

@@ -95,9 +95,9 @@ class GitHubProvider(ProviderInterface):
         try:
             comparison = self._client().get_repo(owner, repo).compare(base_sha, head_sha)
         except GithubException as e:
-            logger.warning(
+            logger.error(
                 "GitHub incremental compare metadata failed owner=%s repo=%s pr=%s "
-                "base=%s head=%s: %s; falling back to full PR review",
+                "base=%s head=%s: %s",
                 owner,
                 repo,
                 pr_number,
@@ -105,7 +105,7 @@ class GitHubProvider(ProviderInterface):
                 head_sha,
                 e,
             )
-            return None
+            raise
         if self._comparison_files_truncated(comparison):
             logger.warning(
                 "GitHub incremental compare metadata hit the %s-file compare limit "
@@ -1015,8 +1015,8 @@ class GitHubProvider(ProviderInterface):
         try:
             comparison = self._client().get_repo(owner, repo).compare(base_sha, head_sha)
         except GithubException as e:
-            logger.warning("GitHub incremental compare for commits failed: %s", e)
-            return self.get_pr_commit_messages(owner, repo, pr_number)
+            logger.error("GitHub incremental compare for commits failed: %s", e)
+            raise
 
         commits = getattr(comparison, "commits", [])
         out: list[str] = []

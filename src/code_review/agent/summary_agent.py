@@ -121,15 +121,17 @@ def generate_pr_summary(
     else:
         findings_summary = "No specific findings identified."
 
+    commits_text = ""
+    if incremental_commits:
+        commits_list = "\n".join(f"  - {msg}" for msg in incremental_commits)
+        commits_text = f"\nIncremental commits in this update:\n{commits_list}"
+
     incremental_context = ""
-    if incremental_base_sha:
-        commits_part = ""
-        if incremental_commits:
-            commits_text = "\n".join(f"  - {msg}" for msg in incremental_commits)
-            commits_part = f"\nIncremental commits in this update:\n{commits_text}"
-        incremental_context = (
-            f"\nIncremental Review Context: from {incremental_base_sha[:12]}{commits_part}\n"
+    if incremental_base_sha or incremental_commits:
+        base_ref = (
+            f"from {incremental_base_sha[:12]}" if incremental_base_sha else "from unknown base"
         )
+        incremental_context = f"\nIncremental Review Context: {base_ref}{commits_text}\n"
 
     pr_desc = getattr(pr_info, "description", "").strip()
     description_part = f"PR Description: {pr_desc}\n" if pr_desc else ""
