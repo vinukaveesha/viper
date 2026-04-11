@@ -114,12 +114,14 @@ def _capture_create_batch_agent(batch_agents_created):
         *,
         head_sha="",
         context_brief_attached=False,
+        review_visible_lines=None,
     ):
         batch_agents_created.append(
             {
                 "batches": batches,
                 "head_sha": head_sha,
                 "context_brief_attached": context_brief_attached,
+                "review_visible_lines": review_visible_lines,
             }
         )
         mock_agent = MagicMock()

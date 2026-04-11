@@ -28,6 +28,7 @@ def create_agent_and_runner(
     batches: list[ReviewBatch],
     *,
     context_brief_attached: bool = False,
+    review_visible_lines: bool | None = None,
 ):
     """Build the batch-review SequentialAgent, session service, and ADK Runner."""
     from google.adk.runners import Runner
@@ -41,6 +42,7 @@ def create_agent_and_runner(
         batches,
         head_sha=pr_ctx.head_sha,
         context_brief_attached=context_brief_attached,
+        review_visible_lines=review_visible_lines,
     )
     session_id = f"{pr_ctx.owner}/{pr_ctx.repo}/pr-{pr_ctx.pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
     session_service = InMemorySessionService()
@@ -63,6 +65,7 @@ def run_agent_and_collect_findings(
     *,
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
+    review_visible_lines: bool | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run batch review and parse responses into findings."""
     if not batches:
@@ -77,6 +80,7 @@ def run_agent_and_collect_findings(
         batch_count=len(batches),
         context_brief_attached=context_brief_attached,
         prompt_suffix=prompt_suffix,
+        review_visible_lines=review_visible_lines,
     )
 
 
@@ -91,6 +95,7 @@ def _run_sequential_batch_review_mode(
     batch_count: int,
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
+    review_visible_lines: bool | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
     content = build_batch_review_content(
@@ -118,6 +123,7 @@ def _run_sequential_batch_review_mode(
                 context_brief_attached=context_brief_attached,
                 prompt_suffix=prompt_suffix,
                 error=exc.cause,
+                review_visible_lines=review_visible_lines,
             )
         raise exc.cause from exc
     logger.info(
@@ -126,6 +132,7 @@ def _run_sequential_batch_review_mode(
         len(responses),
     )
     return findings_from_batch_responses(responses)
+
 
 
 def build_batch_review_content(
@@ -189,6 +196,7 @@ def _recover_rate_limited_batches(
     context_brief_attached: bool,
     prompt_suffix: str,
     error: runner_mod.RateLimitError,
+    review_visible_lines: bool | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Keep successful batch responses and isolate the remaining batches one-by-one."""
     completed_batch_indexes = {
@@ -213,6 +221,7 @@ def _recover_rate_limited_batches(
             review_standards,
             [batch],
             context_brief_attached=context_brief_attached,
+            review_visible_lines=review_visible_lines,
         )
         content = build_batch_review_content(
             pr_ctx=pr_ctx,

@@ -428,12 +428,14 @@ class StandardReviewHandler:
                 [],
                 context_brief_attached=context_brief_attached,
             )
+        review_visible_lines = bool(getattr(app_cfg, "review_visible_lines", False))
         session_id, _session_service, runner = execution_mod.create_agent_and_runner(
             self.pr_ctx,
             provider,
             review_standards,
             batches,
             context_brief_attached=context_brief_attached,
+            review_visible_lines=review_visible_lines,
         )
         all_findings = execution_mod.run_agent_and_collect_findings(
             self.pr_ctx,
@@ -444,6 +446,7 @@ class StandardReviewHandler:
             batches,
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
+            review_visible_lines=review_visible_lines,
         )
         llm_returned_count = len(all_findings)
         all_findings = self.filter_findings_by_diff_scope(
