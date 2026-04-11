@@ -6,15 +6,16 @@ Root cause of the inline comment bug:
   a line is sent to Bitbucket Cloud via the inline-comment API, the API either
   rejects it (raising an exception that causes a fallback to post_pr_summary_comment
   with the **path:line** format visible only in the Activity feed) or creates a
-  non-inline comment. The diff-line guardrail avoids this by filtering to visible
-  hunk lines before posting.
+  non-inline comment. The diff-line guardrail avoids this by filtering to
+  changed hunk lines by default (or all visible lines when enabled).
 
-Fix: _diff_visible_new_lines() builds the set of visible lines; the runner uses it
-to drop any finding whose line is not in that set before posting.
+Fix: the runner now defaults to changed-line filtering and can optionally allow
+all diff-visible lines via CODE_REVIEW_REVIEW_VISIBLE_LINES=true.
 """
 
 from unittest.mock import MagicMock, patch
 
+from code_review.config import reset_config_cache
 from code_review.orchestration_deps import _diff_visible_new_lines, _normalize_path_for_anchor
 from code_review.providers.base import FileInfo
 from tests.conftest import runner_run_async_returning
@@ -180,25 +181,60 @@ def test_runner_drops_findings_for_lines_outside_diff(
 @patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
-def test_runner_keeps_context_line_findings(
+def test_runner_drops_context_line_findings_by_default(
     mock_scm, mock_get_provider, mock_llm, mock_context_window
 ) -> None:
-    """Context (unchanged) lines shown in the diff should NOT be filtered out."""
+    """Default mode drops context (unchanged) line findings."""
 
-    # Line 8 is a context line visible in the diff — it should NOT be filtered.
+    # Line 8 is a context line visible in the diff — default mode should filter it out.
     context_line_finding = (
         '{"findings":[{"path":"foo.py","line":8,"severity":"medium","code":"c",'
         '"message":"context line issue"}]}'
     )
 
-    findings = _run_review_with_mocked_bitbucket_runner(
-        mock_scm,
-        mock_get_provider,
-        mock_llm,
-        mock_context_window,
-        context_line_finding,
-        head_sha="sha2",
-    )
+    reset_config_cache()
+    try:
+        findings = _run_review_with_mocked_bitbucket_runner(
+            mock_scm,
+            mock_get_provider,
+            mock_llm,
+            mock_context_window,
+            context_line_finding,
+            head_sha="sha2",
+        )
+    finally:
+        reset_config_cache()
 
-    assert len(findings) == 1, "Context-line finding must be kept (context lines are diff-visible)"
+    assert len(findings) == 0, "Context-line finding must be dropped in changed-lines-only mode"
+
+
+@patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
+def test_runner_keeps_context_line_findings_when_visible_lines_enabled(
+    mock_scm, mock_get_provider, mock_llm, mock_context_window
+) -> None:
+    """Context lines are allowed only when CODE_REVIEW_REVIEW_VISIBLE_LINES is enabled."""
+    context_line_finding = (
+        '{"findings":[{"path":"foo.py","line":8,"severity":"medium","code":"c",'
+        '"message":"context line issue"}]}'
+    )
+    reset_config_cache()
+    try:
+        with patch.dict(
+            "os.environ", {"CODE_REVIEW_REVIEW_VISIBLE_LINES": "true"}, clear=False
+        ):
+            findings = _run_review_with_mocked_bitbucket_runner(
+                mock_scm,
+                mock_get_provider,
+                mock_llm,
+                mock_context_window,
+                context_line_finding,
+                head_sha="sha3",
+            )
+    finally:
+        reset_config_cache()
+
+    assert len(findings) == 1
     assert findings[0].line == 8

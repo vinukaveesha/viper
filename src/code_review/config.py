@@ -262,6 +262,14 @@ class CodeReviewAppConfig(BaseSettings):
         default=True,
         validation_alias="CODE_REVIEW_INCLUDE_COMMIT_MESSAGES_IN_PROMPT",
     )
+    review_visible_lines: bool = Field(
+        default=False,
+        validation_alias="CODE_REVIEW_REVIEW_VISIBLE_LINES",
+        description=(
+            "When true, allow findings on any diff-visible new-file line (added + context). "
+            "Default false limits findings to changed added lines only."
+        ),
+    )
     review_decision_only: bool = Field(
         default=False,
         validation_alias="CODE_REVIEW_REVIEW_DECISION_ONLY",

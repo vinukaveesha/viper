@@ -261,12 +261,41 @@ class StandardReviewHandler:
                 )
         return line_filtered
 
+    @staticmethod
+    def filter_findings_to_added_diff_lines(
+        findings: list[FindingV1], full_diff: str
+    ) -> list[FindingV1]:
+        if not full_diff:
+            return findings
+        added_lines = runner_mod._added_lines_in_diff(full_diff)
+        if not added_lines:
+            return findings
+        line_filtered: list[FindingV1] = []
+        for finding in findings:
+            norm_path = runner_mod._normalize_path_for_anchor(finding.path or "")
+            if (norm_path, finding.line) in added_lines:
+                line_filtered.append(finding)
+            else:
+                logger.debug(
+                    "Dropping finding for line not changed in diff: %s:%d",
+                    finding.path,
+                    finding.line,
+                )
+        return line_filtered
+
     def filter_findings_by_diff_scope(
-        self, findings: list[FindingV1], paths: list[str], full_diff: str
+        self,
+        findings: list[FindingV1],
+        paths: list[str],
+        full_diff: str,
+        *,
+        review_visible_lines: bool = False,
     ) -> list[FindingV1]:
         path_filtered = self.filter_findings_to_pr_paths(findings, paths)
         pipeline_results = FindingRefinementPipeline().run(path_filtered, full_diff)
-        return self.filter_findings_to_visible_diff_lines(pipeline_results, full_diff)
+        if review_visible_lines:
+            return self.filter_findings_to_visible_diff_lines(pipeline_results, full_diff)
+        return self.filter_findings_to_added_diff_lines(pipeline_results, full_diff)
 
     def validate_context_sources_or_raise(
         self,
@@ -417,7 +446,12 @@ class StandardReviewHandler:
             prompt_suffix=prompt_suffix,
         )
         llm_returned_count = len(all_findings)
-        all_findings = self.filter_findings_by_diff_scope(all_findings, paths, full_diff)
+        all_findings = self.filter_findings_by_diff_scope(
+            all_findings,
+            paths,
+            full_diff,
+            review_visible_lines=bool(getattr(app_cfg, "review_visible_lines", False)),
+        )
         after_scope_count = len(all_findings)
 
         to_post = comment_mgr.filter_duplicates(
