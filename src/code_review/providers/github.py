@@ -1001,13 +1001,12 @@ class GitHubProvider(ProviderInterface):
     ) -> list[str]:
         if not self._sha_guard_passes(base_sha, head_sha):
             return self.get_pr_commit_messages(owner, repo, pr_number)
-        return self._get_incremental_pr_commit_messages(owner, repo, pr_number, base_sha, head_sha)
+        return self._get_incremental_pr_commit_messages(owner, repo, base_sha, head_sha)
 
     def _get_incremental_pr_commit_messages(
         self,
         owner: str,
         repo: str,
-        pr_number: int,
         base_sha: str,
         head_sha: str,
     ) -> list[str]:
