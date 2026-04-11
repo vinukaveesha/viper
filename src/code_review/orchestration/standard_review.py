@@ -497,9 +497,24 @@ class StandardReviewHandler:
         if not self.dry_run and to_post:
             try:
                 from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
+
+                incremental_commits: list[str] | None = None
+                if incremental_base_sha and self.head_sha:
+                    try:
+                        incremental_commits = provider.get_incremental_pr_commit_messages(
+                            self.owner, self.repo, self.pr_number, incremental_base_sha, self.head_sha
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to fetch incremental commit messages: %s", e)
+
                 summary_agent = create_summary_agent()
                 summary_text = generate_pr_summary(
-                    summary_agent, pr_info_for_metadata, posted_findings, paths
+                    summary_agent,
+                    pr_info_for_metadata,
+                    posted_findings,
+                    paths,
+                    incremental_base_sha=incremental_base_sha,
+                    incremental_commits=incremental_commits,
                 )
                 CommentPoster(provider, self.pr_ctx).post_pr_summary(summary_text)
             except Exception as e:

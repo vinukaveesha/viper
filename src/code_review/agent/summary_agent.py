@@ -56,6 +56,14 @@ NO-FINDINGS CASE:
   short, positive summary: note that the review found no issues, briefly describe what changed
   (from the PR metadata), and keep the output to 3-5 sentences. Do NOT invent findings or pad
   the output with generic advice.
+
+INCREMENTAL UPDATES:
+If the input includes "Incremental Review Context", this is an incremental update review.
+- Focus your assessment, walkthrough, and narrative summary ONLY on the new changes provided in
+  this run (the specified incremental commits and changed files).
+- Do NOT re-summarize the entire PR or previous commits that are not part of this update.
+- The Narrative Summary should tell the story of THIS specific update (e.g., "This update addresses
+  previous feedback by...", "This commit adds missing validation mentioned in the last review").
 """
 
 
@@ -82,6 +90,8 @@ def generate_pr_summary(
     pr_info: Any,
     findings: list[FindingV1],
     changed_paths: list[str],
+    incremental_base_sha: str = "",
+    incremental_commits: list[str] | None = None,
 ) -> str:
     """Generate a Markdown summary using the summary agent."""
     import uuid
@@ -111,9 +121,20 @@ def generate_pr_summary(
     else:
         findings_summary = "No specific findings identified."
 
+    incremental_context = ""
+    if incremental_base_sha:
+        commits_part = ""
+        if incremental_commits:
+            commits_text = "\n".join(f"  - {msg}" for msg in incremental_commits)
+            commits_part = f"\nIncremental commits in this update:\n{commits_text}"
+        incremental_context = (
+            f"\nIncremental Review Context: from {incremental_base_sha[:12]}{commits_part}\n"
+        )
+
     prompt = f"""\
 PR Title: {getattr(pr_info, 'title', 'Unknown')}
 PR Description: {getattr(pr_info, 'description', 'No description provided')}
+{incremental_context}
 Changed Files: {', '.join(changed_paths)}
 
 Findings:
