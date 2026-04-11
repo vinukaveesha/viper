@@ -131,10 +131,12 @@ def generate_pr_summary(
             f"\nIncremental Review Context: from {incremental_base_sha[:12]}{commits_part}\n"
         )
 
+    pr_desc = getattr(pr_info, "description", "").strip()
+    description_part = f"PR Description: {pr_desc}\n" if pr_desc else ""
+
     prompt = f"""\
 PR Title: {getattr(pr_info, 'title', 'Unknown')}
-PR Description: {getattr(pr_info, 'description', 'No description provided')}
-{incremental_context}
+{description_part}{incremental_context}
 Changed Files: {', '.join(changed_paths)}
 
 Findings:

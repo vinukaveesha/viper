@@ -15,8 +15,20 @@ def test_generate_pr_summary_incremental_prompt():
     ]
     changed_paths = ["file.py"]
     
-    # Patch the helper in orchestration instead of local import
-    with patch("code_review.orchestration.runner_utils._run_agent_and_collect_response") as mock_run:
+    # Patch both the Runner and the collection helper for robust isolation
+    with patch("google.adk.runners.Runner") as mock_runner_cls, \
+         patch("code_review.orchestration.runner_utils._run_agent_and_collect_response") as mock_run:
+        
+        mock_runner = mock_runner_cls.return_value
+        # Mock Runner.run to return a final response event as requested
+        mock_event = MagicMock()
+        mock_event.is_final_response.return_value = True
+        mock_event.author = "summary_agent"
+        mock_event.content.parts = [MagicMock(text="Summary Text")]
+        mock_runner.run.return_value = [mock_event]
+        # Also mock run_async for completeness if it's used elsewhere
+        mock_runner.run_async.return_value = MagicMock()
+
         mock_run.return_value = "Summary Text"
         
         generate_pr_summary(
@@ -40,6 +52,10 @@ def test_generate_pr_summary_incremental_prompt():
         assert "- Fixed bug A" in prompt
         assert "- Added feature B" in prompt
         assert "Changed Files: file.py" in prompt
+        # In the new logic, the agent includes the description if it's there.
+        # The Orchestrator is responsible for scrubbing it for incremental reviews.
+        # So here, since we provided it in the mock, it should be there.
+        assert "PR Description: Test Desc" in prompt
 
 def test_generate_pr_summary_non_incremental_prompt():
     agent = MagicMock()
@@ -49,7 +65,19 @@ def test_generate_pr_summary_non_incremental_prompt():
     findings = []
     changed_paths = ["file.py"]
     
-    with patch("code_review.orchestration.runner_utils._run_agent_and_collect_response") as mock_run:
+    with patch("google.adk.runners.Runner") as mock_runner_cls, \
+         patch("code_review.orchestration.runner_utils._run_agent_and_collect_response") as mock_run:
+        
+        mock_runner = mock_runner_cls.return_value
+        # Mock Runner.run to return a final response event as requested
+        mock_event = MagicMock()
+        mock_event.is_final_response.return_value = True
+        mock_event.author = "summary_agent"
+        mock_event.content.parts = [MagicMock(text="Summary Text")]
+        mock_runner.run.return_value = [mock_event]
+        # Also mock run_async for completeness if it's used elsewhere
+        mock_runner.run_async.return_value = MagicMock()
+
         mock_run.return_value = "Summary Text"
         
         generate_pr_summary(
@@ -66,3 +94,4 @@ def test_generate_pr_summary_non_incremental_prompt():
         
         assert "Incremental Review Context" not in prompt
         assert "Changed Files: file.py" in prompt
+        assert "PR Description: Test Desc" in prompt

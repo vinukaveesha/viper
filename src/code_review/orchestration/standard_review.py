@@ -507,10 +507,20 @@ class StandardReviewHandler:
                     except Exception as e:
                         logger.warning("Failed to fetch incremental commit messages: %s", e)
 
+                pr_info_for_summary = pr_info_for_metadata
+                if (
+                    incremental_base_sha
+                    and pr_info_for_summary
+                    and hasattr(pr_info_for_summary, "model_copy")
+                ):
+                    # For incremental reviews, scrub the full PR description to avoid summary-drift
+                    # toward the full PR context. The focus remains on the specific update.
+                    pr_info_for_summary = pr_info_for_summary.model_copy(update={"description": ""})
+
                 summary_agent = create_summary_agent()
                 summary_text = generate_pr_summary(
                     summary_agent,
-                    pr_info_for_metadata,
+                    pr_info_for_summary,
                     posted_findings,
                     paths,
                     incremental_base_sha=incremental_base_sha,
