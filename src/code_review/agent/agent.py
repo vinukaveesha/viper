@@ -9,7 +9,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from code_review.agent.tools.gitea_tools import create_findings_only_tools
-from code_review.config import get_llm_config
+from code_review.config import get_code_review_app_config, get_llm_config
 from code_review.logging_config import emit_package_log
 from code_review.models import get_configured_model
 from code_review.providers.base import ProviderInterface
@@ -37,14 +37,21 @@ logger = logging.getLogger(__name__)
 # The three bullet-point rules shared by both instructions in the
 # "IMPORTANT — Line numbers" section (the intro sentence differs per mode).
 _SHARED_LINE_NUMBER_RULES = """\
-- Each added/context line is annotated ``n:`` where ``n`` is an integer (e.g. ``42:``).
+- Each added line is annotated ``n:`` where ``n`` is an integer (e.g. ``42:``).
   Use that integer ``n`` as the ``line`` value (e.g. 42) in your findings.
   Do NOT emit the ``n:`` tag itself as the line value; extract only the number.
   Do NOT compute line numbers yourself from the hunk headers.
-- Only report findings for lines that have a ``n:`` annotation (added ``+``
-  or context `` `` lines). Never report a finding for a removed ``-`` line.
-- If the exact line containing the issue has no ``n:`` annotation, drop the
-  finding entirely. Do NOT shift it to the nearest annotated line."""
+- Only report findings for added ``+`` lines with a ``n:`` annotation.
+  Do NOT report findings on context `` `` lines unless a later LINE-SCOPE OVERRIDE explicitly allows them.
+  Removed ``-`` lines are always invalid.
+- If the exact line containing the issue is not permitted by the active line-scope rules,
+  drop the finding entirely. Do NOT shift it to the nearest annotated line."""
+
+_VISIBLE_LINE_SCOPE_OVERRIDE = """\
+LINE-SCOPE OVERRIDE:
+- This run allows findings on any diff-visible annotated line, including unchanged
+  context `` `` lines.
+- Removed ``-`` lines are still invalid because they do not exist in the new-file view."""
 
 # Output format + finding schema + anchor + placement rules.
 _SHARED_FORMAT_AND_PLACEMENT = """\
@@ -464,6 +471,7 @@ def create_review_agent(
     *,
     disable_tools: bool = False,
     context_brief_attached: bool = False,
+    review_visible_lines: bool | None = None,
 ) -> Agent:
     """Create the code review LlmAgent in findings-only mode.
 
@@ -503,6 +511,13 @@ def create_review_agent(
     else:
         tools = create_findings_only_tools(provider)
 
+    allow_visible_lines = (
+        get_code_review_app_config().review_visible_lines
+        if review_visible_lines is None
+        else review_visible_lines
+    )
+    if allow_visible_lines:
+        instruction = instruction.rstrip() + "\n\n" + _VISIBLE_LINE_SCOPE_OVERRIDE
     if context_brief_attached:
         instruction = instruction.rstrip() + "\n\n" + _CONTEXT_FROM_LINKED_SOURCES
     if review_standards:

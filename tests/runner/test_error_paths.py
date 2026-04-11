@@ -45,9 +45,10 @@ def _exercise_error_path(
         "--- a/foo.py\n"
         "+++ b/foo.py\n"
         "@@ -1,1 +1,3 @@\n"
-        " line1\n"
+        "-line1\n"
+        "+line1\n"
         "+line2\n"
-        " line3\n"
+        "+line3\n"
     )
     provider.get_file_content.return_value = "content"
     provider.get_existing_review_comments.return_value = []

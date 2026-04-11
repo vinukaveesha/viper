@@ -188,6 +188,12 @@ def test_code_review_app_review_decision_only_from_env():
         assert cfg.review_decision_only is True
 
 
+def test_code_review_app_review_visible_lines_from_env():
+    with patch.dict(os.environ, {"CODE_REVIEW_REVIEW_VISIBLE_LINES": "true"}, clear=True):
+        cfg = CodeReviewAppConfig()
+        assert cfg.review_visible_lines is True
+
+
 def test_code_review_app_skip_if_bot_not_blocking_from_env():
     with patch.dict(
         os.environ,
@@ -220,3 +226,9 @@ def test_code_review_app_reply_dismissal_enabled_by_default():
     with patch.dict(os.environ, {}, clear=True):
         cfg = CodeReviewAppConfig()
         assert cfg.reply_dismissal_enabled is True
+
+
+def test_code_review_app_review_visible_lines_disabled_by_default():
+    with patch.dict(os.environ, {}, clear=True):
+        cfg = CodeReviewAppConfig()
+        assert cfg.review_visible_lines is False

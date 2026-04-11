@@ -73,6 +73,7 @@ def create_sequential_batch_review_agent(
     *,
     head_sha: str = "",
     context_brief_attached: bool = False,
+    review_visible_lines: bool | None = None,
 ):
     """Build a SequentialAgent that reviews prepared diff batches one after another."""
     from google.adk.agents import SequentialAgent
@@ -85,6 +86,7 @@ def create_sequential_batch_review_agent(
             findings_only=True,
             disable_tools=True,
             context_brief_attached=context_brief_attached,
+            review_visible_lines=review_visible_lines,
         )
         agent.name = f"batch_review_{index}"
         agent.instruction = agent.instruction.rstrip() + "\n\n" + _batch_instruction_suffix(

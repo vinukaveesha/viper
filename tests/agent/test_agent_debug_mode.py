@@ -203,15 +203,42 @@ def test_findings_only_instruction_contains_line_number_guidance():
     )
 
 
-def test_findings_only_instruction_restricts_to_visible_diff_lines():
-    """TOOL_ENABLED_REVIEW_INSTRUCTION must restrict findings to visible diff lines."""
+def test_findings_only_instruction_restricts_to_changed_lines():
+    """TOOL_ENABLED_REVIEW_INSTRUCTION must default to changed (+) lines only."""
     instr = TOOL_ENABLED_REVIEW_INSTRUCTION
     # Must tell the agent to drop findings for lines with no annotation
     assert "annotation" in instr.lower() or "annotated" in instr.lower(), (
         "TOOL_ENABLED_REVIEW_INSTRUCTION must describe the n: annotation mechanism"
     )
-    # Must distinguish added (+) vs context lines
-    assert "+" in instr, "TOOL_ENABLED_REVIEW_INSTRUCTION must mention '+' for added lines"
+    # Must distinguish added (+) vs context lines and forbid context by default.
+    assert "Only report findings for added ``+`` lines with a ``n:`` annotation." in instr, (
+        "TOOL_ENABLED_REVIEW_INSTRUCTION must explicitly restrict findings to added annotated lines"
+    )
+    assert "Do NOT report findings on context" in instr
+
+
+@patch("google.adk.agents.Agent")
+@patch("code_review.agent.agent.create_findings_only_tools")
+@patch("code_review.agent.agent.get_code_review_app_config")
+@patch("code_review.agent.agent.get_llm_config")
+def test_create_review_agent_adds_visible_lines_override_when_enabled(
+    mock_get_llm_config, mock_get_app_cfg, mock_create_tools, mock_agent_cls
+) -> None:
+    provider = MagicMock()
+    mock_get_llm_config.return_value = MagicMock(
+        temperature=0.0,
+        max_output_tokens=1024,
+        disable_tool_calls=False,
+    )
+    mock_get_app_cfg.return_value = MagicMock(review_visible_lines=True)
+    mock_create_tools.return_value = []
+    mock_agent_cls.return_value = MagicMock()
+
+    create_review_agent(provider, review_standards="", findings_only=True)
+
+    _, kwargs = mock_agent_cls.call_args
+    assert "LINE-SCOPE OVERRIDE:" in kwargs["instruction"]
+    assert "including unchanged" in kwargs["instruction"]
 
 
 def test_findings_only_instruction_head_sha_ref_guidance():

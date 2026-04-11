@@ -79,6 +79,7 @@ def test_create_sequential_batch_review_agent_logs_instruction_when_enabled(
                 review_standards="### Python",
                 batches=[batch],
                 head_sha="abc123",
+                review_visible_lines=None,
             )
         finally:
             reset_config_cache()
@@ -356,6 +357,7 @@ def test_create_agent_and_runner_uses_sequential_batch_workflow(
         batches,
         head_sha="sha1",
         context_brief_attached=False,
+        review_visible_lines=None,
     )
 
 
@@ -391,6 +393,7 @@ def test_execution_sequential_batch_mode_forwards_supported_args_only(mock_run_b
         batch_count=1,
         context_brief_attached=True,
         prompt_suffix="extra context",
+        review_visible_lines=None,
     )
 
 
@@ -454,6 +457,7 @@ def test_run_agent_and_collect_findings_parses_sequential_workflow_responses(
         runner,
         "session-1",
         [MagicMock(), MagicMock()],
+        review_visible_lines=None,
     )
 
     assert [(f.path, f.line, f.message) for f in findings] == [
@@ -813,6 +817,7 @@ def test_create_agent_and_runner_returns_session_id_service_runner():
             batches,
             head_sha="",
             context_brief_attached=False,
+            review_visible_lines=None,
         )
     assert session_id.startswith("o/r/pr-42/")
     assert len(session_id) > len("o/r/pr-42/")
