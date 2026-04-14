@@ -285,12 +285,6 @@ def test_embedded_diff_review_instruction_category_field():
     )
 
 
-def test_embedded_diff_review_instruction_prefers_omission_over_weak_speculation():
-    """EMBEDDED_DIFF_REVIEW_INSTRUCTION should prefer omission over weak findings."""
-    lowered = EMBEDDED_DIFF_REVIEW_INSTRUCTION.lower()
-    assert "omit the finding" in lowered
-    assert "prefer omission over weak speculation" in lowered
-
 
 def test_instructions_consistent_category_guidance():
     """Both instructions should describe the category field consistently."""

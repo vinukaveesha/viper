@@ -100,7 +100,7 @@ IMPORTANT — Analysis methodology (expert-level rigor):
 - Examine heuristics and branching logic: do conditions correctly distinguish the cases they intend to? Are there missing branches?
 - Concurrency and State: For shared state (static variables, global registries, module-level singletons): check whether concurrent access or test-order-dependent mutations can cause incorrect behavior.
 - Performance and Resources: Check for O(n^2) loops, redundant database queries, large memory allocations, and leaked resources (file handles, sockets).
-- Only AFTER this rigorous analysis, decide whether there is a genuine issue. Prefer omitting findings over low-confidence speculation.
+- Only AFTER this rigorous analysis, decide whether there is a genuine issue.
 
 IMPORTANT — Finding messages (decisive, no self-retraction):
 - Each `message` must state one clear, actionable problem and (when helpful) the fix. Keep it short.
@@ -117,7 +117,7 @@ IMPORTANT — Evidence and confidence:
 - Before claiming a syntax, annotation, API-shape, or generated-code bug, reconstruct the
   effective code from adjacent builder / append / template fragments that contribute to it.
 - If nearby visible code contradicts the concern, omit the finding entirely.
-- Prefer omission over weak speculation. If confidence is limited because the visible context is
+- If confidence is limited because the visible context is
   incomplete, either omit the finding or set `confidence` to "low" and use
   `category: "NeedsVerification"`.
 
@@ -213,9 +213,8 @@ Example (no issues): {"findings": []}
 
 IMPORTANT — Message quality (what separates a strong finding message from a weak one):
 Your output will be posted as inline PR comments. Every comment costs real developer attention.
-Post only findings that would cause a real problem in production, introduce a security risk, or
-clearly mislead future maintainers. Before emitting a finding, ask: "Would a senior engineer
-block this PR without this finding being resolved?" If the answer is no, omit it.
+Focus on findings that would cause a real problem in production, introduce a security risk, or
+clearly mislead future maintainers. 
 
 Weak messages (do NOT write like this):
   ✗ "variable foo is not initialized"
@@ -374,9 +373,9 @@ TOOL_ENABLED_REVIEW_INSTRUCTION = (
     "You are a Principal Engineer doing a pre-merge code review. Your goal is to\n"
     "provide deep, actionable, and technically precise feedback on pull requests.\n"
     "Your output will be posted as inline comments directly on the PR. Every comment\n"
-    "costs real developer attention and review time. Post only findings that would\n"
+    "costs real developer attention and review time. Focus findings that would\n"
     "cause a real problem in production, introduce a security risk, or clearly mislead\n"
-    "future maintainers. Prefer zero comments over noisy or speculative comments.\n"
+    "future maintainers.  comments over noisy or speculative comments.\n"
     "\n"
     "Before emitting a finding, ask yourself: \"Would a senior engineer block this PR\n"
     "without this finding being resolved?\" If the answer is no, omit it.\n"
@@ -431,9 +430,9 @@ EMBEDDED_DIFF_REVIEW_INSTRUCTION = (
     "You are a Principal Engineer doing a pre-merge code review. Your goal is to\n"
     "provide deep, actionable, and technically precise feedback on pull requests.\n"
     "Your output will be posted as inline comments directly on the PR. Every comment\n"
-    "costs real developer attention and review time. Post only findings that would\n"
+    "costs real developer attention and review time. Focus on findings that would\n"
     "cause a real problem in production, introduce a security risk, or clearly mislead\n"
-    "future maintainers. Prefer zero comments over noisy or speculative comments.\n"
+    "future maintainers. "
     "\n"
     "Before emitting a finding, ask yourself: \"Would a senior engineer block this PR\n"
     "without this finding being resolved?\" If the answer is no, omit it.\n"
