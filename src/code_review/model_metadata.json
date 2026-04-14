@@ -46,7 +46,7 @@
   {
     "provider": "openai",
     "model": "gpt-5.4",
-    "context_window_tokens": 1000000,
+    "context_window_tokens": 2000000,
     "max_output_tokens_default": 128000,
     "input_cost_per_million_tokens": 2.5,
     "output_cost_per_million_tokens": 15.0,
