@@ -142,40 +142,13 @@ class CommentPoster:
     # ------------------------------------------------------------------
 
     def post_started_review_comment(self, pr_info, paths: list[str]) -> None:
-        """When PR has no description: auto-generate one and post a started-review note."""
+        """When PR has no description: post a started-review note; description is filled later by LLM."""
         if not pr_info or not paths:
             return
         description = (getattr(pr_info, "description", "") or "").strip()
         if description:
             return
-        generated = _generate_auto_pr_description(getattr(pr_info, "title", "") or "", paths)
-        if not generated or not generated.strip():
-            return
-        description_updated = False
-        try:
-            self.provider.update_pr_description(
-                self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, generated
-            )
-            description_updated = True
-        except NotImplementedError:
-            pass
-        except Exception as e:  # pragma: no cover
-            logger.warning(
-                "update_pr_description failed owner=%s repo=%s pr_number=%s: %s",
-                self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, e,
-            )
-        if description_updated:
-            notes = (
-                "Viper has started a review of this pull request and updated the "
-                "PR description with an auto-generated summary."
-            )
-        else:
-            notes = (
-                "Viper has started a review of this pull request.\n\n"
-                "The PR had no description and this SCM does not support updating it; "
-                "below is the summary we generated for context:\n\n"
-                f"{generated}"
-            )
+        notes = "Viper is reviewing this pull request and will update the description shortly."
         try:
             self.provider.post_pr_summary_comment(
                 self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, notes
@@ -197,6 +170,26 @@ class CommentPoster:
         except Exception as e:
             logger.warning(
                 "post_pr_summary failed owner=%s repo=%s pr_number=%s: %s",
+                self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, e,
+            )
+
+    def update_pr_description(self, body: str) -> None:
+        """Overwrite the PR description with the given body (e.g. LLM-generated summary)."""
+        if not body or not body.strip():
+            return
+        try:
+            self.provider.update_pr_description(
+                self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, body
+            )
+        except NotImplementedError:
+            logger.debug(
+                "update_pr_description: provider does not support this operation "
+                "owner=%s repo=%s pr_number=%s",
+                self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number,
+            )
+        except Exception as e:
+            logger.warning(
+                "update_pr_description failed owner=%s repo=%s pr_number=%s: %s",
                 self.pr_ctx.owner, self.pr_ctx.repo, self.pr_ctx.pr_number, e,
             )
 

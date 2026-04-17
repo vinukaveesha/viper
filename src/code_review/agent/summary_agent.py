@@ -31,13 +31,16 @@ TONE:
 STRUCTURE:
 1. **Summary**: A 1-2 sentence high-level technical assessment of the changes. Include a one-line
    metrics count on its own line, e.g.: `3 high · 5 medium · 2 nit findings.`
-2. **Walkthrough**: Briefly group the changes into logical functional areas (e.g., "API Endpoints",
+2. **Description**: A concise, functional description of what this PR does — what changed and why,
+   written from the author's perspective (2-4 sentences). Focus purely on the code changes:
+   what was added, removed, or refactored, and the logical intent. Do NOT mention findings here.
+3. **Walkthrough**: Briefly group the changes into logical functional areas (e.g., "API Endpoints",
    "Data Layer", "Security Configuration").
-3. **Findings Overview**:
+4. **Findings Overview**:
    - Categorize the findings by severity (High, Medium, Nit).
    - Summarize the main themes of the findings (e.g., "Concurrency issues in the task runner",
      "Missing input validation in auth middleware").
-4. **Narrative Summary**: A short, flowing paragraph (3-5 sentences) that tells the story of this
+5. **Narrative Summary**: A short, flowing paragraph (3-5 sentences) that tells the story of this
    PR — what it accomplishes, what the most significant findings are, and what the author should
    prioritize addressing first. This replaces a generic readiness statement and should read as a
    cohesive, human-readable conclusion.
@@ -52,10 +55,11 @@ LENGTH:
 - If findings are numerous, summarize themes rather than listing every finding individually.
 
 NO-FINDINGS CASE:
-- When the Findings input is "No specific findings identified." (empty findings list), produce a
-  short, positive summary: note that the review found no issues, briefly describe what changed
-  (from the PR metadata), and keep the output to 3-5 sentences. Do NOT invent findings or pad
-  the output with generic advice.
+- When the Findings input is "No specific findings identified." (empty findings list), produce:
+  1. **Summary**: One sentence noting no issues were identified.
+  2. **Description**: 2-4 sentences describing what changed (from PR metadata/diff context).
+  Skip the Walkthrough, Findings Overview, and Narrative Summary entirely.
+  Keep the total output very short. Do NOT invent findings or pad with generic advice.
 
 INCREMENTAL UPDATES:
 If the input includes "Incremental Review Context", this is an incremental update review.
@@ -155,3 +159,25 @@ Findings:
     session_id = f"summary/{uuid.uuid4().hex[:12]}"
     content = types.Content(role="user", parts=[types.Part(text=prompt)])
     return _run_agent_and_collect_response(runner, session_id, content)
+
+
+def split_summary_for_pr_description(full_text: str) -> tuple[str, str]:
+    """Split LLM summary into (pr_description_part, comment_part).
+
+    The PR description part contains the **Summary** and **Description** sections
+    (sections 1 and 2 of the SUMMARY_INSTRUCTION structure) — these describe
+    *what the PR does* and are suitable as a GitHub PR description body.
+
+    The comment part starts from **Walkthrough** onward and contains the detailed
+    review analysis (findings overview, narrative summary, etc.).
+
+    If no natural split point is found (e.g. the LLM omitted the Walkthrough heading
+    in a no-findings response), the full text is returned as the PR description part
+    and the comment part is empty.
+    """
+    import re
+
+    match = re.search(r'^##\s+Walkthrough', full_text, re.MULTILINE | re.IGNORECASE)
+    if not match:
+        return full_text.strip(), ""
+    return full_text[: match.start()].strip(), full_text[match.start() :].strip()

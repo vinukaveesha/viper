@@ -510,12 +510,33 @@ class StandardReviewHandler:
         env: _ReviewEnv,
         to_post: list[tuple[FindingV1, bool]],
     ) -> None:
-        """Generate and post a PR summary for non-dry-run reviews with findings."""
-        if self.dry_run or not to_post:
+        """Generate and post a PR summary; update PR description for initial reviews without one.
+
+        Routing rules:
+        - dry_run → skip entirely.
+        - Incremental review OR PR already had a description → post full LLM summary as a comment
+          (only when there are findings; no-findings incremental reviews stay silent).
+        - Initial review + PR had NO description → split the LLM output:
+            * Summary + Description sections → written to the PR description field.
+            * Walkthrough + rest → posted as a comment (skipped when there are no findings).
+        """
+        if self.dry_run:
+            return
+
+        description_was_empty = not (getattr(env.pr_info, "description", "") or "").strip()
+        is_initial_review = not env.incremental_base_sha
+
+        # For incremental reviews or PRs that already have a description, only run when there
+        # are findings (preserve current behaviour).
+        if not (description_was_empty and is_initial_review) and not to_post:
             return
 
         try:
-            from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
+            from code_review.agent.summary_agent import (
+                create_summary_agent,
+                generate_pr_summary,
+                split_summary_for_pr_description,
+            )
 
             incremental_commits: list[str] | None = None
             if env.incremental_base_sha and self.head_sha:
@@ -532,8 +553,7 @@ class StandardReviewHandler:
                 and pr_info_for_summary
                 and hasattr(pr_info_for_summary, "model_copy")
             ):
-                # For incremental reviews, scrub the full PR description to avoid summary-drift
-                # toward the full PR context.
+                # For incremental reviews, scrub the full PR description to avoid summary-drift.
                 pr_info_for_summary = pr_info_for_summary.model_copy(update={"description": ""})
 
             posted_findings = [f for f, _ in to_post]
@@ -546,7 +566,26 @@ class StandardReviewHandler:
                 incremental_base_sha=env.incremental_base_sha,
                 incremental_commits=incremental_commits,
             )
-            CommentPoster(provider, self.pr_ctx).post_pr_summary(summary_text)
+
+            poster = CommentPoster(provider, self.pr_ctx)
+
+            if description_was_empty and is_initial_review:
+                # Split: Summary+Description → PR description field.
+                # Walkthrough+rest → comment (only when there are findings to discuss).
+                description_part, comment_part = split_summary_for_pr_description(summary_text)
+                if description_part:
+                    logger.info(
+                        "Updating PR description with LLM-generated summary "
+                        "owner=%s repo=%s pr=%s",
+                        self.owner, self.repo, self.pr_number,
+                    )
+                    poster.update_pr_description(description_part)
+                if comment_part and to_post:
+                    poster.post_pr_summary(comment_part)
+            else:
+                # Incremental review or PR already had a description: post full summary as comment.
+                poster.post_pr_summary(summary_text)
+
         except Exception as e:
             logger.warning("Failed to generate/post PR summary: %s", e)
 

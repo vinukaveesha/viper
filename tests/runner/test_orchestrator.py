@@ -924,9 +924,8 @@ def test_generate_auto_pr_description_uses_title_and_paths():
 
 
 def test_maybe_post_started_review_comment_posts_when_description_missing():
-    """Post full summary when description is missing and PR body cannot be updated."""
+    """Post a short 'reviewing…' note when description is missing; no description update."""
     provider = MagicMock()
-    provider.update_pr_description = MagicMock(side_effect=NotImplementedError())
     pr_info = MagicMock(title="T", description="")
     paths = ["foo.py", "bar.py"]
 
@@ -936,27 +935,28 @@ def test_maybe_post_started_review_comment_posts_when_description_missing():
     args, _ = provider.post_pr_summary_comment.call_args
     assert args[0:3] == ("o", "r", 1)
     body = args[3]
-    assert "Viper has started a review" in body
-    assert "foo.py" in body or "bar.py" in body
+    assert "Viper" in body
+    # The static file list must NOT appear in the comment any more
+    assert "foo.py" not in body and "bar.py" not in body
+    # The description update must NOT be called – that is now the LLM's job
+    provider.update_pr_description.assert_not_called()
 
 
-def test_maybe_post_started_review_comment_updates_pr_description_when_supported():
-    """Update PR description and post a short comment when the provider supports it."""
+def test_maybe_post_started_review_comment_does_not_update_description():
+    """post_started_review_comment never calls update_pr_description (LLM does that later)."""
     provider = MagicMock()
     pr_info = MagicMock(title="kafka", description="")
     paths = ["AGENTS.md", "README.md"]
 
     _maybe_post_started_review_comment(provider, PRContext("o", "r", 1), pr_info, paths)
 
-    provider.update_pr_description.assert_called_once()
-    call_args = provider.update_pr_description.call_args[0]
-    assert call_args[:3] == ("o", "r", 1)
-    assert "kafka" in call_args[3] and "AGENTS.md" in call_args[3]
+    # No description update — the LLM will write it after analysis
+    provider.update_pr_description.assert_not_called()
+    # But a comment IS posted to signal work has started
     provider.post_pr_summary_comment.assert_called_once()
     body = provider.post_pr_summary_comment.call_args[0][3]
-    assert "Viper has started a review" in body
-    assert "updated the PR description" in body
-    assert "AGENTS.md" not in body  # summary is in PR description, not in comment
+    assert "Viper" in body
+    assert "AGENTS.md" not in body  # file list must not appear
 
 
 def test_maybe_post_started_review_comment_skips_when_description_present():
@@ -971,10 +971,11 @@ def test_maybe_post_started_review_comment_skips_when_description_present():
     _maybe_post_started_review_comment(provider, PRContext("o", "r", 1), pr_info, paths)
 
     provider.post_pr_summary_comment.assert_not_called()
+    provider.update_pr_description.assert_not_called()
 
 
 def test_maybe_post_started_review_comment_skips_when_description_is_short_but_intentional():
-    """Short non-empty descriptions should not be overwritten by the auto-generated summary."""
+    """Short non-empty descriptions should not trigger the started-review comment."""
     provider = MagicMock()
     pr_info = MagicMock(
         title="T",
@@ -986,6 +987,36 @@ def test_maybe_post_started_review_comment_skips_when_description_is_short_but_i
 
     provider.update_pr_description.assert_not_called()
     provider.post_pr_summary_comment.assert_not_called()
+
+
+def test_split_summary_for_pr_description_splits_at_walkthrough():
+    """split_summary_for_pr_description returns (pre-walkthrough, walkthrough+rest)."""
+    from code_review.agent.summary_agent import split_summary_for_pr_description
+
+    full = (
+        "## Summary\nNo issues found. 0 findings.\n\n"
+        "## Description\nThis PR refactors the evaluator.\n\n"
+        "## Walkthrough\n- Evaluator: refactored logic\n\n"
+        "## Findings Overview\nNone."
+    )
+    desc_part, comment_part = split_summary_for_pr_description(full)
+
+    assert "## Summary" in desc_part
+    assert "## Description" in desc_part
+    assert "## Walkthrough" not in desc_part
+    assert "## Walkthrough" in comment_part
+    assert "## Findings Overview" in comment_part
+
+
+def test_split_summary_for_pr_description_no_walkthrough_returns_full_as_description():
+    """When the LLM omits the Walkthrough heading, full text goes to description and comment is empty."""
+    from code_review.agent.summary_agent import split_summary_for_pr_description
+
+    full = "## Summary\nNo issues found.\n\n## Description\nSmall refactor."
+    desc_part, comment_part = split_summary_for_pr_description(full)
+
+    assert desc_part == full.strip()
+    assert comment_part == ""
 
 
 def test_run_does_not_post_started_review_comment_in_dry_run():
