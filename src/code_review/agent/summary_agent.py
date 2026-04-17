@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from code_review.config import get_llm_config
@@ -187,10 +188,8 @@ def split_summary_for_pr_description(full_text: str) -> tuple[str, str]:
     in a no-findings response), the full text is returned as the PR description part
     and the comment part is empty.
     """
-    import re
-
     match = re.search(
-        r'^[ \t]*(?:#{1,6}[ \t]+|(?:\d+\.[ \t]+)?\*\*)[ \t]*Walkthrough\b',
+        r'^[ \t]*(?:#{1,6}[ \t]+|\d+\.[ \t]+\*\*|\*\*)[ \t]*Walkthrough\b',
         full_text,
         re.MULTILINE | re.IGNORECASE,
     )
