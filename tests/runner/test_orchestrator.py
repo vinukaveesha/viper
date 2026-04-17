@@ -1,8 +1,8 @@
 """Unit tests for ReviewOrchestrator and its extracted helpers (RUN_REVIEW_REFACTOR_PLAN)."""
 
+import hashlib
 import logging
 import os
-import hashlib
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -715,8 +715,8 @@ def test_incremental_base_sha_uses_cfg_head_sha_when_parameter_missing():
 def test_fetch_review_files_and_diffs_returns_files_paths_and_full_diff():
     """StandardReviewHandler.fetch_review_files_and_diffs returns the active review scope."""
     from code_review.orchestration.context_enricher import ContextEnricher
-    from code_review.orchestration.review_decision import ReviewDecisionHandler
     from code_review.orchestration.reply_dismissal import ReplyDismissalHandler
+    from code_review.orchestration.review_decision import ReviewDecisionHandler
     from code_review.orchestration.standard_review import StandardReviewHandler
     from code_review.providers.base import FileInfo
 
@@ -924,9 +924,8 @@ def test_generate_auto_pr_description_uses_title_and_paths():
 
 
 def test_maybe_post_started_review_comment_posts_when_description_missing():
-    """Post full summary when description is missing and PR body cannot be updated."""
+    """Post a short 'reviewing…' note when description is missing; no description update."""
     provider = MagicMock()
-    provider.update_pr_description = MagicMock(side_effect=NotImplementedError())
     pr_info = MagicMock(title="T", description="")
     paths = ["foo.py", "bar.py"]
 
@@ -936,27 +935,28 @@ def test_maybe_post_started_review_comment_posts_when_description_missing():
     args, _ = provider.post_pr_summary_comment.call_args
     assert args[0:3] == ("o", "r", 1)
     body = args[3]
-    assert "Viper has started a review" in body
-    assert "foo.py" in body or "bar.py" in body
+    assert "Viper" in body
+    # The static file list must NOT appear in the comment any more
+    assert "foo.py" not in body and "bar.py" not in body
+    # The description update must NOT be called – that is now the LLM's job
+    provider.update_pr_description.assert_not_called()
 
 
-def test_maybe_post_started_review_comment_updates_pr_description_when_supported():
-    """Update PR description and post a short comment when the provider supports it."""
+def test_maybe_post_started_review_comment_does_not_update_description():
+    """post_started_review_comment never calls update_pr_description (LLM does that later)."""
     provider = MagicMock()
     pr_info = MagicMock(title="kafka", description="")
     paths = ["AGENTS.md", "README.md"]
 
     _maybe_post_started_review_comment(provider, PRContext("o", "r", 1), pr_info, paths)
 
-    provider.update_pr_description.assert_called_once()
-    call_args = provider.update_pr_description.call_args[0]
-    assert call_args[:3] == ("o", "r", 1)
-    assert "kafka" in call_args[3] and "AGENTS.md" in call_args[3]
+    # No description update — the LLM will write it after analysis
+    provider.update_pr_description.assert_not_called()
+    # But a comment IS posted to signal work has started
     provider.post_pr_summary_comment.assert_called_once()
     body = provider.post_pr_summary_comment.call_args[0][3]
-    assert "Viper has started a review" in body
-    assert "updated the PR description" in body
-    assert "AGENTS.md" not in body  # summary is in PR description, not in comment
+    assert "Viper" in body
+    assert "AGENTS.md" not in body  # file list must not appear
 
 
 def test_maybe_post_started_review_comment_skips_when_description_present():
@@ -971,10 +971,11 @@ def test_maybe_post_started_review_comment_skips_when_description_present():
     _maybe_post_started_review_comment(provider, PRContext("o", "r", 1), pr_info, paths)
 
     provider.post_pr_summary_comment.assert_not_called()
+    provider.update_pr_description.assert_not_called()
 
 
 def test_maybe_post_started_review_comment_skips_when_description_is_short_but_intentional():
-    """Short non-empty descriptions should not be overwritten by the auto-generated summary."""
+    """Short non-empty descriptions should not trigger the started-review comment."""
     provider = MagicMock()
     pr_info = MagicMock(
         title="T",
@@ -986,6 +987,38 @@ def test_maybe_post_started_review_comment_skips_when_description_is_short_but_i
 
     provider.update_pr_description.assert_not_called()
     provider.post_pr_summary_comment.assert_not_called()
+
+
+def test_split_summary_for_pr_description_splits_at_walkthrough():
+    """split_summary_for_pr_description returns (pre-walkthrough, walkthrough+rest)."""
+    from code_review.agent.summary_agent import split_summary_for_pr_description
+
+    full = (
+        "## Summary\nNo issues found. 0 findings.\n\n"
+        "## Description\nThis PR refactors the evaluator.\n\n"
+        "## Walkthrough\n- Evaluator: refactored logic\n\n"
+        "## Findings Overview\nNone."
+    )
+    desc_part, comment_part = split_summary_for_pr_description(full)
+
+    assert "## Summary" in desc_part
+    assert "## Description" in desc_part
+    assert "## Walkthrough" not in desc_part
+    assert "## Walkthrough" in comment_part
+    assert "## Findings Overview" in comment_part
+
+
+def test_split_summary_for_pr_description_no_walkthrough_returns_full_as_description():
+    """When the LLM omits the Walkthrough heading, full text goes to description
+    and comment is empty.
+    """
+    from code_review.agent.summary_agent import split_summary_for_pr_description
+
+    full = "## Summary\nNo issues found.\n\n## Description\nSmall refactor."
+    desc_part, comment_part = split_summary_for_pr_description(full)
+
+    assert desc_part == full.strip()
+    assert comment_part == ""
 
 
 def test_run_does_not_post_started_review_comment_in_dry_run():
@@ -1146,3 +1179,198 @@ def test_build_review_batches_for_scope_falls_back_when_diff_budget_is_zero():
     assert len(batches) == 1
     assert len(batches[0].segments) == 1
     assert batches[0].segments[0].estimated_tokens > 0
+
+
+# --- Multiline suggested_patch enforcement at post_inline ---
+
+
+def test_post_inline_strips_multiline_patch_when_platform_does_not_support_it():
+    """When supports_multiline_suggestions=False, a multiline patch is cleared before posting.
+
+    This is the defensive enforcement layer — the LLM prompt already discourages multiline
+    patches on these platforms, but this ensures a rogue patch can never reach the API.
+    """
+    from code_review.models import PRContext
+    from code_review.orchestration.posting import CommentPoster
+    from code_review.providers.base import ProviderCapabilities
+    from code_review.schemas.findings import FindingV1
+
+    provider = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        supports_suggestions=True,
+        supports_multiline_suggestions=False,  # e.g. Bitbucket Cloud / Server
+    )
+
+    finding = FindingV1(
+        path="src/foo.py",
+        line=10,
+        severity="medium",
+        code="bad-indent",
+        message="Fix indentation.",
+        suggested_patch="    if x:\n        return None",  # multiline — should be stripped
+    )
+
+    poster = CommentPoster(
+        provider=provider,
+        pr_ctx=PRContext("o", "r", 1, head_sha="abc123"),
+    )
+
+    captured_comments: list = []
+
+    def _capture_post(_owner, _repo, _pr, comments, **_kw):
+        captured_comments.extend(comments)
+
+    provider.post_review_comments.side_effect = _capture_post
+
+    poster.post_inline(
+        incremental_base_sha="",
+        to_post=[(finding, "fp-abc")],
+        cfg=MagicMock(provider="bitbucket"),
+        llm_cfg=MagicMock(),
+    )
+
+    assert len(captured_comments) == 1
+    assert captured_comments[0].suggested_patch is None
+
+
+def test_post_inline_preserves_single_line_patch_when_platform_does_not_support_multiline():
+    """Single-line patches must NOT be stripped even when supports_multiline_suggestions=False."""
+    from code_review.models import PRContext
+    from code_review.orchestration.posting import CommentPoster
+    from code_review.providers.base import ProviderCapabilities
+    from code_review.schemas.findings import FindingV1
+
+    provider = MagicMock()
+    provider.capabilities.return_value = ProviderCapabilities(
+        supports_suggestions=True,
+        supports_multiline_suggestions=False,
+    )
+
+    finding = FindingV1(
+        path="src/foo.py",
+        line=10,
+        severity="medium",
+        code="rename-var",
+        message="Rename variable.",
+        suggested_patch="    user_id = request.user_id",  # single-line — must be kept
+    )
+
+    poster = CommentPoster(
+        provider=provider,
+        pr_ctx=PRContext("o", "r", 1, head_sha="abc123"),
+    )
+
+    captured_comments: list = []
+
+    def _capture_post(_owner, _repo, _pr, comments, **_kw):
+        captured_comments.extend(comments)
+
+    provider.post_review_comments.side_effect = _capture_post
+
+    poster.post_inline(
+        incremental_base_sha="",
+        to_post=[(finding, "fp-xyz")],
+        cfg=MagicMock(provider="bitbucket"),
+        llm_cfg=MagicMock(),
+    )
+
+    assert len(captured_comments) == 1
+    assert captured_comments[0].suggested_patch == "    user_id = request.user_id"
+
+
+def test_maybe_generate_and_post_summary_skips_overwrite_when_description_updated():
+    from unittest.mock import MagicMock
+
+    from code_review.models import PRContext
+    from code_review.orchestration.standard_review import StandardReviewHandler
+
+    provider = MagicMock()
+    pr_ctx = PRContext("o", "r", 1)
+    
+    env = MagicMock()
+    env.pr_info = MagicMock(description="")
+    env.incremental_base_sha = ""
+    env.paths = ["a.py"]
+    
+    handler = StandardReviewHandler(
+        pr_ctx,
+        dry_run=False,
+        print_findings=False,
+        context_enricher=MagicMock(),
+        review_decision_handler=MagicMock(),
+        result_builder=MagicMock(),
+    )
+    
+    with (
+        patch(
+            "code_review.agent.summary_agent.split_summary_for_pr_description",
+            return_value=("New Desc", "New Comment"),
+        ),
+        patch("code_review.agent.summary_agent.create_summary_agent"),
+        patch(
+            "code_review.agent.summary_agent.generate_pr_summary",
+            return_value="Summary Text",
+        ),
+        patch("code_review.orchestration.standard_review.CommentPoster") as MockPoster,
+    ):
+        
+        poster_instance = MagicMock()
+        MockPoster.return_value = poster_instance
+        
+        current_pr_info = MagicMock()
+        current_pr_info.description = "Someone added this in the meantime!"
+        provider.get_pr_info.return_value = current_pr_info
+        
+        handler._maybe_generate_and_post_summary(provider, env, [(MagicMock(), True)])
+        
+        poster_instance.update_pr_description.assert_not_called()
+        poster_instance.post_pr_summary.assert_called_once_with("New Comment")
+
+
+def test_maybe_generate_and_post_summary_posts_walkthrough_when_findings_empty():
+    from unittest.mock import MagicMock
+
+    from code_review.models import PRContext
+    from code_review.orchestration.standard_review import StandardReviewHandler
+
+    provider = MagicMock()
+    pr_ctx = PRContext("o", "r", 1)
+    
+    env = MagicMock()
+    env.pr_info = MagicMock(description="")
+    env.incremental_base_sha = ""
+    env.paths = ["a.py"]
+    
+    handler = StandardReviewHandler(
+        pr_ctx,
+        dry_run=False,
+        print_findings=False,
+        context_enricher=MagicMock(),
+        review_decision_handler=MagicMock(),
+        result_builder=MagicMock(),
+    )
+    
+    with (
+        patch(
+            "code_review.agent.summary_agent.split_summary_for_pr_description",
+            return_value=("New Desc", "Walkthrough Comment"),
+        ),
+        patch("code_review.agent.summary_agent.create_summary_agent"),
+        patch(
+            "code_review.agent.summary_agent.generate_pr_summary",
+            return_value="Summary Text",
+        ),
+        patch("code_review.orchestration.standard_review.CommentPoster") as MockPoster,
+    ):
+        
+        poster_instance = MagicMock()
+        MockPoster.return_value = poster_instance
+        
+        current_pr_info = MagicMock()
+        current_pr_info.description = ""
+        provider.get_pr_info.return_value = current_pr_info
+        
+        handler._maybe_generate_and_post_summary(provider, env, [])
+        
+        poster_instance.update_pr_description.assert_called_once_with("New Desc")
+        poster_instance.post_pr_summary.assert_called_once_with("Walkthrough Comment")

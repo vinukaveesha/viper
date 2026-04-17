@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from code_review import orchestration_deps as runner_mod
-from code_review.batching import ReviewBatch, build_review_batch_budget
+from code_review.batching import build_review_batch_budget
 from code_review.comments.manager import CommentManager
 from code_review.models import PRContext
 from code_review.orchestration import execution as execution_mod
@@ -14,7 +14,7 @@ from code_review.orchestration.context_enricher import ContextEnricher
 from code_review.orchestration.posting import CommentPoster
 from code_review.orchestration.review_decision import ReviewDecisionHandler
 from code_review.orchestration.runner_utils import ReviewRunObservability
-from code_review.providers.base import RateLimitError
+from code_review.providers.base import FileInfo, PRInfo, ProviderInterface
 from code_review.quality.gate import QualityGate
 from code_review.refinement.pipeline import FindingRefinementPipeline
 from code_review.schemas.findings import FindingV1
@@ -510,45 +510,105 @@ class StandardReviewHandler:
         env: _ReviewEnv,
         to_post: list[tuple[FindingV1, bool]],
     ) -> None:
-        """Generate and post a PR summary for non-dry-run reviews with findings."""
-        if self.dry_run or not to_post:
+        """Generate and post a PR summary; update PR description for initial reviews without one."""
+        if self.dry_run:
+            return
+
+        description_was_empty = not (getattr(env.pr_info, "description", "") or "").strip()
+        is_initial_review = not env.incremental_base_sha
+
+        # For incremental reviews or PRs that already have a description, only run when there
+        # are findings (preserve current behaviour).
+        if not (description_was_empty and is_initial_review) and not to_post:
             return
 
         try:
-            from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
-
-            incremental_commits: list[str] | None = None
-            if env.incremental_base_sha and self.head_sha:
-                try:
-                    incremental_commits = provider.get_incremental_pr_commit_messages(
-                        self.owner, self.repo, self.pr_number, env.incremental_base_sha, self.head_sha
-                    )
-                except Exception as e:
-                    logger.warning("Failed to fetch incremental commit messages: %s", e)
-
-            pr_info_for_summary = env.pr_info
-            if (
-                env.incremental_base_sha
-                and pr_info_for_summary
-                and hasattr(pr_info_for_summary, "model_copy")
-            ):
-                # For incremental reviews, scrub the full PR description to avoid summary-drift
-                # toward the full PR context.
-                pr_info_for_summary = pr_info_for_summary.model_copy(update={"description": ""})
-
-            posted_findings = [f for f, _ in to_post]
-            summary_agent = create_summary_agent()
-            summary_text = generate_pr_summary(
-                summary_agent,
-                pr_info_for_summary,
-                posted_findings,
-                env.paths,
-                incremental_base_sha=env.incremental_base_sha,
-                incremental_commits=incremental_commits,
+            summary_text = self._generate_summary_text(provider, env, to_post)
+            self._post_summary(
+                provider, env, summary_text, description_was_empty, is_initial_review, to_post
             )
-            CommentPoster(provider, self.pr_ctx).post_pr_summary(summary_text)
         except Exception as e:
             logger.warning("Failed to generate/post PR summary: %s", e)
+
+    def _generate_summary_text(
+        self,
+        provider: ProviderInterface,
+        env: _ReviewEnv,
+        to_post: list[tuple[FindingV1, bool]],
+    ) -> str:
+        """Generate the PR summary text using the summary agent."""
+        from code_review.agent.summary_agent import create_summary_agent, generate_pr_summary
+
+        incremental_commits: list[str] | None = None
+        if env.incremental_base_sha and self.head_sha:
+            try:
+                incremental_commits = provider.get_incremental_pr_commit_messages(
+                    self.owner, self.repo, self.pr_number, env.incremental_base_sha, self.head_sha
+                )
+            except Exception as e:
+                logger.warning("Failed to fetch incremental commit messages: %s", e)
+
+        pr_info_for_summary = env.pr_info
+        if (
+            env.incremental_base_sha
+            and pr_info_for_summary
+            and hasattr(pr_info_for_summary, "model_copy")
+        ):
+            # For incremental reviews, scrub the full PR description to avoid summary-drift.
+            pr_info_for_summary = pr_info_for_summary.model_copy(update={"description": ""})
+
+        posted_findings = [f for f, _ in to_post]
+        summary_agent = create_summary_agent()
+        return generate_pr_summary(
+            summary_agent,
+            pr_info_for_summary,
+            posted_findings,
+            env.paths,
+            incremental_base_sha=env.incremental_base_sha,
+            incremental_commits=incremental_commits,
+        )
+
+    def _post_summary(
+        self,
+        provider: ProviderInterface,
+        env: _ReviewEnv,
+        summary_text: str,
+        description_was_empty: bool,
+        is_initial_review: bool,
+        to_post: list[tuple[FindingV1, bool]],
+    ) -> None:
+        """Post the generated summary text to the PR."""
+        from code_review.agent.summary_agent import split_summary_for_pr_description
+
+        poster = CommentPoster(provider, self.pr_ctx)
+
+        if description_was_empty and is_initial_review:
+            # Split: Summary+Description → PR description field.
+            # Walkthrough+rest → comment (only when there are findings to discuss).
+            description_part, comment_part = split_summary_for_pr_description(summary_text)
+            if description_part:
+                # Re-fetch the current PR state to guard against a race where the
+                # author added a description while the review was running.
+                current_pr_info = provider.get_pr_info(self.owner, self.repo, self.pr_number)
+                current_description = (getattr(current_pr_info, "description", "") or "").strip()
+                if current_description:
+                    logger.info(
+                        "PR description was updated while review ran; skipping overwrite "
+                        "owner=%s repo=%s pr=%s",
+                        self.owner, self.repo, self.pr_number,
+                    )
+                else:
+                    logger.info(
+                        "Updating PR description with LLM-generated summary "
+                        "owner=%s repo=%s pr=%s",
+                        self.owner, self.repo, self.pr_number,
+                    )
+                    poster.update_pr_description(description_part)
+            if comment_part:
+                poster.post_pr_summary(comment_part)
+        else:
+            # Incremental review or PR already had a description: post full summary as comment.
+            poster.post_pr_summary(summary_text)
 
     @staticmethod
     def log_review_scope_fetch(incremental_base_sha: str, head_sha: str, paths: list[str]) -> None:
