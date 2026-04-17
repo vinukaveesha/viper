@@ -72,6 +72,53 @@ def _apply_indent_prefix(patch: str, prefix: str) -> str:
     return "\n".join(result)
 
 
+def _normalize_finding_indentation(
+    f: FindingV1,
+    line_index: dict[tuple[str, int], str],
+) -> FindingV1:
+    """Normalize the indentation for a single finding's patch."""
+    if not f.suggested_patch:
+        return f
+
+    norm_path = normalize_path(f.path)
+    actual_content = line_index.get((norm_path, f.line))
+    if actual_content is None:
+        return f
+
+    actual_first = _first_nonempty_line(actual_content)
+    if actual_first is None:
+        return f
+
+    actual_indent = _leading_whitespace(actual_first)
+    if not actual_indent:
+        # Top-level code — nothing to fix.
+        return f
+
+    patch_first = _first_nonempty_line(f.suggested_patch)
+    if patch_first is None:
+        return f
+
+    patch_indent = _leading_whitespace(patch_first)
+    if len(patch_indent) >= len(actual_indent):
+        # Patch already has sufficient leading whitespace — trust the LLM.
+        return f
+
+    # Under-indented patch: add only the missing indent width.
+    missing_prefix = (
+        actual_indent[len(patch_indent):]
+        if actual_indent.startswith(patch_indent)
+        else actual_indent
+    )
+    fixed_patch = _apply_indent_prefix(f.suggested_patch, missing_prefix)
+    logger.info(
+        "normalize_patch_indentation: fixed missing indent (%r) on %s:%d",
+        missing_prefix,
+        f.path,
+        f.line,
+    )
+    return f.model_copy(update={"suggested_patch": fixed_patch})
+
+
 def normalize_patch_indentation(
     findings: list[FindingV1],
     diff_text: str,
@@ -88,54 +135,4 @@ def normalize_patch_indentation(
         return findings
 
     line_index = build_diff_line_index(diff_text)
-    result: list[FindingV1] = []
-
-    for f in findings:
-        if not f.suggested_patch:
-            result.append(f)
-            continue
-
-        norm_path = normalize_path(f.path)
-        actual_content = line_index.get((norm_path, f.line))
-        if actual_content is None:
-            result.append(f)
-            continue
-
-        actual_first = _first_nonempty_line(actual_content)
-        if actual_first is None:
-            result.append(f)
-            continue
-
-        actual_indent = _leading_whitespace(actual_first)
-        if not actual_indent:
-            # Top-level code — nothing to fix.
-            result.append(f)
-            continue
-
-        patch_first = _first_nonempty_line(f.suggested_patch)
-        if patch_first is None:
-            result.append(f)
-            continue
-
-        patch_indent = _leading_whitespace(patch_first)
-        if len(patch_indent) >= len(actual_indent):
-            # Patch already has sufficient leading whitespace — trust the LLM.
-            result.append(f)
-            continue
-
-        # Under-indented patch: add only the missing indent width.
-        missing_prefix = (
-            actual_indent[len(patch_indent):]
-            if actual_indent.startswith(patch_indent)
-            else actual_indent
-        )
-        fixed_patch = _apply_indent_prefix(f.suggested_patch, missing_prefix)
-        logger.info(
-            "normalize_patch_indentation: fixed missing indent (%r) on %s:%d",
-            missing_prefix,
-            f.path,
-            f.line,
-        )
-        result.append(f.model_copy(update={"suggested_patch": fixed_patch}))
-
-    return result
+    return [_normalize_finding_indentation(f, line_index) for f in findings]
