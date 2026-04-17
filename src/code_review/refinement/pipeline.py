@@ -26,7 +26,6 @@ class FindingRefinementPipeline:
         n = len(findings)
         findings = validate_suggested_patches(findings, diff_text)
         logger.info("Refinement: %d \u2192 %d after patch validation", n, len(findings))
-        n = len(findings)
         findings = normalize_patch_indentation(findings, diff_text)
-        logger.info("Refinement: %d \u2192 %d after patch indentation normalization", n, len(findings))
+        logger.info("Refinement: %d findings after patch indentation normalization", len(findings))
         return findings

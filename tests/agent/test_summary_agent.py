@@ -126,3 +126,23 @@ def test_generate_pr_summary_non_incremental_prompt():
         assert "Incremental Review Context" not in prompt
         assert "Changed Files: file.py" in prompt
         assert "PR Description: Test Desc" in prompt
+
+from code_review.agent.summary_agent import split_summary_for_pr_description
+
+def test_split_summary_for_pr_description_atx():
+    text = "## Summary\nSum\n\n## Description\nDesc\n\n## Walkthrough\nWalk"
+    desc, comment = split_summary_for_pr_description(text)
+    assert desc == "## Summary\nSum\n\n## Description\nDesc"
+    assert comment == "## Walkthrough\nWalk"
+
+def test_split_summary_for_pr_description_numbered_bold():
+    text = "1. **Summary**\nSum\n\n2. **Description**\nDesc\n\n3. **Walkthrough**\nWalk"
+    desc, comment = split_summary_for_pr_description(text)
+    assert desc == "1. **Summary**\nSum\n\n2. **Description**\nDesc"
+    assert comment == "3. **Walkthrough**\nWalk"
+
+def test_split_summary_for_pr_description_bold():
+    text = "**Summary**\nSum\n\n**Description**\nDesc\n\n**Walkthrough**\nWalk"
+    desc, comment = split_summary_for_pr_description(text)
+    assert desc == "**Summary**\nSum\n\n**Description**\nDesc"
+    assert comment == "**Walkthrough**\nWalk"

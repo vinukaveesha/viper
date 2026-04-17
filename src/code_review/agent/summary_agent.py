@@ -29,21 +29,29 @@ TONE:
 - Be direct and high-signal.
 
 STRUCTURE:
-1. **Summary**: A 1-2 sentence high-level technical assessment of the changes. Include a one-line
-   metrics count on its own line, e.g.: `3 high · 5 medium · 2 nit findings.`
-2. **Description**: A concise, functional description of what this PR does — what changed and why,
-   written from the author's perspective (2-4 sentences). Focus purely on the code changes:
-   what was added, removed, or refactored, and the logical intent. Do NOT mention findings here.
-3. **Walkthrough**: Briefly group the changes into logical functional areas (e.g., "API Endpoints",
-   "Data Layer", "Security Configuration").
-4. **Findings Overview**:
-   - Categorize the findings by severity (High, Medium, Nit).
-   - Summarize the main themes of the findings (e.g., "Concurrency issues in the task runner",
-     "Missing input validation in auth middleware").
-5. **Narrative Summary**: A short, flowing paragraph (3-5 sentences) that tells the story of this
-   PR — what it accomplishes, what the most significant findings are, and what the author should
-   prioritize addressing first. This replaces a generic readiness statement and should read as a
-   cohesive, human-readable conclusion.
+## Summary
+A 1-2 sentence high-level technical assessment of the changes. Include a one-line
+metrics count on its own line, e.g.: `3 high · 5 medium · 2 nit findings.`
+
+## Description
+A concise, functional description of what this PR does — what changed and why,
+written from the author's perspective (2-4 sentences). Focus purely on the code changes:
+what was added, removed, or refactored, and the logical intent. Do NOT mention findings here.
+
+## Walkthrough
+Briefly group the changes into logical functional areas (e.g., "API Endpoints",
+"Data Layer", "Security Configuration").
+
+## Findings Overview
+- Categorize the findings by severity (High, Medium, Nit).
+- Summarize the main themes of the findings (e.g., "Concurrency issues in the task runner",
+  "Missing input validation in auth middleware").
+
+## Narrative Summary
+A short, flowing paragraph (3-5 sentences) that tells the story of this
+PR — what it accomplishes, what the most significant findings are, and what the author should
+prioritize addressing first. This replaces a generic readiness statement and should read as a
+cohesive, human-readable conclusion.
 
 FORMATTING:
 - Use standard Markdown headings and lists.
@@ -56,8 +64,10 @@ LENGTH:
 
 NO-FINDINGS CASE:
 - When the Findings input is "No specific findings identified." (empty findings list), produce:
-  1. **Summary**: One sentence noting no issues were identified.
-  2. **Description**: 2-4 sentences describing what changed (from PR metadata/diff context).
+  ## Summary
+  One sentence noting no issues were identified.
+  ## Description
+  2-4 sentences describing what changed (from PR metadata/diff context).
   Skip the Walkthrough, Findings Overview, and Narrative Summary entirely.
   Keep the total output very short. Do NOT invent findings or pad with generic advice.
 
@@ -177,7 +187,7 @@ def split_summary_for_pr_description(full_text: str) -> tuple[str, str]:
     """
     import re
 
-    match = re.search(r'^##\s+Walkthrough', full_text, re.MULTILINE | re.IGNORECASE)
+    match = re.search(r'^\s*(?:#{1,6}\s+|(?:\d+\.\s+)?\*\*)\s*Walkthrough\b', full_text, re.MULTILINE | re.IGNORECASE)
     if not match:
         return full_text.strip(), ""
     return full_text[: match.start()].strip(), full_text[match.start() :].strip()

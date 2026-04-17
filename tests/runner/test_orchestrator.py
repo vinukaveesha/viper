@@ -1275,3 +1275,68 @@ def test_post_inline_preserves_single_line_patch_when_platform_does_not_support_
     assert len(captured_comments) == 1
     assert captured_comments[0].suggested_patch == "    user_id = request.user_id"
 
+
+def test_maybe_generate_and_post_summary_skips_overwrite_when_description_updated():
+    from code_review.orchestration.standard_review import StandardReviewHandler
+    from code_review.models import PRContext
+    from unittest.mock import MagicMock
+
+    provider = MagicMock()
+    pr_ctx = PRContext("o", "r", 1)
+    
+    env = MagicMock()
+    env.pr_info = MagicMock(description="")
+    env.incremental_base_sha = ""
+    env.paths = ["a.py"]
+    
+    handler = StandardReviewHandler(pr_ctx, dry_run=False, print_findings=False, context_enricher=MagicMock(), review_decision_handler=MagicMock(), result_builder=MagicMock())
+    
+    with patch("code_review.agent.summary_agent.split_summary_for_pr_description", return_value=("New Desc", "New Comment")), \
+         patch("code_review.agent.summary_agent.create_summary_agent"), \
+         patch("code_review.agent.summary_agent.generate_pr_summary", return_value="Summary Text"), \
+         patch("code_review.orchestration.standard_review.CommentPoster") as MockPoster:
+        
+        poster_instance = MagicMock()
+        MockPoster.return_value = poster_instance
+        
+        current_pr_info = MagicMock()
+        current_pr_info.description = "Someone added this in the meantime!"
+        provider.get_pr_info.return_value = current_pr_info
+        
+        handler._maybe_generate_and_post_summary(provider, env, [(MagicMock(), True)])
+        
+        poster_instance.update_pr_description.assert_not_called()
+        poster_instance.post_pr_summary.assert_called_once_with("New Comment")
+
+
+def test_maybe_generate_and_post_summary_posts_walkthrough_when_findings_empty():
+    from code_review.orchestration.standard_review import StandardReviewHandler
+    from code_review.models import PRContext
+    from unittest.mock import MagicMock
+
+    provider = MagicMock()
+    pr_ctx = PRContext("o", "r", 1)
+    
+    env = MagicMock()
+    env.pr_info = MagicMock(description="")
+    env.incremental_base_sha = ""
+    env.paths = ["a.py"]
+    
+    handler = StandardReviewHandler(pr_ctx, dry_run=False, print_findings=False, context_enricher=MagicMock(), review_decision_handler=MagicMock(), result_builder=MagicMock())
+    
+    with patch("code_review.agent.summary_agent.split_summary_for_pr_description", return_value=("New Desc", "Walkthrough Comment")), \
+         patch("code_review.agent.summary_agent.create_summary_agent"), \
+         patch("code_review.agent.summary_agent.generate_pr_summary", return_value="Summary Text"), \
+         patch("code_review.orchestration.standard_review.CommentPoster") as MockPoster:
+        
+        poster_instance = MagicMock()
+        MockPoster.return_value = poster_instance
+        
+        current_pr_info = MagicMock()
+        current_pr_info.description = ""
+        provider.get_pr_info.return_value = current_pr_info
+        
+        handler._maybe_generate_and_post_summary(provider, env, [])
+        
+        poster_instance.update_pr_description.assert_called_once_with("New Desc")
+        poster_instance.post_pr_summary.assert_called_once_with("Walkthrough Comment")

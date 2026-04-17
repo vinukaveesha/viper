@@ -118,16 +118,21 @@ def normalize_patch_indentation(
             continue
 
         patch_indent = _leading_whitespace(patch_first)
-        if patch_indent:
-            # Patch already has leading whitespace — trust the LLM.
+        if len(patch_indent) >= len(actual_indent):
+            # Patch already has sufficient leading whitespace — trust the LLM.
             result.append(f)
             continue
 
-        # The patch is missing its indent prefix.  Re-add it.
-        fixed_patch = _apply_indent_prefix(f.suggested_patch, actual_indent)
+        # Under-indented patch: add only the missing indent width.
+        missing_prefix = (
+            actual_indent[len(patch_indent):]
+            if actual_indent.startswith(patch_indent)
+            else actual_indent
+        )
+        fixed_patch = _apply_indent_prefix(f.suggested_patch, missing_prefix)
         logger.info(
             "normalize_patch_indentation: fixed missing indent (%r) on %s:%d",
-            actual_indent,
+            missing_prefix,
             f.path,
             f.line,
         )

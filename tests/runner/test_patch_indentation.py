@@ -62,6 +62,14 @@ def test_missing_indent_single_line_fixed():
     assert result[0].suggested_patch == "        return fixed_value"
 
 
+def test_under_indented_patch_fixed():
+    """An under-indented patch gets the remaining missing indent prefixed."""
+    # Line 9 of foo.py has 8-space indent.
+    f = _finding("foo.py", 9, "  return fixed_value")
+    result = normalize_patch_indentation([f], SAMPLE_DIFF)
+    assert result[0].suggested_patch == "        return fixed_value"
+
+
 def test_missing_indent_four_space_line_fixed():
     """A 4-space indented line (the def line at line 8) also gets its indent restored."""
     f = _finding("foo.py", 8, "def renamed_method(self):")

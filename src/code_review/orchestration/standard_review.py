@@ -574,13 +574,26 @@ class StandardReviewHandler:
                 # Walkthrough+rest → comment (only when there are findings to discuss).
                 description_part, comment_part = split_summary_for_pr_description(summary_text)
                 if description_part:
-                    logger.info(
-                        "Updating PR description with LLM-generated summary "
-                        "owner=%s repo=%s pr=%s",
-                        self.owner, self.repo, self.pr_number,
-                    )
-                    poster.update_pr_description(description_part)
-                if comment_part and to_post:
+                    # Re-fetch the current PR state to guard against a race where the
+                    # author added a description while the review was running.
+                    current_pr_info = provider.get_pr_info(self.owner, self.repo, self.pr_number)
+                    current_description = (
+                        getattr(current_pr_info, "description", "") or ""
+                    ).strip()
+                    if current_description:
+                        logger.info(
+                            "PR description was updated while review ran; skipping overwrite "
+                            "owner=%s repo=%s pr=%s",
+                            self.owner, self.repo, self.pr_number,
+                        )
+                    else:
+                        logger.info(
+                            "Updating PR description with LLM-generated summary "
+                            "owner=%s repo=%s pr=%s",
+                            self.owner, self.repo, self.pr_number,
+                        )
+                        poster.update_pr_description(description_part)
+                if comment_part:
                     poster.post_pr_summary(comment_part)
             else:
                 # Incremental review or PR already had a description: post full summary as comment.
