@@ -267,9 +267,16 @@ def _parse_findings_json(text: str) -> object:
     )
 
 
-def _findings_from_response(response_text: str) -> list[FindingV1]:
+def _findings_from_response(response_text: str, *, raise_errors: bool = False) -> list[FindingV1]:
     """Parse response text into validated findings."""
-    raw = _parse_findings_json(response_text)
+    try:
+        raw = _parse_findings_json(response_text)
+    except ValueError as e:
+        if raise_errors:
+            raise
+        logger.warning("Dropping agent response due to unparseable JSON findings: %s", e)
+        return []
+    
     if not isinstance(raw, dict):
         return []
     try:
