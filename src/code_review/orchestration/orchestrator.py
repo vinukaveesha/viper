@@ -90,7 +90,7 @@ class ReviewOrchestrator:
             cfg.provider,
             cfg.url,
             token_val,
-            bitbucket_server_user_slug=cfg.bitbucket_server_user_slug,
+            bot_identity=cfg.bot_identity,
         )
         return (cfg, llm_cfg, provider)
 

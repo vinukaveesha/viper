@@ -58,7 +58,7 @@ Loaded via `SCMConfig` (`env_prefix="SCM_"`). Field names map to env vars in **U
 | `SCM_REVIEW_DECISION_ENABLED` | `false` | Auto-submit PR review decision (provider-supported). |
 | `SCM_REVIEW_DECISION_HIGH_THRESHOLD` | `1` | Request changes when open high-severity count ≥ this. |
 | `SCM_REVIEW_DECISION_MEDIUM_THRESHOLD` | `3` | Request changes when open medium-severity count ≥ this. |
-| `SCM_BITBUCKET_SERVER_USER_SLUG` | `""` | Bitbucket Server/DC only: username slug of the token user; required for `submit_review_decision` (participant API). When unset, `supports_review_decisions` is false for that provider. |
+| `SCM_BOT_IDENTITY` | `""` | The bot account's login/slug, used to attribute idempotency checks, process review decisions, and filter bot comments from quality-gate counts. Required for Bitbucket Server/DC. For GitHub App integrations, this is automatically injected by the runner layer. |
 | `SCM_ALLOWED_HOSTS` | — | Optional comma-separated allowlist of SCM hosts; `SCM_URL` must match. |
 
 **Review decisions vs merge blocking:** Only some providers implement automatic submission; whether `APPROVE` / `REQUEST_CHANGES` actually prevents merging depends on branch protection or merge checks on the SCM. See [SCM review decisions and merge blocking](SCM-REVIEW-DECISIONS-AND-MERGE-BLOCKING.md).

@@ -90,8 +90,9 @@ def create_summary_agent():
     from google.genai import types
 
     llm_cfg = get_llm_config()
+    _temperature = get_effective_temperature(0.2)  # lower temperature for objective summaries
     generate_content_config = types.GenerateContentConfig(
-        temperature=get_effective_temperature(0.2), # Lower temperature for objective summaries
+        **({"temperature": _temperature} if _temperature is not None else {}),
         max_output_tokens=llm_cfg.max_output_tokens,
     )
 

@@ -22,13 +22,13 @@ def get_provider(
     base_url: str,
     token: str,
     *,
-    bitbucket_server_user_slug: str = "",
+    bot_identity: str = "",
 ) -> ProviderInterface:
     """Factory for SCM providers."""
     if name == "gitea":
         return GiteaProvider(base_url=base_url, token=token)
     if name == "github":
-        return GitHubProvider(base_url=base_url, token=token)
+        return GitHubProvider(base_url=base_url, token=token, bot_identity=bot_identity)
     if name == "gitlab":
         return GitLabProvider(base_url=base_url, token=token)
     if name == "bitbucket":
@@ -37,7 +37,7 @@ def get_provider(
         return BitbucketServerProvider(
             base_url=base_url,
             token=token,
-            participant_user_slug=bitbucket_server_user_slug,
+            bot_identity=bot_identity,
         )
     raise ValueError(f"Unknown provider: {name}")
 

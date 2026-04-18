@@ -299,7 +299,7 @@ def _make_bitbucket_empty_scope_provider() -> BitbucketServerProvider:
     provider = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="viper",
+        bot_identity="viper",
     )
     provider.get_incremental_pr_files = MagicMock(return_value=[])
     provider.get_incremental_pr_diff = MagicMock(return_value="")

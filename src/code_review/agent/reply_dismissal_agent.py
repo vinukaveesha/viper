@@ -78,8 +78,9 @@ def create_reply_dismissal_agent() -> Agent:
     from google.genai import types
 
     llm_cfg = get_llm_config()
+    _temperature = get_effective_temperature(llm_cfg.temperature)
     generate_content_config = types.GenerateContentConfig(
-        temperature=get_effective_temperature(llm_cfg.temperature),
+        **({"temperature": _temperature} if _temperature is not None else {}),
         max_output_tokens=llm_cfg.max_output_tokens,
     )
     return Agent(
