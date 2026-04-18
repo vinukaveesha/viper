@@ -137,6 +137,29 @@ def _final_batch_event(author: str, findings_json: str) -> MagicMock:
     return event
 
 
+def _create_test_batch(batch_index: int = 0, paths: tuple[str, ...] = ("a.py", "b.py")):
+    """Build a deterministic ReviewBatch fixture for batch-mode tests."""
+    from code_review.batching import ReviewBatch, ReviewSegment
+
+    segments = tuple(
+        ReviewSegment(
+            path=path,
+            diff_text=f"diff --git a/{path} b/{path}",
+            estimated_tokens=10,
+            segment_index=0,
+            total_segments=1,
+            split_strategy="whole_file",
+        )
+        for path in paths
+    )
+    return ReviewBatch(
+        batch_index=batch_index,
+        estimated_tokens=len(paths) * 10,
+        segments=segments,
+        paths=paths,
+    )
+
+
 @patch("code_review.orchestration.orchestrator.runner_mod.get_context_window")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
@@ -342,40 +365,10 @@ def test_batch_mode_retries_malformed_completed_batches_before_rate_limit(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
     """A malformed completed batch must be retried even if a later batch hits a rate limit."""
-    from code_review.batching import ReviewBatch, ReviewSegment
-
     calls = {"count": 0}
     forced_batches = [
-        ReviewBatch(
-            batch_index=0,
-            estimated_tokens=10,
-            segments=(
-                ReviewSegment(
-                    path="a.py",
-                    diff_text="diff --git a/a.py b/a.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-            ),
-            paths=("a.py",),
-        ),
-        ReviewBatch(
-            batch_index=1,
-            estimated_tokens=10,
-            segments=(
-                ReviewSegment(
-                    path="b.py",
-                    diff_text="diff --git a/b.py b/b.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-            ),
-            paths=("b.py",),
-        ),
+        _create_test_batch(batch_index=0, paths=("a.py",)),
+        _create_test_batch(batch_index=1, paths=("b.py",)),
     ]
 
     def run_async_side_effect(*, new_message, **kwargs):
@@ -434,34 +427,8 @@ def test_batch_mode_splits_malformed_batch_into_smaller_batches(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
     """Malformed batch recovery should shrink scope before retrying the same payload again."""
-    from code_review.batching import ReviewBatch, ReviewSegment
-
     calls = {"count": 0}
-    forced_batches = [
-        ReviewBatch(
-            batch_index=0,
-            estimated_tokens=20,
-            segments=(
-                ReviewSegment(
-                    path="a.py",
-                    diff_text="diff --git a/a.py b/a.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-                ReviewSegment(
-                    path="b.py",
-                    diff_text="diff --git a/b.py b/b.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-            ),
-            paths=("a.py", "b.py"),
-        )
-    ]
+    forced_batches = [_create_test_batch()]
 
     def run_async_side_effect(*, new_message, **kwargs):
         del new_message, kwargs
@@ -525,34 +492,8 @@ def test_batch_mode_retries_empty_isolated_batch_response(
     mock_get_scm_config, mock_get_provider, mock_get_llm_config, mock_get_context_window
 ):
     """An empty isolated-batch response must retry instead of being treated as success."""
-    from code_review.batching import ReviewBatch, ReviewSegment
-
     calls = {"count": 0}
-    forced_batches = [
-        ReviewBatch(
-            batch_index=0,
-            estimated_tokens=20,
-            segments=(
-                ReviewSegment(
-                    path="a.py",
-                    diff_text="diff --git a/a.py b/a.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-                ReviewSegment(
-                    path="b.py",
-                    diff_text="diff --git a/b.py b/b.py",
-                    estimated_tokens=10,
-                    segment_index=0,
-                    total_segments=1,
-                    split_strategy="whole_file",
-                ),
-            ),
-            paths=("a.py", "b.py"),
-        )
-    ]
+    forced_batches = [_create_test_batch()]
 
     def run_async_side_effect(*, new_message, **kwargs):
         del new_message, kwargs
