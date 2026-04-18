@@ -6,26 +6,26 @@ from typing import Any, Literal
 
 from github.GithubException import GithubException
 
-from code_review.diff.utils import normalize_path
 from code_review.formatters.comment import (
     infer_severity_from_comment_body,
     max_inferred_severity,
     render_suggestion_block,
 )
 from code_review.github_client import GitHubApiClient
+from code_review.diff.utils import normalize_path
 from code_review.providers.base import (
     BotAttributionIdentity,
     BotBlockingState,
     FileInfo,
     InlineComment,
     PRInfo,
-    ProviderCapabilities,
     ProviderInterface,
+    ProviderCapabilities,
     ReviewComment,
     ReviewDecision,
     UnresolvedReviewItem,
-    _log_pr_commit_messages_warning,
     _log_pr_info_warning,
+    _log_pr_commit_messages_warning,
     unified_diff_for_path,
 )
 from code_review.providers.bot_blocking_common import (
@@ -46,7 +46,7 @@ _GITHUB_COMPARE_MAX_FILES = 300
 class GitHubProvider(ProviderInterface):
     """GitHub API client for PR diff, file content, and review comments."""
 
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0, *, bot_identity: str = ""):
+    def __init__(self, base_url: str, token: str, timeout: float = 30.0, bot_identity: str = ""):
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
@@ -92,9 +92,7 @@ class GitHubProvider(ProviderInterface):
                 return True
         return False
 
-    def _get_incremental_compare(
-        self, owner: str, repo: str, pr_number: int, base_sha: str, head_sha: str
-    ) -> Any | None:
+    def _get_incremental_compare(self, owner: str, repo: str, pr_number: int, base_sha: str, head_sha: str) -> Any | None:
         try:
             comparison = self._client().get_repo(owner, repo).compare(base_sha, head_sha)
         except GithubException as e:
@@ -693,10 +691,7 @@ class GitHubProvider(ProviderInterface):
             login = login.strip().lower()
             return login or None
         except Exception as e:
-            # GET /user returns 403 for GitHub App installation tokens — expected, not an error.
-            logger.warning("GitHub GET /user failed for bot blocking state (likely App token): %s", e)
-        if self._bot_identity:
-            return self._bot_identity.lower()
+            logger.warning("GitHub GET /user failed for bot blocking state: %s", e)
         return None
 
     def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any] | None:
@@ -736,8 +731,9 @@ class GitHubProvider(ProviderInterface):
     def get_bot_attribution_identity(
         self, owner: str, repo: str, pr_number: int
     ) -> BotAttributionIdentity:
-        # GET /user returns 403 for GitHub App installation tokens — this is expected.
-        # Fall back to the configured bot_identity when the call fails.
+        # Try the API first to get both login and numeric id_str.
+        # GET /user returns 403 for GitHub App installation tokens, so fall back
+        # to SCM_GITHUB_APP_BOT_LOGIN when the call fails or returns nothing usable.
         try:
             user = self._client().get_authenticated_user()
             login = str(getattr(user, "login", "") or "").strip().lower()
@@ -745,11 +741,10 @@ class GitHubProvider(ProviderInterface):
             if login:
                 return BotAttributionIdentity(login=login, id_str=uid)
         except Exception as e:
-            logger.warning(
-                "GitHub get_bot_attribution_identity /user failed (expected for App tokens): %s", e
-            )
-        if self._bot_identity:
-            return BotAttributionIdentity(login=self._bot_identity.lower())
+            logger.warning("GitHub get_bot_attribution_identity /user failed: %s", e)
+        app_bot_login = os.environ.get("SCM_GITHUB_APP_BOT_LOGIN", "").strip()
+        if app_bot_login:
+            return BotAttributionIdentity(login=app_bot_login.lower())
         return BotAttributionIdentity()
 
     def _github_build_dismissal_context_from_comment_nodes(
@@ -978,9 +973,7 @@ class GitHubProvider(ProviderInterface):
         if message is None:
             raw_data = getattr(item, "raw_data", None)
             if isinstance(raw_data, dict):
-                commit_dict = (
-                    raw_data.get("commit") if isinstance(raw_data.get("commit"), dict) else {}
-                )
+                commit_dict = raw_data.get("commit") if isinstance(raw_data.get("commit"), dict) else {}
                 message = commit_dict.get("message") or raw_data.get("message")
         text = str(message or "").strip()
         return text
@@ -992,39 +985,6 @@ class GitHubProvider(ProviderInterface):
         except Exception as e:
             _log_pr_commit_messages_warning(logger, owner, repo, pr_number, e)
             return []
-        out: list[str] = []
-        for item in commits:
-            msg = self._github_commit_message(item)
-            if msg:
-                out.append(msg)
-        return out
-
-    def get_incremental_pr_commit_messages(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int,
-        base_sha: str,
-        head_sha: str,
-    ) -> list[str]:
-        if not self._sha_guard_passes(base_sha, head_sha):
-            return []
-        return self._get_incremental_pr_commit_messages(owner, repo, pr_number, base_sha, head_sha)
-
-    def _get_incremental_pr_commit_messages(
-        self,
-        owner: str,
-        repo: str,
-        pr_number: int,
-        base_sha: str,
-        head_sha: str,
-    ) -> list[str]:
-        """Return commit messages for the incremental compare range ``base_sha...head_sha``."""
-        comparison = self._get_incremental_compare(owner, repo, pr_number, base_sha, head_sha)
-        if comparison is None:
-            return self.get_pr_commit_messages(owner, repo, pr_number)
-
-        commits = getattr(comparison, "commits", [])
         out: list[str] = []
         for item in commits:
             msg = self._github_commit_message(item)
