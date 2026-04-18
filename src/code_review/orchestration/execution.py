@@ -117,7 +117,7 @@ def _run_sequential_batch_review_mode(
         )
     except runner_mod.PartialResponseCollectionError as exc:
         if isinstance(exc.cause, runner_mod.RateLimitError):
-            completed_indexes = {
+            response_indexes = {
                 idx
                 for author, _ in exc.responses
                 if (idx := batch_index_from_author(author)) is not None
@@ -125,18 +125,45 @@ def _run_sequential_batch_review_mode(
             logger.warning(
                 "Batch review hit rate limit after %d/%d completed batch response(s); "
                 "continuing remaining batches individually: %s",
-                len(completed_indexes),
+                len(response_indexes),
                 batch_count,
                 exc.cause,
             )
-            findings, _ = findings_from_batch_responses(exc.responses)
-            remaining_batches = [b for i, b in enumerate(batches) if i not in completed_indexes]
-            findings.extend(_run_isolated_batches_with_retry(
-                pr_ctx, provider, review_standards, remaining_batches,
-                context_brief_attached=context_brief_attached,
-                prompt_suffix=prompt_suffix,
-                review_visible_lines=review_visible_lines,
-            ))
+            findings, failed_indexes = findings_from_batch_responses(exc.responses)
+            failed_set = set(failed_indexes)
+            completed_successfully = response_indexes - failed_set
+            failed_batches = [batches[i] for i in failed_indexes if i < len(batches)]
+            remaining_batches = [
+                b for i, b in enumerate(batches) if i not in completed_successfully and i not in failed_set
+            ]
+            if failed_batches:
+                logger.warning(
+                    "Recovering %d completed batch(es) that returned malformed findings before the rate limit.",
+                    len(failed_batches),
+                )
+                findings.extend(
+                    _run_isolated_batches_with_retry(
+                        pr_ctx,
+                        provider,
+                        review_standards,
+                        failed_batches,
+                        context_brief_attached=context_brief_attached,
+                        prompt_suffix=prompt_suffix,
+                        review_visible_lines=review_visible_lines,
+                        initial_retry_attempt=1,
+                    )
+                )
+            findings.extend(
+                _run_isolated_batches_with_retry(
+                    pr_ctx,
+                    provider,
+                    review_standards,
+                    remaining_batches,
+                    context_brief_attached=context_brief_attached,
+                    prompt_suffix=prompt_suffix,
+                    review_visible_lines=review_visible_lines,
+                )
+            )
             return findings
         raise exc.cause from exc
     logger.info(
@@ -144,18 +171,23 @@ def _run_sequential_batch_review_mode(
         session_id,
         len(responses),
     )
-    
+
     findings, failed_indexes = findings_from_batch_responses(responses)
     if failed_indexes:
         logger.warning("Recovering %d batch(es) that failed JSON parsing.", len(failed_indexes))
         failed_batches = [batches[i] for i in failed_indexes if i < len(batches)]
-        findings.extend(_run_isolated_batches_with_retry(
-            pr_ctx, provider, review_standards, failed_batches,
-            context_brief_attached=context_brief_attached,
-            prompt_suffix=prompt_suffix,
-            review_visible_lines=review_visible_lines,
-            initial_retry_attempt=1,
-        ))
+        findings.extend(
+            _run_isolated_batches_with_retry(
+                pr_ctx,
+                provider,
+                review_standards,
+                failed_batches,
+                context_brief_attached=context_brief_attached,
+                prompt_suffix=prompt_suffix,
+                review_visible_lines=review_visible_lines,
+                initial_retry_attempt=1,
+            )
+        )
     return findings
 
 
@@ -207,7 +239,9 @@ def findings_from_batch_responses(
     failed_indexes: list[int] = []
     for author, response_text in responses:
         try:
-            all_findings.extend(runner_mod._findings_from_response(response_text, raise_errors=True))
+            all_findings.extend(
+                runner_mod._findings_from_response(response_text, raise_errors=True)
+            )
         except ValueError as e:
             idx = batch_index_from_author(author)
             runner_mod.logger.warning("Batch %s response failed to parse: %s", idx, e)
@@ -239,7 +273,7 @@ def _run_isolated_batches_with_retry(
 ) -> list[runner_mod.FindingV1]:
     """Run specified batches individually with retries for rate limits or parse failures."""
     all_findings = []
-    for batch_index, batch in enumerate(batches_to_run):
+    for batch in batches_to_run:
         batch_findings = []
         for attempt in range(initial_retry_attempt, max_retries + 1):
             session_id, _, runner = create_agent_and_runner(
@@ -270,7 +304,9 @@ def _run_isolated_batches_with_retry(
                         exc.cause,
                     )
                     if attempt == max_retries:
-                        runner_mod.logger.warning("Skipping batch after max retries due to rate limits.")
+                        runner_mod.logger.warning(
+                            "Skipping batch after max retries due to rate limits."
+                        )
                     continue
                 raise exc.cause from exc
 
@@ -284,11 +320,11 @@ def _run_isolated_batches_with_retry(
                 )
                 if attempt < max_retries:
                     continue
-            
+
             # Success or max retries exhausted
             batch_findings.extend(findings)
             break
-            
+
         all_findings.extend(batch_findings)
     return all_findings
 
