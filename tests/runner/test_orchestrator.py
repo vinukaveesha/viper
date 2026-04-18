@@ -1224,11 +1224,12 @@ def test_split_batch_for_retry_resegments_single_large_segment():
         paths=("foo.py",),
     )
 
-    split_batches = _split_batch_for_retry(batch)
+    split_batches = _split_batch_for_retry(batch, attempt=1, max_retries=2)
 
     assert len(split_batches) > 1
-    assert all(len(split_batch.segments) == 1 for split_batch in split_batches)
-    assert all(split_batch.paths == ("foo.py",) for split_batch in split_batches)
+    assert all(len(split_batch.segments) == 1 for split_batch, _attempt in split_batches)
+    assert all(split_batch.paths == ("foo.py",) for split_batch, _attempt in split_batches)
+    assert all(retry_attempt == 1 for _split_batch, retry_attempt in split_batches)
 
 
 # --- Multiline suggested_patch enforcement at post_inline ---

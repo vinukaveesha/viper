@@ -280,26 +280,29 @@ def _make_retry_batch(batch_index: int, segments: tuple[ReviewSegment, ...]) -> 
     )
 
 
-def _split_batch_for_retry(batch: ReviewBatch) -> list[ReviewBatch]:
+def _split_batch_for_retry(
+    batch: ReviewBatch, *, attempt: int, max_retries: int
+) -> list[tuple[ReviewBatch, int]]:
     """Return smaller retry batches when a batch's response is malformed.
 
     Prefer splitting across existing prepared segments first. If only a single segment
     remains, try to re-segment its diff text with a smaller budget. If neither produces
     smaller work units, return the original batch unchanged.
     """
+    retry_attempt = min(attempt, max_retries)
     if len(batch.segments) > 1:
         midpoint = len(batch.segments) // 2
         return [
-            _make_retry_batch(0, batch.segments[:midpoint]),
-            _make_retry_batch(1, batch.segments[midpoint:]),
+            (_make_retry_batch(0, batch.segments[:midpoint]), retry_attempt),
+            (_make_retry_batch(1, batch.segments[midpoint:]), retry_attempt),
         ]
 
     if len(batch.segments) != 1:
-        return [batch]
+        return [(batch, retry_attempt)]
 
     segment = batch.segments[0]
     if segment.estimated_tokens <= 1:
-        return [batch]
+        return [(batch, retry_attempt)]
     smaller_budget = max(1, segment.estimated_tokens // 2)
     smaller_segments = split_file_diff_into_segments(
         segment.path,
@@ -307,9 +310,9 @@ def _split_batch_for_retry(batch: ReviewBatch) -> list[ReviewBatch]:
         segment_budget_tokens=smaller_budget,
     )
     if len(smaller_segments) <= 1:
-        return [batch]
+        return [(batch, retry_attempt)]
     return [
-        _make_retry_batch(index, (smaller_segment,))
+        (_make_retry_batch(index, (smaller_segment,)), retry_attempt)
         for index, smaller_segment in enumerate(smaller_segments)
     ]
 
@@ -386,7 +389,9 @@ def _run_isolated_batches_with_retry(
             attempt + 1,
             max_retries + 1,
         )
-        smaller_batches = _split_batch_for_retry(batch)
+        smaller_batches = _split_batch_for_retry(
+            batch, attempt=attempt, max_retries=max_retries
+        )
         if len(smaller_batches) > 1:
             runner_mod.logger.warning(
                 "Splitting malformed batch paths=%s segments=%d into %d smaller batch(es).",
@@ -394,7 +399,7 @@ def _run_isolated_batches_with_retry(
                 len(batch.segments),
                 len(smaller_batches),
             )
-            pending = [(smaller_batch, 0) for smaller_batch in smaller_batches] + pending
+            pending = smaller_batches + pending
             continue
         if attempt < max_retries:
             pending.insert(0, (batch, attempt + 1))
