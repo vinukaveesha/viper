@@ -118,7 +118,7 @@ src/code_review/
 │       ├── patch_validator.py   # validate_suggested_patches (_validate_suggested_patches)
 │       └── self_retraction.py   # filter_self_retracted_findings, _finding_message_looks_self_retracted
 ├── providers/
-│   ├── __init__.py           # get_provider(name, base_url, token); exports base types
+│   ├── __init__.py           # get_provider(name, base_url, token, *, bot_identity=""); exports base types
 │   ├── base.py               # ProviderInterface, InlineComment, ReviewComment, FileInfo, PRInfo, ProviderCapabilities
 │   ├── safety.py             # truncate_repo_content()
 │   ├── gitea.py              # GiteaProvider
@@ -173,7 +173,7 @@ src/code_review/
 | Step | What happens |
 |------|-------------------------------|
 | 1 | Generate `trace_id`; call `observability.start_run(trace_id)`. |
-| 2 | Load `get_scm_config()`, `get_llm_config()`; instantiate `get_provider(cfg.provider, cfg.url, cfg.token)`. |
+| 2 | Load `get_scm_config()`, `get_llm_config()`; instantiate `get_provider(cfg.provider, cfg.url, cfg.token, bot_identity=cfg.bot_identity)`. |
 | 3 | **Skip review**: `provider.get_pr_info(owner, repo, pr_number)`; if skip label or title pattern matches → log, `finish_run`, return `[]`. |
 | 4 | **Existing comments**: `provider.get_existing_review_comments(...)`; build `ignore_set` with `_build_ignore_set()` (path + body hash, path + fingerprint from marker). |
 | 5 | **Idempotency**: If `head_sha` is set, build `run_id` from provider/owner/repo/pr/head_sha/agent_version/config_hash. If any existing comment body contains this run id in the marker → skip run, return `[]`. |
@@ -246,7 +246,7 @@ This callback layer is intentionally narrow. It handles dynamic runtime guardrai
 ### 5.5 `providers/`
 
 - **base.py**: Defines `ProviderInterface` (ABC) and shared types: `InlineComment`, `ReviewComment`, `FileInfo`, `PRInfo`, `ProviderCapabilities`. All concrete providers implement the same interface.
-- **get_provider(name, base_url, token)**: Returns `GiteaProvider` | `GitHubProvider` | `GitLabProvider` | `BitbucketProvider` for `name` in `gitea` | `github` | `gitlab` | `bitbucket`.
+- **get_provider(name, base_url, token, *, bot_identity="")**: Returns the configured provider for `name`; passes `bot_identity` through only where the provider uses bot attribution. Returns `GiteaProvider` | `GitHubProvider` | `GitLabProvider` | `BitbucketProvider` for `name` in `gitea` | `github` | `gitlab` | `bitbucket`.
 - **safety.py**: `truncate_repo_content(content, max_bytes)` used when feeding repo file content (e.g. README, AGENTS.md) to the agent to avoid unbounded context.
 
 ### 5.6 `schemas/findings.py`

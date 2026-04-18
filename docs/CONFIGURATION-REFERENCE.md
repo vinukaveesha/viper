@@ -128,7 +128,7 @@ The bundled Jenkinsfile automatically routes events based on `PR_ACTION`:
 
 - **Comment/thread events** (`PR_ACTION` values like `pr:comment:added`, `issue_comment`, `pull_request_review_comment`, etc.) are routed to `code-review --review-decision-only`. `SCM_HEAD_SHA` may be omitted (resolved via SCM API).
 - **PR lifecycle events** (`opened`, `synchronize`, `pr:opened`, `pr:from_ref_updated`, etc.) run the main review flow. When `SCM_BASE_SHA` is also provided, that flow is scoped to the incremental `base..head` range instead of the full PR diff.
-- Optional Jenkins-only bot guard: set `CODE_REVIEW_BOT_USER_LOGIN` and/or `CODE_REVIEW_BOT_USER_ID` on the job or folder to skip bot-authored comment/thread webhook builds before Jenkins starts the agent. For Bitbucket Server / DC, `SCM_BITBUCKET_SERVER_USER_SLUG` is used as the login fallback automatically.
+- Optional Jenkins-only bot guard: set `CODE_REVIEW_BOT_USER_LOGIN` and/or `CODE_REVIEW_BOT_USER_ID` on the job or folder to skip bot-authored comment/thread webhook builds before Jenkins starts the agent. For Bitbucket Server / DC, configure `SCM_BOT_IDENTITY` with the bot login/slug.
 
 Set `SCM_REVIEW_DECISION_ENABLED=true` on the job so the quality-gate decision is submitted for both paths.
 

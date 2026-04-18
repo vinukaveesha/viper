@@ -737,7 +737,7 @@ class GitHubProvider(ProviderInterface):
         self, owner: str, repo: str, pr_number: int
     ) -> BotAttributionIdentity:
         # GET /user returns 403 for GitHub App installation tokens — this is expected.
-        # Fall back to SCM_GITHUB_APP_BOT_LOGIN when the call fails.
+        # Fall back to the configured bot_identity when the call fails.
         try:
             user = self._client().get_authenticated_user()
             login = str(getattr(user, "login", "") or "").strip().lower()
