@@ -22,6 +22,8 @@ import json
 from code_review import observability
 from code_review.json_utils import iter_json_candidates
 from code_review.models import PRContext
+from pydantic import ValidationError as PydanticValidationError
+
 from code_review.providers.base import RateLimitError
 from code_review.schemas.findings import FindingsBatchV1, FindingV1
 
@@ -177,7 +179,10 @@ def _append_final_response_text(event, responses: list[tuple[str, str]]) -> None
 
 def _should_wrap_partial_response_error(exc: Exception, event_count: int) -> bool:
     """Return True when the caller should preserve partial responses with the error."""
-    return isinstance(exc, RateLimitError) or event_count > 0
+    # PydanticValidationError: ADK's output_schema validation failed on a truncated
+    # response (MAX_TOKENS). The event was never yielded, so event_count may be 0.
+    # Wrap it so callers see PartialResponseCollectionError instead of a bare crash.
+    return isinstance(exc, (RateLimitError, PydanticValidationError)) or event_count > 0
 
 
 def _raise_collection_error(

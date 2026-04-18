@@ -324,6 +324,12 @@ def _run_isolated_batches_with_retry(
     ]
     while pending:
         batch, attempt = pending.pop(0)
+        # single_batch_mode is intentionally NOT set here: the retry path must be as robust
+        # as possible. output_key + output_schema causes ADK to validate the LLM response
+        # during event iteration; if the response is truncated (MAX_TOKENS), the validation
+        # throws pydantic.ValidationError before the event is yielded, bypassing all retry
+        # logic. Without output_key, truncated responses flow through as normal text events
+        # and our existing parse-failure handling can retry them.
         session_id, session_service, runner = create_agent_and_runner(
             pr_ctx,
             provider,
@@ -331,7 +337,6 @@ def _run_isolated_batches_with_retry(
             [batch],
             context_brief_attached=context_brief_attached,
             review_visible_lines=review_visible_lines,
-            single_batch_mode=True,
         )
         content = build_batch_review_content(
             pr_ctx=pr_ctx,

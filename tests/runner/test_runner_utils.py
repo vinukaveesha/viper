@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from code_review.orchestration.runner_utils import (
     PartialResponseCollectionError,
@@ -71,6 +72,26 @@ async def test_collect_final_response_texts_async_wraps_post_event_runtime_error
 
     assert exc_info.value.responses == [("batch_review_0", '{"findings":[]}')]
     assert isinstance(exc_info.value.cause, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_collect_final_response_texts_async_wraps_validation_error_before_any_events():
+    """pydantic.ValidationError (ADK output_schema on truncated response) is wrapped even with 0 events."""
+    from code_review.schemas.findings import FindingsBatchV1
+
+    try:
+        FindingsBatchV1.model_validate_json('{"findings": [{"bad":')
+    except PydanticValidationError as validation_exc:
+        exc_to_raise = validation_exc
+
+    runner = SimpleNamespace(agent=MagicMock())
+    runner.run_async = _run_async_with(exc=exc_to_raise)
+
+    with pytest.raises(PartialResponseCollectionError) as exc_info:
+        await _collect_final_response_texts_async(runner, "session-1", MagicMock())
+
+    assert exc_info.value.responses == []
+    assert isinstance(exc_info.value.cause, PydanticValidationError)
 
 
 # ---------------------------------------------------------------------------
