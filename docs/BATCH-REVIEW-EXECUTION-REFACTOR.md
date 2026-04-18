@@ -20,10 +20,11 @@ The proposed design keeps ADK as the worker that reviews one prepared scope, whi
 8. [Execution Flow](#8-execution-flow)
 9. [Retry and Recovery Policy](#9-retry-and-recovery-policy)
 10. [Observability Changes](#10-observability-changes)
-11. [Migration Plan](#11-migration-plan)
-12. [Test Plan](#12-test-plan)
-13. [Implementation Checklist](#13-implementation-checklist)
-14. [Open Questions](#14-open-questions)
+11. [Compatibility Constraints](#11-compatibility-constraints)
+12. [Migration Plan](#12-migration-plan)
+13. [Test Plan](#13-test-plan)
+14. [Implementation Checklist](#14-implementation-checklist)
+15. [Open Questions](#15-open-questions)
 
 ---
 
@@ -191,6 +192,31 @@ Before or alongside the coordinator refactor, the plan should include these esse
    enrichment step for a small set of selected findings rather than requiring them during the
    primary batch review pass.
 
+### 4.6 `output_key` Is Useful, But Its Contract Must Be Explicit
+
+Using ADK's `output_key` is attractive because it gives a schema-validated success path, but
+it does not automatically remove the need for a fallback strategy.
+
+The implementation must define:
+
+- when `output_key` data is considered authoritative
+- whether raw text is retained only for diagnostics or also for recovery
+- what happens if `output_key` is missing or empty while text-bearing output exists
+- what gets logged when validated state output and raw text disagree
+
+Without this contract, adding `output_key` could reduce clarity rather than improve it.
+
+### 4.7 Phase 0 Must Avoid Throwaway Work
+
+The immediate reliability changes should be chosen so they remain valid after the coordinator
+refactor. Otherwise, the team risks implementing short-lived code in the current execution path
+and then rewriting it again once Python owns batch orchestration.
+
+The plan below therefore distinguishes between:
+
+- **durable mitigations**: changes that should survive the refactor
+- **temporary glue**: compatibility code that is acceptable only while the old orchestration path remains
+
 ---
 
 ## 5. Goals
@@ -228,7 +254,7 @@ Parallel execution may become easier after this refactor, but it is not required
 
 ## 7. Proposed Architecture
 
-### 6.1 High-Level Shape
+### 7.1 High-Level Shape
 
 Use ADK as a **single-scope worker**, and use Python as the **batch coordinator**.
 
@@ -244,7 +270,7 @@ New conceptual split:
 - **Post-processing**
   - existing refinement funnel and posting
 
-### 6.2 New Coordinator
+### 7.2 New Coordinator
 
 Introduce a new module:
 
@@ -263,7 +289,7 @@ Suggested responsibilities:
   - fail fast on fatal errors
 - Aggregate findings from successful scopes.
 
-### 6.3 Suggested Data Types
+### 7.3 Suggested Data Types
 
 The exact names are flexible, but the design should include the equivalents of:
 
@@ -285,7 +311,7 @@ The exact names are flexible, but the design should include the equivalents of:
   - `skipped_jobs: int`
   - `failed_jobs: int`
 
-### 6.4 Single-Batch Execution
+### 7.4 Single-Batch Execution
 
 Refactor `execution.py` so its primary role is:
 
@@ -298,7 +324,7 @@ That is a much cleaner contract than “run a workflow of many sub-agents and in
 
 ---
 
-## 7. Execution Flow
+## 8. Execution Flow
 
 Proposed flow inside `StandardReviewHandler._execute_review_agent(...)`:
 
@@ -309,7 +335,7 @@ Proposed flow inside `StandardReviewHandler._execute_review_agent(...)`:
 5. Receive merged `all_findings`.
 6. Continue into the existing refinement funnel and posting flow unchanged.
 
-### 7.1 New Execution Sequence
+### 8.1 New Execution Sequence
 
 ```text
 StandardReviewHandler
@@ -327,7 +353,7 @@ StandardReviewHandler
   -> post comments / summaries
 ```
 
-### 7.2 Important Boundary
+### 8.2 Important Boundary
 
 The coordinator should not know about:
 
@@ -434,7 +460,69 @@ This will make it easier to answer:
 
 ---
 
-## 11. Migration Plan
+## 11. Compatibility Constraints
+
+The refactor should preserve the existing review pipeline's externally important behavior unless
+explicitly changed.
+
+### 11.1 Downstream Consumers of Findings
+
+Primary batch review currently feeds:
+
+- diff-scope filtering
+- duplicate filtering / fingerprinting
+- verification agent filtering
+- inline comment formatting and posting
+- optional PR summary generation
+
+The plan should therefore assume that the primary pass must still emit enough information for:
+
+- inline comment placement
+- severity ranking
+- stable deduplication behavior
+
+### 11.2 Minimum Safe Finding Shape
+
+For the Phase 0 slimmed batch-review pass, the minimum safe shape is:
+
+- required: `path`, `line`, `severity`, `code`, `message`
+- allowed when concise and necessary: `end_line`, `anchor`
+
+Anything beyond that should be treated as optional enrichment.
+
+### 11.3 Deferred Fields
+
+If the primary batch-review pass no longer emits some of these fields by default:
+
+- `evidence`
+- `confidence`
+- `suggested_patch`
+- `agent_fix_prompt`
+
+then the implementation must either:
+
+1. confirm that downstream code treats them as fully optional today, or
+2. introduce a second-pass enrichment stage before the point where they are needed
+
+The preferred design is:
+
+- **primary pass**: detect and rank findings
+- **optional second pass**: enrich a bounded subset of findings with fix guidance
+
+### 11.4 `output_key` Success-Path Contract
+
+The implementation should adopt this contract:
+
+1. If `output_key` contains schema-validated findings, that data is authoritative for success.
+2. Raw text should still be captured for diagnostics and postmortem analysis.
+3. If `output_key` is absent or empty, fall back to raw-text parsing and classify the outcome accordingly.
+4. If validated `output_key` output exists but raw text is materially different, log the disagreement at warning/debug level with enough metadata to investigate, but prefer the validated state output for normal execution.
+
+This keeps the success path clean while preserving enough evidence to debug model/output anomalies.
+
+---
+
+## 12. Migration Plan
 
 Implement in small, reviewable steps.
 
@@ -448,6 +536,23 @@ Implement in small, reviewable steps.
 
 These changes are compatible with the later coordinator refactor and reduce risk immediately.
 
+#### Durable Phase 0 Changes
+
+These should survive the later refactor:
+
+- slimmer primary batch-review output contract
+- finish-reason / usage / response-length diagnostics
+- explicit truncation classification
+- `output_key`-based success-path preference
+
+#### Temporary Phase 0 Glue
+
+These are acceptable only while the old orchestration path still exists:
+
+- compatibility code that threads new diagnostics through the current multi-batch execution path
+- any temporary adapters needed to read both raw text and validated state output during transition
+- recovery glue that exists only to bridge from `SequentialAgent` orchestration to the future coordinator
+
 ### Phase 1: Introduce Coordinator Types
 
 - Add `batch_coordinator.py`.
@@ -460,6 +565,7 @@ These changes are compatible with the later coordinator refactor and reduce risk
 - Refactor `execution.py` to expose a clean `run_single_batch(...)`.
 - Keep current multi-batch code temporarily for compatibility.
 - Ensure parsing and outcome classification are stable.
+- Define and implement the `output_key` success-path contract in this phase rather than later.
 
 ### Phase 3: Switch Standard Review to Coordinator
 
@@ -482,9 +588,9 @@ Optional follow-up:
 
 ---
 
-## 12. Test Plan
+## 13. Test Plan
 
-### 11.1 Coordinator Unit Tests
+### 13.1 Coordinator Unit Tests
 
 Add focused tests for:
 
@@ -495,7 +601,7 @@ Add focused tests for:
 - exhausted retries then skip
 - fatal error then fail fast
 
-### 11.2 Execution Tests
+### 13.2 Execution Tests
 
 Test `run_single_batch(...)` for:
 
@@ -504,8 +610,11 @@ Test `run_single_batch(...)` for:
 - schema-invalid JSON
 - rate limit propagation
 - fatal error propagation
+- authoritative `output_key` success path
+- fallback to raw-text parsing when `output_key` is missing or empty
+- disagreement logging when validated output and raw text diverge
 
-### 11.3 Integration Tests
+### 13.3 Integration Tests
 
 Update orchestration tests so they assert:
 
@@ -513,7 +622,7 @@ Update orchestration tests so they assert:
 - findings still flow through refinement and posting unchanged
 - idempotency and empty-scope behavior still short-circuit correctly
 
-### 11.4 Regression Coverage
+### 13.4 Regression Coverage
 
 Preserve regression coverage for:
 
@@ -523,12 +632,14 @@ Preserve regression coverage for:
 - no loss of successful findings during recovery
 - finish-reason-based truncation classification
 - minimal-schema batch responses remaining parseable under realistic output budgets
+- downstream posting/refinement continuing to work with slimmed primary findings
+- optional enrichment path preserving fix guidance behavior where still desired
 
 ---
 
-## 13. Implementation Checklist
+## 14. Implementation Checklist
 
-### 13.0 Immediate Reliability Fixes
+### 14.0 Immediate Reliability Fixes
 
 - [ ] Slim the batch-review prompt so the primary review pass requests only minimal finding fields
 - [ ] Remove mandatory `agent_fix_prompt` from the batch-review path
@@ -537,9 +648,11 @@ Preserve regression coverage for:
 - [ ] Add per-batch logging for `finish_reason`
 - [ ] Add per-batch logging for response length and usage metadata
 - [ ] Add `output_key` to single-batch workers and read validated output from session state on success
+- [ ] Define the `output_key` fallback / disagreement contract in code and tests
+- [ ] Verify downstream refinement and posting still behave correctly with the slimmed primary finding shape
 - [ ] Add regression tests for truncation classification and minimal-schema responses
 
-### 12.1 Coordinator Scaffold
+### 14.1 Coordinator Scaffold
 
 - [ ] Add `src/code_review/orchestration/batch_coordinator.py`
 - [ ] Define `BatchJob`
@@ -547,22 +660,24 @@ Preserve regression coverage for:
 - [ ] Define `BatchCoordinatorResult`
 - [ ] Define coordinator queue / loop structure
 
-### 12.2 Execution Refactor
+### 14.2 Execution Refactor
 
 - [ ] Add `run_single_batch(...)` in `src/code_review/orchestration/execution.py`
 - [ ] Add outcome classification for success / malformed / rate-limited / fatal
-- [ ] Keep current parse helpers, but narrow them to single-batch use
+- [ ] Make validated `output_key` output authoritative on success
+- [ ] Keep raw-text parsing as fallback and diagnostics path
 - [ ] Extract or reuse batch-splitting helpers
 - [ ] Remove direct dependency on multi-batch ADK workflow from new execution path
 
-### 12.3 Standard Review Integration
+### 14.3 Standard Review Integration
 
 - [ ] Update `StandardReviewHandler._execute_review_agent(...)` to call the coordinator
 - [ ] Preserve prompt-suffix and context-brief behavior
 - [ ] Preserve batch planning via `build_review_batches_for_scope(...)`
 - [ ] Preserve downstream refinement funnel unchanged
+- [ ] Decide where optional fix-guidance enrichment occurs, if retained
 
-### 12.4 Cleanup
+### 14.4 Cleanup
 
 - [ ] Deprecate or remove `create_agent_and_runner(...)` for multi-batch review
 - [ ] Deprecate or remove `run_agent_and_collect_findings(...)` as workflow orchestration
@@ -570,22 +685,24 @@ Preserve regression coverage for:
 - [ ] Remove obsolete multi-response collection code if no longer needed
 - [ ] Remove or narrow `src/code_review/agent/workflows.py` for batch-review use
 
-### 12.5 Tests
+### 14.5 Tests
 
 - [ ] Add coordinator unit tests
 - [ ] Add single-batch executor tests
 - [ ] Update standard review integration tests
 - [ ] Remove tests that assert `SequentialAgent` construction for batch review
 - [ ] Keep and adapt regression tests for malformed output and rate limits
+- [ ] Add tests for the slimmed primary schema and optional enrichment path
 
-### 12.6 Observability
+### 14.6 Observability
 
 - [ ] Add structured logs for batch job lifecycle
 - [ ] Add coordinator-level completion log
 - [ ] Ensure current run-level observability still emits correct totals
 - [ ] Add explicit truncation / max-token diagnostics
+- [ ] Log validated-output-vs-raw-text disagreements when they occur
 
-### 12.7 Follow-Up Reliability Work
+### 14.7 Follow-Up Reliability Work
 
 - [ ] Investigate ADK structured-output improvements for single-batch workers
 - [ ] Evaluate optional backoff/jitter on rate-limited retries
@@ -593,7 +710,7 @@ Preserve regression coverage for:
 
 ---
 
-## 14. Open Questions
+## 15. Open Questions
 
 1. Should exhausted malformed batches be skipped silently, or should they contribute a run-level warning/summary artifact?
 2. Should rate-limited batches use fixed retry counts only, or should we add time-based backoff in the first refactor?
