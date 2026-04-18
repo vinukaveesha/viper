@@ -5,7 +5,12 @@ import logging
 from google.genai import types
 
 from code_review import orchestration_deps as runner_mod
-from code_review.batching import ReviewBatch, ReviewSegment, build_review_batches, split_file_diff_into_segments
+from code_review.batching import (
+    ReviewBatch,
+    ReviewSegment,
+    build_review_batches,
+    split_file_diff_into_segments,
+)
 from code_review.diff.utils import estimate_tokens
 from code_review.logging_config import emit_package_log
 from code_review.models import PRContext
@@ -136,11 +141,14 @@ def _run_sequential_batch_review_mode(
             completed_successfully = response_indexes - failed_set
             failed_batches = [batches[i] for i in failed_indexes if i < len(batches)]
             remaining_batches = [
-                b for i, b in enumerate(batches) if i not in completed_successfully and i not in failed_set
+                b
+                for i, b in enumerate(batches)
+                if i not in completed_successfully and i not in failed_set
             ]
             if failed_batches:
                 logger.warning(
-                    "Recovering %d completed batch(es) that returned malformed findings before the rate limit.",
+                    "Recovering %d completed batch(es) that returned malformed findings "
+                    "before the rate limit.",
                     len(failed_batches),
                 )
                 findings.extend(
@@ -210,7 +218,8 @@ def build_batch_review_content(
     )
     if retry_attempt > 0:
         msg += (
-            "\n\nNote: Your previous response was interrupted and resulted in invalid, truncated JSON. "
+            "\n\nNote: Your previous response was interrupted and resulted in invalid, "
+            "truncated JSON. "
             "Please be concise, omit overly long code snippets in the description, "
             "and ensure all JSON strings and arrays are fully closed."
         )
@@ -236,7 +245,7 @@ def build_batch_review_content(
 def findings_from_batch_responses(
     responses: list[tuple[str, str]],
 ) -> tuple[list[runner_mod.FindingV1], list[int]]:
-    """Parse structured findings from a list of batch response texts, returning (findings, failed_indexes)."""
+    """Parse batch response texts and return findings plus failed batch indexes."""
     all_findings: list[runner_mod.FindingV1] = []
     failed_indexes: list[int] = []
     for author, response_text in responses:
@@ -330,7 +339,7 @@ def _run_isolated_batches_with_retry(
         # throws pydantic.ValidationError before the event is yielded, bypassing all retry
         # logic. Without output_key, truncated responses flow through as normal text events
         # and our existing parse-failure handling can retry them.
-        session_id, session_service, runner = create_agent_and_runner(
+        session_id, _session_service, runner = create_agent_and_runner(
             pr_ctx,
             provider,
             review_standards,
@@ -366,26 +375,8 @@ def _run_isolated_batches_with_retry(
                 continue
             raise exc.cause from exc
 
-        # Prefer validated session-state output (output_key path) over raw-text parsing.
-        # If unavailable (ADK didn't write it, or session lookup failed), fall back to text.
-        state_findings = runner_mod._get_output_key_findings(
-            session_service, session_id, "findings_result"
-        )
-        if state_findings is not None:
-            raw_findings, raw_failed = findings_from_batch_responses(responses)
-            if not raw_failed and len(raw_findings) != len(state_findings):
-                runner_mod.logger.debug(
-                    "[batch] output_key and raw-text finding counts differ paths=%s "
-                    "(state=%d raw=%d); using validated state output.",
-                    ", ".join(batch.paths),
-                    len(state_findings),
-                    len(raw_findings),
-                )
-            all_findings.extend(state_findings)
-            continue
-
         findings, failed_indexes = findings_from_batch_responses(responses)
-        if not failed_indexes:
+        if not failed_indexes and responses:
             all_findings.extend(findings)
             continue
 
