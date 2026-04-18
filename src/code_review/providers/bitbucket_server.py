@@ -175,10 +175,10 @@ class BitbucketServerProvider(HttpXProvider):
         token: str,
         timeout: float = 30.0,
         *,
-        participant_user_slug: str = "",
+        bot_identity: str = "",
     ):
         super().__init__(base_url, token, timeout)
-        self._participant_user_slug = (participant_user_slug or "").strip()
+        self._bot_identity = (bot_identity or "").strip()
         # Cache (owner, repo, ref, path) combinations that returned 404 from the raw API
         # so we don't hammer Bitbucket or spam logs when the LLM repeatedly asks for
         # content of a file that doesn't exist at this ref (e.g. deleted/renamed files).
@@ -1282,7 +1282,7 @@ class BitbucketServerProvider(HttpXProvider):
             owner,
             repo,
             pr_number,
-            self._participant_user_slug,
+            self._bot_identity,
             version,
             err_text,
         )
@@ -1320,12 +1320,12 @@ class BitbucketServerProvider(HttpXProvider):
     ) -> None:
         """Set the token user's participant status (``APPROVED`` / ``NEEDS_WORK``).
 
-        Requires ``SCM_BITBUCKET_SERVER_USER_SLUG`` (``participant_user_slug``) to match the
+        Requires ``SCM_BITBUCKET_SERVER_USER_SLUG`` (``bot_identity``) to match the
         authenticated user's username slug. ``body`` and ``head_sha`` are ignored (participant
         PUT does not carry a review summary in this client).
         """
         _ = body, head_sha
-        if not self._participant_user_slug:
+        if not self._bot_identity:
             raise ValueError(
                 "Bitbucket Server review decisions require SCM_BITBUCKET_SERVER_USER_SLUG "
                 "(username slug of the API token user)."
@@ -1335,7 +1335,7 @@ class BitbucketServerProvider(HttpXProvider):
             raise ValueError(
                 "Bitbucket Server: could not read pull request version for review decision."
             )
-        slug = quote(self._participant_user_slug, safe="")
+        slug = quote(self._bot_identity, safe="")
         status = "APPROVED" if decision == "APPROVE" else "NEEDS_WORK"
         participant_path = self._path(
             owner, repo, "pull-requests", str(pr_number), "participants", slug
@@ -1404,9 +1404,9 @@ class BitbucketServerProvider(HttpXProvider):
 
     def get_bot_blocking_state(self, owner: str, repo: str, pr_number: int) -> BotBlockingState:
         """Use PR ``participants`` first (participant PUT), then ``reviewers``."""
-        if not self._participant_user_slug:
+        if not self._bot_identity:
             return "UNKNOWN"
-        want = self._participant_user_slug.strip().lower()
+        want = self._bot_identity.strip().lower()
         try:
             data = self._get(self._path(owner, repo, "pull-requests", str(pr_number)))
         except Exception as e:
@@ -1440,7 +1440,7 @@ class BitbucketServerProvider(HttpXProvider):
     def get_bot_attribution_identity(
         self, owner: str, repo: str, pr_number: int
     ) -> BotAttributionIdentity:
-        slug = (self._participant_user_slug or "").strip().lower()
+        slug = (self._bot_identity or "").strip().lower()
         if slug:
             return BotAttributionIdentity(slug=slug)
         return BotAttributionIdentity()
@@ -1482,9 +1482,9 @@ class BitbucketServerProvider(HttpXProvider):
             markup_supports_collapsible=False,
             omit_fingerprint_marker_in_body=True,
             embed_agent_marker_as_commonmark_linkref=True,
-            supports_review_decisions=bool(self._participant_user_slug),
-            supports_bot_blocking_state_query=bool(self._participant_user_slug),
-            supports_bot_attribution_identity_query=bool(self._participant_user_slug),
+            supports_review_decisions=bool(self._bot_identity),
+            supports_bot_blocking_state_query=bool(self._bot_identity),
+            supports_bot_attribution_identity_query=bool(self._bot_identity),
             supports_review_thread_dismissal_context=True,
             supports_lightweight_pr_diff_for_file=True,
             supports_review_thread_reply=True,

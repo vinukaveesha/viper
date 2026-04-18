@@ -39,6 +39,7 @@ def test_scm_config_bitbucket_server_user_slug_stripped():
     ):
         cfg = SCMConfig()
         assert cfg.bitbucket_server_user_slug == ""
+        assert cfg.bot_identity == ""
     with patch.dict(
         os.environ,
         {
@@ -50,6 +51,7 @@ def test_scm_config_bitbucket_server_user_slug_stripped():
     ):
         cfg = SCMConfig()
         assert cfg.bitbucket_server_user_slug == "buildbot"
+        assert cfg.bot_identity == "buildbot"
 
 
 def test_scm_config_allowed_hosts_normalized():

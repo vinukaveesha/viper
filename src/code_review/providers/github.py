@@ -46,10 +46,11 @@ _GITHUB_COMPARE_MAX_FILES = 300
 class GitHubProvider(ProviderInterface):
     """GitHub API client for PR diff, file content, and review comments."""
 
-    def __init__(self, base_url: str, token: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, token: str, timeout: float = 30.0, *, bot_identity: str = ""):
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout
+        self._bot_identity = (bot_identity or "").strip()
         self._github_client: GitHubApiClient | None = None
 
     def _client(self) -> GitHubApiClient:
@@ -692,7 +693,10 @@ class GitHubProvider(ProviderInterface):
             login = login.strip().lower()
             return login or None
         except Exception as e:
-            logger.warning("GitHub GET /user failed for bot blocking state: %s", e)
+            # GET /user returns 403 for GitHub App installation tokens — expected, not an error.
+            logger.warning("GitHub GET /user failed for bot blocking state (likely App token): %s", e)
+        if self._bot_identity:
+            return self._bot_identity.lower()
         return None
 
     def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any] | None:
@@ -732,9 +736,8 @@ class GitHubProvider(ProviderInterface):
     def get_bot_attribution_identity(
         self, owner: str, repo: str, pr_number: int
     ) -> BotAttributionIdentity:
-        # Try the API first to get both login and numeric id_str.
-        # GET /user returns 403 for GitHub App installation tokens, so fall back
-        # to SCM_GITHUB_APP_BOT_LOGIN when the call fails or returns nothing usable.
+        # GET /user returns 403 for GitHub App installation tokens — this is expected.
+        # Fall back to the configured bot_identity when the call fails.
         try:
             user = self._client().get_authenticated_user()
             login = str(getattr(user, "login", "") or "").strip().lower()
@@ -742,10 +745,11 @@ class GitHubProvider(ProviderInterface):
             if login:
                 return BotAttributionIdentity(login=login, id_str=uid)
         except Exception as e:
-            logger.warning("GitHub get_bot_attribution_identity /user failed: %s", e)
-        app_bot_login = os.environ.get("SCM_GITHUB_APP_BOT_LOGIN", "").strip()
-        if app_bot_login:
-            return BotAttributionIdentity(login=app_bot_login.lower())
+            logger.warning(
+                "GitHub get_bot_attribution_identity /user failed (expected for App tokens): %s", e
+            )
+        if self._bot_identity:
+            return BotAttributionIdentity(login=self._bot_identity.lower())
         return BotAttributionIdentity()
 
     def _github_build_dismissal_context_from_comment_nodes(

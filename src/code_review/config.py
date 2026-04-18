@@ -6,7 +6,7 @@ See docs/CONFIGURATION-REFERENCE.md for a consolidated list of all environment v
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _SCM_CONFIG: "SCMConfig | None" = None
@@ -65,6 +65,13 @@ class SCMConfig(BaseSettings):
             "SCM_URL must use one of these hosts."
         ),
     )
+    bot_identity: str = Field(
+        default="",
+        description=(
+            "The bot account's login/slug, used to attribute idempotency checks "
+            "and quality-gate comment filtering back to the bot."
+        ),
+    )
     bitbucket_server_user_slug: str = Field(
         default="",
         description=(
@@ -95,6 +102,12 @@ class SCMConfig(BaseSettings):
     def _normalize_bitbucket_server_user_slug(cls, v: str) -> str:
         """Strip so whitespace-only env values do not look like a configured slug."""
         return (v or "").strip()
+
+    @model_validator(mode="after")
+    def _apply_bot_identity_fallback(self) -> "SCMConfig":
+        if not self.bot_identity and self.bitbucket_server_user_slug:
+            self.bot_identity = self.bitbucket_server_user_slug
+        return self
 
 
 class LLMConfig(BaseSettings):

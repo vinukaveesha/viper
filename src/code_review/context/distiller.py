@@ -7,7 +7,7 @@ import logging
 import litellm
 
 from code_review.config import get_llm_config
-from code_review.models import get_configured_model
+from code_review.models import get_configured_model, get_effective_temperature
 
 logger = logging.getLogger(__name__)
 _FALLBACK_LIMIT = 8000
@@ -76,6 +76,7 @@ def distill_context_text(
         "Do not invent requirements not present in the source."
     )
     user = f"Source material:\n\n{raw_context}\n\nProduce the brief."
+    _temperature = get_effective_temperature(llm.temperature)
     try:
         resp = litellm.completion(
             model=model,
@@ -84,7 +85,7 @@ def distill_context_text(
                 {"role": "user", "content": user},
             ],
             max_tokens=max_output_tokens,
-            temperature=llm.temperature,
+            **({"temperature": _temperature} if _temperature is not None else {}),
         )
     except Exception as e:
         logger.warning("Context distillation LLM call failed: %s", e)

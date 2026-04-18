@@ -654,7 +654,7 @@ def test_get_unresolved_review_items_skips_threads_with_latest_accepted_bot_repl
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
-    p._participant_user_slug = "viper"
+    p._bot_identity = "viper"
     items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
 
     assert items == []
@@ -704,7 +704,7 @@ def test_get_unresolved_review_items_skips_threads_with_nested_accepted_bot_repl
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
-    p._participant_user_slug = "viper"
+    p._bot_identity = "viper"
     items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
 
     assert items == []
@@ -755,7 +755,7 @@ def test_get_unresolved_review_items_skips_dismissed_thread_when_activity_order_
     mock_client.return_value.__enter__.return_value.get.side_effect = _get_side_effect
 
     p = BitbucketServerProvider("https://bb:7990/rest/api/1.0", "tok")
-    p._participant_user_slug = "viper"
+    p._bot_identity = "viper"
     items = p.get_unresolved_review_items_for_quality_gate("PROJ", "my-repo", 42)
 
     assert items == []
@@ -1166,7 +1166,7 @@ def test_capabilities_with_participant_slug_enables_review_decisions():
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="buildbot",
+        bot_identity="buildbot",
     )
     assert p.capabilities().supports_review_decisions is True
 
@@ -1371,7 +1371,7 @@ def test_submit_review_decision_needs_work(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="buildbot",
+        bot_identity="buildbot",
     )
     p.submit_review_decision(
         "PROJ",
@@ -1415,7 +1415,7 @@ def test_submit_review_decision_retries_participant_put_on_409(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     p.submit_review_decision("PROJ", "repo", 7, "APPROVE")
 
@@ -1452,7 +1452,7 @@ def test_submit_review_decision_400_then_version_minus_one(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     p.submit_review_decision("PROJ", "repo", 7, "REQUEST_CHANGES")
 
@@ -1487,7 +1487,7 @@ def test_submit_review_decision_400_then_refetched_version(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     p.submit_review_decision("PROJ", "repo", 7, "APPROVE")
 
@@ -1517,7 +1517,7 @@ def test_get_bot_blocking_state_unknown_when_pr_has_no_participant_or_reviewer_l
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     assert p.get_bot_blocking_state("PROJ", "repo", 5) == "UNKNOWN"
 
@@ -1533,7 +1533,7 @@ def test_get_bot_blocking_state_not_blocking_when_participants_and_reviewers_emp
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     assert p.get_bot_blocking_state("PROJ", "repo", 5) == "NOT_BLOCKING"
 
@@ -1553,7 +1553,7 @@ def test_get_bot_blocking_state_needs_work(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     assert p.get_bot_blocking_state("PROJ", "repo", 5) == "BLOCKING"
 
@@ -1575,7 +1575,7 @@ def test_get_bot_blocking_state_participants_needs_work(mock_client):
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     assert p.get_bot_blocking_state("PROJ", "repo", 5) == "BLOCKING"
 
@@ -1599,6 +1599,6 @@ def test_get_bot_blocking_state_participants_precedence_over_reviewers(mock_clie
     p = BitbucketServerProvider(
         "https://bb:7990/rest/api/1.0",
         "tok",
-        participant_user_slug="u1",
+        bot_identity="u1",
     )
     assert p.get_bot_blocking_state("PROJ", "repo", 5) == "NOT_BLOCKING"
