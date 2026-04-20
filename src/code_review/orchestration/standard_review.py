@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -379,7 +380,11 @@ class StandardReviewHandler:
         if empty_scope_result is not None:
             return self._ReviewEnv([], [], "", "", None, early_exit_result=empty_scope_result)
 
-        if not self.dry_run:
+        started_notice_already_posted = (
+            os.getenv("CODE_REVIEW_STARTED_REVIEW_COMMENT_POSTED", "").strip().lower()
+            in {"1", "true", "yes"}
+        )
+        if not self.dry_run and not started_notice_already_posted:
             CommentPoster(provider, self.pr_ctx).post_started_review_comment(pr_info, paths)
 
         return self._ReviewEnv(files, paths, full_diff, incremental_base_sha, pr_info)
