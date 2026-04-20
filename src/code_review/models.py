@@ -8,7 +8,9 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any
 
-from code_review.config import get_llm_config
+from pydantic import SecretStr
+
+from code_review.config import get_llm_config, get_summary_llm_config, get_verification_llm_config
 
 # Env var name per provider (used when LLM_API_KEY is set; Ollama has no key).
 _PROVIDER_API_KEY_ENV: dict[str, str] = {
@@ -186,18 +188,43 @@ def _clear_injected_provider_api_env() -> None:
     _PREVIOUS_PROVIDER_API_VALUE = None
 
 
-def get_configured_model() -> Any:
+def _secret_value(secret: SecretStr | str | None) -> str:
+    if secret is None:
+        return ""
+    raw = secret.get_secret_value() if isinstance(secret, SecretStr) else str(secret)
+    return raw.strip()
+
+
+def _get_task_value(primary: Any, task: Any, field: str) -> Any:
+    value = getattr(task, field, None)
+    if value is not None:
+        return value
+    return getattr(primary, field)
+
+
+def _task_config(primary: Any, task: Any) -> Any:
+    """Return a small config-like object with task overrides resolved."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        provider=_get_task_value(primary, task, "provider"),
+        model=_get_task_value(primary, task, "model"),
+        api_key=_get_task_value(primary, task, "api_key"),
+    )
+
+
+def _get_configured_model_from_config(config: Any) -> Any:
     """
-    Return the configured LLM instance for ADK.
-    Reads LLM_PROVIDER, LLM_MODEL, and LLM_API_KEY from env/config.
-    When LLM_API_KEY is set, it is applied to the provider-specific env var so ADK/LiteLLM see it.
-    Uses LiteLLM for OpenAI/Anthropic/Ollama/OpenRouter; string for Gemini/Vertex (ADK registry).
+    Return the configured LLM instance for ADK from a config-like object.
+
+    When an API key is set, it is applied to the provider-specific env var so
+    ADK/LiteLLM see it. Gemini/Vertex return model strings for ADK's native
+    registry; other providers use ADK LiteLLM when available.
     """
     global _INJECTED_PROVIDER_API_ENV, _PREVIOUS_PROVIDER_API_VALUE
 
-    config = get_llm_config()
     env_var = _PROVIDER_API_KEY_ENV.get(config.provider)
-    api_key = config.api_key.get_secret_value().strip() if config.api_key is not None else ""
+    api_key = _secret_value(config.api_key)
 
     # Keep injected provider credentials scoped to the current config/provider call.
     if _INJECTED_PROVIDER_API_ENV and (_INJECTED_PROVIDER_API_ENV != env_var or not api_key):
@@ -232,6 +259,29 @@ def get_configured_model() -> Any:
     except ImportError:
         # Fallback if ADK LiteLLM not available
         return config.model
+
+
+def get_configured_model() -> Any:
+    """
+    Return the primary configured review LLM instance for ADK.
+
+    Reads LLM_PROVIDER, LLM_MODEL, and LLM_API_KEY from env/config.
+    """
+    return _get_configured_model_from_config(get_llm_config())
+
+
+def get_configured_summary_model() -> Any:
+    """Return the configured summary LLM, falling back to the primary LLM field by field."""
+    return _get_configured_model_from_config(
+        _task_config(get_llm_config(), get_summary_llm_config())
+    )
+
+
+def get_configured_verification_model() -> Any:
+    """Return the configured verification LLM, falling back to the primary LLM field by field."""
+    return _get_configured_model_from_config(
+        _task_config(get_llm_config(), get_verification_llm_config())
+    )
 
 
 def get_context_window() -> int:

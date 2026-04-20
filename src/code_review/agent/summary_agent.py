@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from code_review.config import get_llm_config
-from code_review.models import get_configured_model, get_effective_temperature
+from code_review.models import get_configured_summary_model, get_effective_temperature
 from code_review.schemas.findings import FindingV1
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ def create_summary_agent():
     )
 
     return Agent(
-        model=get_configured_model(),
+        model=get_configured_summary_model(),
         name="summary_agent",
         instruction=SUMMARY_INSTRUCTION,
         generate_content_config=generate_content_config,
