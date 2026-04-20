@@ -312,8 +312,8 @@ def get_max_output_tokens() -> int:
 _FIXED_TEMPERATURE_PREFIXES: tuple[str, ...] = ("gpt-5",)
 
 
-def get_effective_temperature(requested: float) -> float | None:
-    """Return the temperature to pass for the currently configured model, or None to omit it.
+def get_effective_temperature_for_model(provider: str, model: str, requested: float) -> float | None:
+    """Return the temperature to pass for a provider/model pair, or None to omit it.
 
     Some models (e.g. the gpt-5 family) only support a fixed temperature value
     that is also their default. Passing any other value raises
@@ -321,9 +321,16 @@ def get_effective_temperature(requested: float) -> float | None:
     explicitly is redundant. This helper returns None for those models so
     callers can skip the parameter entirely.
     """
-    config = get_llm_config()
-    resolved = _MODEL_ALIASES.get((config.provider, config.model), config.model)
+    provider_key = (provider or "").strip().lower()
+    model_key = (model or "").strip()
+    resolved = _MODEL_ALIASES.get((provider_key, model_key), model_key)
 
     if any(resolved.startswith(p) for p in _FIXED_TEMPERATURE_PREFIXES):
         return None
     return requested
+
+
+def get_effective_temperature(requested: float) -> float | None:
+    """Return the temperature to pass for the primary configured model."""
+    config = get_llm_config()
+    return get_effective_temperature_for_model(config.provider, config.model, requested)

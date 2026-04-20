@@ -512,6 +512,7 @@ class StandardReviewHandler:
     ) -> None:
         """Generate and post a PR summary; update PR description for initial reviews without one."""
         if self.dry_run:
+            logger.info("Dry run: skipping LLM-generated PR summary")
             return
 
         description_was_empty = not (getattr(env.pr_info, "description", "") or "").strip()
@@ -525,7 +526,7 @@ class StandardReviewHandler:
                 provider, env, summary_text, description_was_empty, is_initial_review, to_post
             )
         except Exception as e:
-            logger.warning("Failed to generate/post PR summary: %s", e)
+            logger.warning("Failed to generate/post PR summary: %s", e, exc_info=True)
 
     def _generate_summary_text(
         self,
@@ -555,6 +556,11 @@ class StandardReviewHandler:
             pr_info_for_summary = pr_info_for_summary.model_copy(update={"description": ""})
 
         posted_findings = [f for f, _ in to_post]
+        logger.info(
+            "Generating PR summary via LLM for %d changed file(s), %d posted finding(s)",
+            len(env.paths),
+            len(posted_findings),
+        )
         summary_agent = create_summary_agent()
         return generate_pr_summary(
             summary_agent,

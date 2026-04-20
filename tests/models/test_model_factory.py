@@ -11,6 +11,7 @@ from code_review.models import (
     get_configured_summary_model,
     get_configured_verification_model,
     get_context_window,
+    get_effective_temperature_for_model,
     get_max_output_tokens,
     get_model_metadata,
     get_model_metadata_catalog,
@@ -149,8 +150,16 @@ def test_get_model_metadata_refreshed_gemini_limits():
     metadata = get_model_metadata("gemini", "gemini-3.1")
 
     assert metadata is not None
-    assert metadata.context_window_tokens == 1_048_576
+    assert metadata.context_window_tokens == 200_000
     assert metadata.max_output_tokens_default == 65_536
+
+
+def test_get_effective_temperature_for_model_omits_fixed_temperature_models():
+    assert get_effective_temperature_for_model("openai", "gpt-5.4", 0.2) is None
+
+
+def test_get_effective_temperature_for_model_keeps_regular_models():
+    assert get_effective_temperature_for_model("gemini", "gemini-3.1", 0.2) == 0.2
 
 
 @patch("code_review.models.get_llm_config")
