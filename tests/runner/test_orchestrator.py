@@ -1033,6 +1033,48 @@ def test_run_does_not_post_started_review_comment_in_dry_run():
     provider.post_pr_summary_comment.assert_not_called()
 
 
+def test_setup_review_environment_skips_started_review_comment_when_already_posted():
+    """Configured started-review marker suppresses the temporary PR comment."""
+    from code_review.orchestration.standard_review import StandardReviewHandler
+    from code_review.providers.base import FileInfo
+
+    provider = MagicMock()
+    provider.get_pr_info.return_value = SimpleNamespace(description="")
+    provider.get_pr_files.return_value = [FileInfo(path="foo.py", status="modified")]
+    provider.get_pr_diff.return_value = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    provider.post_pr_summary_comment = MagicMock()
+
+    review_decision_handler = MagicMock()
+    review_decision_handler.maybe_finish_empty_scope_review.return_value = None
+
+    handler = StandardReviewHandler(
+        PRContext("o", "r", 1, "abc123"),
+        dry_run=False,
+        print_findings=False,
+        context_enricher=MagicMock(),
+        review_decision_handler=review_decision_handler,
+        result_builder=MagicMock(),
+    )
+
+    env = handler._setup_review_environment(
+        provider,
+        MagicMock(),
+        SimpleNamespace(started_review_comment_posted=True),
+        MagicMock(),
+        lambda _cfg, _head_sha: "",
+    )
+
+    assert env.paths == ["foo.py"]
+    provider.post_pr_summary_comment.assert_not_called()
+
+
 # --- Batch-mode prompt content ---
 
 

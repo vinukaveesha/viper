@@ -154,15 +154,19 @@ def test_task_llm_config_blank_values_are_unset():
     with patch.dict(
         os.environ,
         {
+            "LLM_SUMMARY_PROVIDER": "   ",
             "LLM_SUMMARY_MODEL": "   ",
             "LLM_SUMMARY_API_KEY": "   ",
+            "LLM_VERIFICATION_PROVIDER": "   ",
             "LLM_VERIFICATION_MODEL": "   ",
             "LLM_VERIFICATION_API_KEY": "   ",
         },
         clear=True,
     ):
+        assert SummaryLLMConfig().provider is None
         assert SummaryLLMConfig().model is None
         assert SummaryLLMConfig().api_key is None
+        assert VerificationLLMConfig().provider is None
         assert VerificationLLMConfig().model is None
         assert VerificationLLMConfig().api_key is None
 
@@ -285,6 +289,16 @@ def test_code_review_app_log_prompts_from_env():
     with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=True):
         cfg = CodeReviewAppConfig()
         assert cfg.log_prompts is True
+
+
+def test_code_review_app_started_review_comment_posted_from_env():
+    with patch.dict(
+        os.environ,
+        {"CODE_REVIEW_STARTED_REVIEW_COMMENT_POSTED": "true"},
+        clear=True,
+    ):
+        cfg = CodeReviewAppConfig()
+        assert cfg.started_review_comment_posted is True
 
 
 def test_code_review_app_reply_dismissal_enabled_by_default():

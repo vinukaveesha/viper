@@ -178,6 +178,14 @@ class TaskLLMConfig(BaseSettings):
     api_key: SecretStr | None = None
     model: str | None = None
 
+    @field_validator("provider", mode="before")
+    @classmethod
+    def _normalize_provider(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = str(v).strip()
+        return normalized or None
+
     @field_validator("api_key", mode="before")
     @classmethod
     def _normalize_api_key(cls, v: str | SecretStr | None) -> SecretStr | None:
@@ -352,6 +360,14 @@ class CodeReviewAppConfig(BaseSettings):
         default=False,
         validation_alias="CODE_REVIEW_LOG_PROMPTS",
         description="Log the assembled LLM instruction and user prompt for debugging.",
+    )
+    started_review_comment_posted: bool = Field(
+        default=False,
+        validation_alias="CODE_REVIEW_STARTED_REVIEW_COMMENT_POSTED",
+        description=(
+            "When true, skip posting the temporary 'review started' PR comment. "
+            "Used by CI workflows that already posted the notice before invoking the reviewer."
+        ),
     )
     disable_idempotency: bool = Field(
         default=False,

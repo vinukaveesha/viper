@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -359,6 +358,7 @@ class StandardReviewHandler:
         self,
         provider: ProviderInterface,
         cfg: Any,
+        app_cfg: Any,
         run_observability: ReviewRunObservability,
         incremental_base_sha_fn: Callable[[Any, str], str],
     ) -> _ReviewEnv:
@@ -380,9 +380,8 @@ class StandardReviewHandler:
         if empty_scope_result is not None:
             return self._ReviewEnv([], [], "", "", None, early_exit_result=empty_scope_result)
 
-        started_notice_already_posted = (
-            os.getenv("CODE_REVIEW_STARTED_REVIEW_COMMENT_POSTED", "").strip().lower()
-            in {"1", "true", "yes"}
+        started_notice_already_posted = bool(
+            getattr(app_cfg, "started_review_comment_posted", False)
         )
         if not self.dry_run and not started_notice_already_posted:
             CommentPoster(provider, self.pr_ctx).post_started_review_comment(pr_info, paths)
@@ -678,7 +677,7 @@ class StandardReviewHandler:
             return early_exit_result
 
         env = self._setup_review_environment(
-            provider, cfg, run_observability, incremental_base_sha_fn
+            provider, cfg, app_cfg, run_observability, incremental_base_sha_fn
         )
         if env.early_exit_result is not None:
             return env.early_exit_result

@@ -279,6 +279,35 @@ def test_get_configured_verification_model_falls_back_to_primary_api_key(
             os.environ["OPENAI_API_KEY"] = previous_api_key
 
 
+@patch("code_review.models.get_summary_llm_config")
+@patch("code_review.models.get_llm_config")
+def test_get_configured_summary_model_does_not_reuse_primary_api_key_for_different_provider(
+    mock_get_config, mock_get_summary
+):
+    from pydantic import SecretStr
+
+    previous_api_key = os.environ.get("GEMINI_API_KEY")
+    os.environ.pop("GEMINI_API_KEY", None)
+    mock_get_config.return_value = MagicMock(
+        provider="openai",
+        model="gpt-5-mini",
+        api_key=SecretStr("openai-key"),
+    )
+    mock_get_summary.return_value = MagicMock(
+        provider="gemini",
+        model="gemini-3.1",
+        api_key=None,
+    )
+    try:
+        get_configured_summary_model()
+        assert "GEMINI_API_KEY" not in os.environ
+    finally:
+        if previous_api_key is None:
+            os.environ.pop("GEMINI_API_KEY", None)
+        else:
+            os.environ["GEMINI_API_KEY"] = previous_api_key
+
+
 @patch("code_review.models.get_llm_config")
 def test_get_model_metadata_uses_config_when_args_omitted(mock_get_config):
     mock_get_config.return_value = MagicMock(

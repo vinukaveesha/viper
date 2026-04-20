@@ -206,10 +206,19 @@ def _task_config(primary: Any, task: Any) -> Any:
     """Return a small config-like object with task overrides resolved."""
     from types import SimpleNamespace
 
+    provider = _get_task_value(primary, task, "provider")
+    task_api_key = getattr(task, "api_key", None)
+    if task_api_key is not None:
+        api_key = task_api_key
+    elif provider == getattr(primary, "provider"):
+        api_key = getattr(primary, "api_key")
+    else:
+        api_key = None
+
     return SimpleNamespace(
-        provider=_get_task_value(primary, task, "provider"),
+        provider=provider,
         model=_get_task_value(primary, task, "model"),
-        api_key=_get_task_value(primary, task, "api_key"),
+        api_key=api_key,
     )
 
 
