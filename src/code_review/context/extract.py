@@ -137,7 +137,8 @@ def extract_confluence_refs(
         seen.add(external_id)
         out.append(ContextReference(ref_type=ref_type, external_id=external_id, display=display))
 
-    _append_confluence_refs(_add, text)
+    scanned = _strip_markdown_code_fences(text)
+    _append_confluence_refs(_add, scanned)
     return out
 
 

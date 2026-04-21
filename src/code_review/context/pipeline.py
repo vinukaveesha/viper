@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Module-level ContextStore cache keyed by (db_url, embedding_dimensions).
 # Avoids re-running schema DDL on every review call.
 _store_cache: dict[tuple[str, int], ContextStore] = {}
+_MAX_TRANSITIVE_CONFLUENCE_REFS = 20
 
 
 def _clamp_context_text(text: str, max_bytes: int) -> str:
@@ -87,9 +88,7 @@ def _source_name_and_base(
     return ("unknown", "")
 
 
-def _get_external_credentials(
-    scm: SCMConfig, ctx: ContextAwareReviewConfig
-) -> ExternalCredentials:
+def _get_external_credentials(scm: SCMConfig, ctx: ContextAwareReviewConfig) -> ExternalCredentials:
     gh_api, gh_tok = _github_api_and_token(scm, ctx)
     gl_api, gl_tok = _gitlab_api_and_token(scm, ctx)
     jira_tok = ctx.jira_token.get_secret_value() if ctx.jira_token else ""
@@ -143,7 +142,22 @@ def _extract_transitive_confluence_refs(
     if not fetched_body.strip():
         logger.warning("Fetched body is empty or whitespace-only.")
         return []
-    return extract_confluence_refs(fetched_body, exclude_ids=seen_ids)
+    refs = extract_confluence_refs(fetched_body, exclude_ids=seen_ids)
+    if len(refs) > _MAX_TRANSITIVE_CONFLUENCE_REFS:
+        logger.info(
+            "context_aware: limiting transitive Confluence links from Jira to %s of %s",
+            _MAX_TRANSITIVE_CONFLUENCE_REFS,
+            len(refs),
+        )
+    return refs[:_MAX_TRANSITIVE_CONFLUENCE_REFS]
+
+
+def _confluence_seen_ids(
+    seen_refs: set[tuple[ReferenceType, str]],
+) -> set[str]:
+    return {
+        external_id for ref_type, external_id in seen_refs if ref_type == ReferenceType.CONFLUENCE
+    }
 
 
 def _load_context_documents_without_store(
@@ -154,7 +168,7 @@ def _load_context_documents_without_store(
 ) -> list[tuple[str, str]]:
     docs_for_distill: list[tuple[str, str]] = []
     fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
-    seen_ids = {r.external_id for r in applicable}
+    seen_refs = {(r.ref_type, r.external_id) for r in applicable}
     # Two-pass: first fetch the original refs, then any transitive Confluence refs.
     transitive: list[ContextReference] = []
     for ref in applicable:
@@ -165,19 +179,42 @@ def _load_context_documents_without_store(
         if ref.ref_type == ReferenceType.JIRA:
             transitive.extend(
                 _extract_transitive_confluence_refs(
-                    fetched.body, ctx=ctx, seen_ids=seen_ids,
+                    fetched.body,
+                    ctx=ctx,
+                    seen_ids=_confluence_seen_ids(seen_refs),
                 )
             )
     for ref in transitive:
-        if ref.external_id in seen_ids:
+        ref_key = (ref.ref_type, ref.external_id)
+        if ref_key in seen_refs:
             continue
-        seen_ids.add(ref.external_id)
+        seen_refs.add(ref_key)
         logger.info("context_aware: following transitive Confluence link %s from Jira", ref.display)
         fetched = fetch_reference(ref, cfg=fetch_cfg)
         if fetched is None:
             continue
         docs_for_distill.append((ref.display, fetched.body))
     return docs_for_distill
+
+
+def _load_or_fetch_document_content(
+    *,
+    store: ContextStore,
+    conn,
+    source_id,
+    ref: ContextReference,
+    fetch_cfg: FetchReferenceConfig,
+) -> tuple[str, object] | None:
+    row = store.load_document(conn, source_id, ref.external_id)
+    if row is not None and row[3]:
+        logger.debug("context cache hit %s", ref.display)
+        return (row[1], row[0])
+
+    fetched = fetch_reference(ref, cfg=fetch_cfg)
+    if fetched is None:
+        return None
+    doc_id = store.upsert_document(conn, source_id, fetched)
+    return (fetched.body, doc_id)
 
 
 def _load_context_documents(
@@ -192,7 +229,7 @@ def _load_context_documents(
     docs_for_distill: list[tuple[str, str]] = []
     doc_ids_for_rag: list[tuple[str, object]] = []
     fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
-    seen_ids = {r.external_id for r in applicable}
+    seen_refs = {(r.ref_type, r.external_id) for r in applicable}
     transitive: list[ContextReference] = []
 
     def _fetch_and_record(ref: ContextReference) -> str | None:
@@ -200,20 +237,16 @@ def _load_context_documents(
         if not base and ref.ref_type != ReferenceType.GITHUB_ISSUE:
             return None
         source_id = store.get_or_create_source(conn, src_name, base)
-        row = store.load_document(conn, source_id, ref.external_id)
-        if row is not None and row[3]:
-            content = row[1]
-            doc_id = row[0]
-            logger.debug("context cache hit %s", ref.display)
-        else:
-            fetched = fetch_reference(
-                ref,
-                cfg=fetch_cfg,
-            )
-            if fetched is None:
-                return None
-            doc_id = store.upsert_document(conn, source_id, fetched)
-            content = fetched.body
+        loaded = _load_or_fetch_document_content(
+            store=store,
+            conn=conn,
+            source_id=source_id,
+            ref=ref,
+            fetch_cfg=fetch_cfg,
+        )
+        if loaded is None:
+            return None
+        content, doc_id = loaded
         docs_for_distill.append((ref.display, content))
         doc_ids_for_rag.append((ref.display, doc_id))
         return content
@@ -223,14 +256,17 @@ def _load_context_documents(
         if content is not None and ref.ref_type == ReferenceType.JIRA:
             transitive.extend(
                 _extract_transitive_confluence_refs(
-                    content, ctx=ctx, seen_ids=seen_ids,
+                    content,
+                    ctx=ctx,
+                    seen_ids=_confluence_seen_ids(seen_refs),
                 )
             )
 
     for ref in transitive:
-        if ref.external_id in seen_ids:
+        ref_key = (ref.ref_type, ref.external_id)
+        if ref_key in seen_refs:
             continue
-        seen_ids.add(ref.external_id)
+        seen_refs.add(ref_key)
         logger.info("context_aware: following transitive Confluence link %s from Jira", ref.display)
         _fetch_and_record(ref)
 

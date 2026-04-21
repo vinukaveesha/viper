@@ -52,8 +52,7 @@ def create_agent_and_runner(
         use_output_key=single_batch_mode,
     )
     session_id = (
-        f"{pr_ctx.owner}/{pr_ctx.repo}/pr-{pr_ctx.pr_number}"
-        f"/{runner_mod.uuid.uuid4().hex[:12]}"
+        f"{pr_ctx.owner}/{pr_ctx.repo}/pr-{pr_ctx.pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
     )
     session_service = InMemorySessionService()
     runner = Runner(
@@ -119,9 +118,7 @@ def _run_sequential_batch_review_mode(
         batch_count,
     )
     try:
-        responses = runner_mod._run_agent_and_collect_responses(
-            runner, session_id, content
-        )
+        responses = runner_mod._run_agent_and_collect_responses(runner, session_id, content)
     except runner_mod.PartialResponseCollectionError as exc:
         if isinstance(exc.cause, runner_mod.RateLimitError):
             response_indexes = {
@@ -210,7 +207,6 @@ def _run_sequential_batch_review_mode(
     return findings
 
 
-
 def build_batch_review_content(
     *,
     pr_ctx: PRContext,
@@ -279,15 +275,17 @@ def batch_index_from_author(author: str) -> int | None:
     return int(suffix) if suffix.isdigit() else None
 
 
-def missing_batch_response_indexes(
-    responses: list[tuple[str, str]], batch_count: int
-) -> list[int]:
+def missing_batch_response_indexes(responses: list[tuple[str, str]], batch_count: int) -> list[int]:
     """Return batch indexes that did not emit a text-bearing final response."""
+    if not responses:
+        return list(range(batch_count))
     seen = {
         idx
         for author, _response_text in responses
         if (idx := batch_index_from_author(author)) is not None
     }
+    if not seen:
+        return []
     return [idx for idx in range(batch_count) if idx not in seen]
 
 
@@ -378,9 +376,7 @@ def _run_isolated_batches_with_retry(
             retry_attempt=attempt,
         )
         try:
-            responses = runner_mod._run_agent_and_collect_responses(
-                runner, session_id, content
-            )
+            responses = runner_mod._run_agent_and_collect_responses(runner, session_id, content)
         except runner_mod.PartialResponseCollectionError as exc:
             if isinstance(exc.cause, runner_mod.RateLimitError):
                 runner_mod.logger.warning(
@@ -413,9 +409,7 @@ def _run_isolated_batches_with_retry(
             attempt + 1,
             max_retries + 1,
         )
-        smaller_batches = _split_batch_for_retry(
-            batch, attempt=attempt, max_retries=max_retries
-        )
+        smaller_batches = _split_batch_for_retry(batch, attempt=attempt, max_retries=max_retries)
         if len(smaller_batches) > 1:
             runner_mod.logger.warning(
                 "Splitting malformed batch paths=%s segments=%d into %d smaller batch(es).",

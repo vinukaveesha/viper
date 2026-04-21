@@ -58,15 +58,28 @@ def _build_linked_context_block(
     already_used_chars: int,
 ) -> str:
     linked_sources = _build_linked_sources_block(context_references or [])
-    header = f"{_LINKED_CONTEXT_HEADER}\n{_LINKED_CONTEXT_GUIDANCE}\n\n"
-    if linked_sources:
-        header += linked_sources + "\n\n"
-    header += "Distilled brief:\n"
-    remaining_for_brief = _remaining_chars(max_chars, already_used_chars + len(header))
+    base_header = f"{_LINKED_CONTEXT_HEADER}\n{_LINKED_CONTEXT_GUIDANCE}\n\n"
+    sources_section = f"{linked_sources}\n\n" if linked_sources else ""
+    brief_header = "Distilled brief:\n"
+    remaining_for_brief = _remaining_chars(
+        max_chars,
+        already_used_chars + len(base_header) + len(brief_header),
+    )
     trimmed_brief = _trim_context_brief(context_brief.strip(), remaining_for_brief)
     if not trimmed_brief:
         return ""
-    return header + trimmed_brief
+
+    header = base_header
+    if sources_section:
+        remaining_with_sources = _remaining_chars(
+            max_chars,
+            already_used_chars + len(base_header) + len(sources_section) + len(brief_header),
+        )
+        trimmed_with_sources = _trim_context_brief(context_brief.strip(), remaining_with_sources)
+        if trimmed_with_sources:
+            header += sources_section
+            trimmed_brief = trimmed_with_sources
+    return header + brief_header + trimmed_brief
 
 
 def _build_linked_sources_block(context_references: list[Any]) -> str:

@@ -213,9 +213,7 @@ def test_missing_db_url_uses_direct_fetch_and_distillation(mock_distill, mock_st
 
 @patch("code_review.context.pipeline.ContextStore")
 @patch("code_review.context.pipeline.distill_context_text", return_value="Direct brief.")
-def test_missing_whitespace_db_url_uses_direct_fetch_and_distillation(
-    mock_distill, mock_store_cls
-):
+def test_missing_whitespace_db_url_uses_direct_fetch_and_distillation(mock_distill, mock_store_cls):
     doc = _make_fetched_doc(body="Issue body")
     ctx = _make_ctx(db_url="   ")
 
@@ -513,6 +511,69 @@ def test_jira_transitive_skips_already_listed_confluence_ref(mock_distill):
 
 
 @patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
+def test_jira_transitive_allows_same_id_as_non_confluence_ref_no_store(mock_distill):
+    jira_body = "See https://wiki.example.com/wiki/spaces/ENG/pages/123/Spec"
+    jira_ref = ContextReference(ref_type=ReferenceType.JIRA, external_id="123", display="123")
+    jira_doc = _make_fetched_doc(external_id="123", body=jira_body, title="Design")
+    confluence_doc = _make_fetched_doc(external_id="123", body="Spec body", title="Spec")
+
+    def _side_effect(ref, *, cfg):
+        if ref.ref_type == ReferenceType.JIRA:
+            return jira_doc
+        if ref.ref_type == ReferenceType.CONFLUENCE:
+            return confluence_doc
+        return None
+
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
+    ctx.jira_url = "https://jira.example.com"
+    ctx.confluence_url = "https://wiki.example.com"
+
+    with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
+
+    assert result is not None
+    ref_types = [call.args[0].ref_type for call in mf.call_args_list]
+    assert ref_types == [ReferenceType.JIRA, ReferenceType.CONFLUENCE]
+    raw = mock_distill.call_args.args[0]
+    assert "Spec body" in raw
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
+def test_jira_transitive_allows_same_id_as_non_confluence_ref_with_store(mock_distill):
+    jira_body = "See https://wiki.example.com/wiki/spaces/ENG/pages/123/Spec"
+    jira_ref = ContextReference(ref_type=ReferenceType.JIRA, external_id="123", display="123")
+    jira_doc = _make_fetched_doc(external_id="123", body=jira_body, title="Design")
+    confluence_doc = _make_fetched_doc(external_id="123", body="Spec body", title="Spec")
+
+    store = MagicMock()
+    store.connect.return_value = MagicMock()
+    store.get_or_create_source.return_value = uuid.uuid4()
+    store.load_document.return_value = None
+    store.upsert_document.side_effect = [uuid.uuid4(), uuid.uuid4()]
+
+    def _side_effect(ref, *, cfg):
+        if ref.ref_type == ReferenceType.JIRA:
+            return jira_doc
+        if ref.ref_type == ReferenceType.CONFLUENCE:
+            return confluence_doc
+        return None
+
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=True)
+    ctx.jira_url = "https://jira.example.com"
+    ctx.confluence_url = "https://wiki.example.com"
+
+    with patch("code_review.context.pipeline.ContextStore", return_value=store):
+        with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
+            result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
+
+    assert result is not None
+    ref_types = [call.args[0].ref_type for call in mf.call_args_list]
+    assert ref_types == [ReferenceType.JIRA, ReferenceType.CONFLUENCE]
+    raw = mock_distill.call_args.args[0]
+    assert "Spec body" in raw
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
 def test_jira_transitive_does_not_follow_when_confluence_disabled(mock_distill):
     """Even if Jira body has Confluence links, don't follow when confluence_enabled=False."""
     jira_body = "See https://wiki.example.com/wiki/spaces/ENG/pages/555/Spec"
@@ -543,3 +604,19 @@ def test_extract_transitive_confluence_refs_empty_body():
 
     assert refs == []
     mock_warn.assert_called_once_with("Fetched body is empty or whitespace-only.")
+
+
+def test_extract_transitive_confluence_refs_caps_results():
+    ctx = MagicMock(confluence_enabled=True)
+    body = " ".join(
+        f"https://wiki.example.com/wiki/spaces/ENG/pages/{idx}/Spec" for idx in range(30)
+    )
+
+    refs = pipeline_module._extract_transitive_confluence_refs(
+        body,
+        ctx=ctx,
+        seen_ids=set(),
+    )
+
+    assert len(refs) == pipeline_module._MAX_TRANSITIVE_CONFLUENCE_REFS
+    assert [ref.external_id for ref in refs] == [str(idx) for idx in range(20)]

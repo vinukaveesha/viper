@@ -194,6 +194,26 @@ def test_extract_confluence_refs_returns_empty_for_no_links():
     assert refs == []
 
 
+def test_extract_confluence_refs_skips_fenced_code_links():
+    text = "Example only:\n```\nhttps://wiki.example.com/spaces/ENG/pages/999/StackTrace\n```\n"
+
+    assert extract_confluence_refs(text) == []
+
+
+def test_extract_confluence_refs_keeps_links_outside_fenced_code():
+    text = (
+        "Ignore example:\n"
+        "```\n"
+        "https://wiki.example.com/spaces/ENG/pages/999/StackTrace\n"
+        "```\n"
+        "Use https://wiki.example.com/spaces/ENG/pages/1000/Spec instead."
+    )
+
+    refs = extract_confluence_refs(text)
+
+    assert [ref.external_id for ref in refs] == ["1000"]
+
+
 def _clear_context_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in tuple(os.environ):
         if key.startswith("CONTEXT_") or key.startswith("CONTEXT_AWARE"):

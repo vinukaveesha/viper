@@ -38,18 +38,14 @@ def test_parse_findings_json_markdown_wrapped():
 
 def test_parse_findings_json_unlabeled_fence():
     text = (
-        "```\n"
-        '{"findings":[{"path":"u","line":5,"severity":"low","code":"s","message":"msg"}]}'
-        "\n```"
+        '```\n{"findings":[{"path":"u","line":5,"severity":"low","code":"s","message":"msg"}]}\n```'
     )
     out = _parse_findings_json(text)
     assert out["findings"][0]["path"] == "u"
 
 
 def test_parse_findings_json_structured_object():
-    text = (
-        '{"findings":[{"path":"z","line":4,"severity":"low","code":"c","message":"m"}]}'
-    )
+    text = '{"findings":[{"path":"z","line":4,"severity":"low","code":"c","message":"m"}]}'
     out = _parse_findings_json(text)
     assert out["findings"][0]["path"] == "z"
 
@@ -79,9 +75,7 @@ def test_findings_from_response_invalid_schema_raises_value_error():
 def test_findings_from_response_non_object_raises_value_error():
     """A top-level JSON array is malformed for the findings contract when raise_errors=True."""
     text = '[{"path":"p","line":1,"severity":"high","code":"x","message":"fix it"}]'
-    with pytest.raises(
-        ValueError, match="expected top-level object, got list"
-    ):
+    with pytest.raises(ValueError, match="expected top-level object, got list"):
         _findings_from_response(text, raise_errors=True)
 
 
@@ -115,6 +109,16 @@ def test_missing_batch_response_indexes_ignores_non_batch_authors():
     ]
 
     assert missing_batch_response_indexes(responses, 3) == [0, 2]
+
+
+def test_missing_batch_response_indexes_trusts_only_non_batch_authors():
+    responses = [("<unknown>", '{"findings":[]}')]
+
+    assert missing_batch_response_indexes(responses, 3) == []
+
+
+def test_missing_batch_response_indexes_returns_all_when_no_responses():
+    assert missing_batch_response_indexes([], 3) == [0, 1, 2]
 
 
 def test_build_commit_messages_block_respects_remaining_char_budget():
@@ -191,6 +195,26 @@ def test_format_review_prompt_supplement_includes_linked_context_sources():
     assert "- Confluence page: confluence-page:123456" in supplement
     assert "- GitHub issue: org/repo#99" in supplement
     assert "Must enforce premium entitlement before export." in supplement
+
+
+def test_format_review_prompt_supplement_preserves_brief_when_sources_exhaust_budget():
+    supplement = _format_review_prompt_supplement(
+        context_brief="Must keep the acceptance criteria visible.",
+        context_references=[
+            ContextReference(
+                ref_type=ReferenceType.JIRA,
+                external_id="PAY-42",
+                display="PAY-42 " + ("x" * 2000),
+            ),
+        ],
+        commit_messages=[],
+        include_commit_messages=False,
+        remaining_tokens=200,
+    )
+
+    assert "Linked sources:" not in supplement
+    assert "Distilled brief:" in supplement
+    assert "Must keep the acceptance criteria visible." in supplement
 
 
 def test_finding_to_comment_body():
