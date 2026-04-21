@@ -135,7 +135,7 @@ def extract_context_references(
     ``#NNN`` is recognised only when ``scm_provider == \"github\"`` and
     ``github_issue_same_repo`` is True (assumed same repository).
     """
-    raw = "\n".join(s for s in text_segments if s)
+    raw = "\n".join(s for s in text_segments if isinstance(s, str) and s)
     scanned = _strip_markdown_code_fences(raw)
 
     seen: set[tuple[ReferenceType, str]] = set()

@@ -144,6 +144,19 @@ def test_extract_skips_fenced_code():
     assert "PROJ-999" not in keys
 
 
+def test_extract_ignores_non_string_segments():
+    refs = extract_context_references(
+        "github",
+        "org",
+        "repo",
+        [object(), None, "PROJ-123"],
+        extract_github=False,
+        extract_confluence=False,
+    )
+
+    assert [r.external_id for r in refs] == ["PROJ-123"]
+
+
 def _clear_context_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in tuple(os.environ):
         if key.startswith("CONTEXT_") or key.startswith("CONTEXT_AWARE"):
