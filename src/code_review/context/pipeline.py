@@ -93,19 +93,13 @@ def _get_external_credentials(
     )
 
 
-def _load_context_documents(
+def _build_fetch_reference_config(
     *,
-    store: ContextStore,
-    conn,
-    scm: SCMConfig,
     ctx: ContextAwareReviewConfig,
-    applicable: list[ContextReference],
     creds: ExternalCredentials,
-) -> tuple[list[tuple[str, str]], list[tuple[str, object]]]:
-    docs_for_distill: list[tuple[str, str]] = []
-    doc_ids_for_rag: list[tuple[str, object]] = []
+) -> FetchReferenceConfig:
     extra_fields = tuple(f.strip() for f in (ctx.jira_extra_fields or "").split(",") if f.strip())
-    fetch_cfg = FetchReferenceConfig(
+    return FetchReferenceConfig(
         github_api_base=creds.github_api,
         github_token=creds.github_token,
         gitlab_api_base=creds.gitlab_api,
@@ -122,6 +116,36 @@ def _load_context_documents(
         ctx_confluence_enabled=ctx.confluence_enabled,
         jira_extra_fields=extra_fields,
     )
+
+
+def _load_context_documents_without_store(
+    *,
+    ctx: ContextAwareReviewConfig,
+    applicable: list[ContextReference],
+    creds: ExternalCredentials,
+) -> list[tuple[str, str]]:
+    docs_for_distill: list[tuple[str, str]] = []
+    fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
+    for ref in applicable:
+        fetched = fetch_reference(ref, cfg=fetch_cfg)
+        if fetched is None:
+            continue
+        docs_for_distill.append((ref.display, fetched.body))
+    return docs_for_distill
+
+
+def _load_context_documents(
+    *,
+    store: ContextStore,
+    conn,
+    scm: SCMConfig,
+    ctx: ContextAwareReviewConfig,
+    applicable: list[ContextReference],
+    creds: ExternalCredentials,
+) -> tuple[list[tuple[str, str]], list[tuple[str, object]]]:
+    docs_for_distill: list[tuple[str, str]] = []
+    doc_ids_for_rag: list[tuple[str, object]] = []
+    fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
     for ref in applicable:
         src_name, base = _source_name_and_base(ref, ctx, scm)
         if not base and ref.ref_type != ReferenceType.GITHUB_ISSUE:
@@ -208,7 +232,33 @@ def build_context_brief_for_pr(
 
     creds = _get_external_credentials(scm, ctx)
 
-    db_url = ctx.db_url or ""
+    db_url = (ctx.db_url or "").strip()
+    if not db_url:
+        documents_for_distill = _load_context_documents_without_store(
+            ctx=ctx,
+            applicable=applicable,
+            creds=creds,
+        )
+        if not documents_for_distill:
+            logger.info("context_aware: no document bodies resolved")
+            return None
+        raw_for_distill = "\n\n---\n\n".join(
+            f"## {label}\n{text}" for label, text in documents_for_distill
+        )
+        logger.info(
+            "context_aware: resolved %d document(s), ~%d bytes before distillation "
+            "(direct mode, no DB cache/RAG)",
+            len(documents_for_distill),
+            len(raw_for_distill.encode("utf-8")),
+        )
+        brief = distill_context_text(
+            raw_for_distill,
+            max_output_tokens=ctx.distilled_max_tokens,
+        )
+        if not brief.strip():
+            return None
+        return f"<context>\n{brief}\n</context>"
+
     cache_key = (db_url, ctx.embedding_dimensions)
     store = _store_cache.get(cache_key)
     if store is None:

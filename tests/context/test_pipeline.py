@@ -196,6 +196,39 @@ def test_under_budget_returns_context_tag(mock_distill):
     assert result.strip().endswith("</context>")
 
 
+@patch("code_review.context.pipeline.ContextStore")
+@patch("code_review.context.pipeline.distill_context_text", return_value="Direct brief.")
+def test_missing_db_url_uses_direct_fetch_and_distillation(mock_distill, mock_store_cls):
+    doc = _make_fetched_doc(body="Jira acceptance criteria")
+    ctx = _make_ctx(db_url="")
+
+    with patch("code_review.context.pipeline.fetch_reference", return_value=doc) as mock_fetch:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff text")
+
+    assert result is not None
+    assert "Direct brief." in result
+    mock_fetch.assert_called_once()
+    mock_store_cls.assert_not_called()
+    raw_context = mock_distill.call_args.args[0]
+    assert "Jira acceptance criteria" in raw_context
+
+
+@patch("code_review.context.pipeline.ContextStore")
+@patch("code_review.context.pipeline.distill_context_text", return_value="Direct brief.")
+def test_missing_whitespace_db_url_uses_direct_fetch_and_distillation(
+    mock_distill, mock_store_cls
+):
+    doc = _make_fetched_doc(body="Issue body")
+    ctx = _make_ctx(db_url="   ")
+
+    with patch("code_review.context.pipeline.fetch_reference", return_value=doc):
+        result = build_context_brief_for_pr(ctx, _make_scm(), [_GITHUB_REF], "diff text")
+
+    assert result is not None
+    assert "Direct brief." in result
+    mock_store_cls.assert_not_called()
+
+
 @patch("code_review.context.pipeline.distill_context_text", return_value="")
 def test_empty_distillation_returns_none(mock_distill):
     doc = _make_fetched_doc(body="content")
