@@ -7,6 +7,7 @@ import logging
 from code_review.config import ContextAwareReviewConfig, SCMConfig
 from code_review.context.distiller import distill_context_text
 from code_review.context.errors import ContextAwareFatalError
+from code_review.context.extract import extract_confluence_refs
 from code_review.context.fetchers import FetchReferenceConfig, fetch_reference
 from code_review.context.rag import (
     build_semantic_query_from_diff,
@@ -130,6 +131,18 @@ def _build_fetch_reference_config(
     )
 
 
+def _extract_transitive_confluence_refs(
+    fetched_body: str,
+    *,
+    ctx: ContextAwareReviewConfig,
+    seen_ids: set[str],
+) -> list[ContextReference]:
+    """If Confluence is enabled, extract Confluence page refs from fetched text."""
+    if not ctx.confluence_enabled:
+        return []
+    return extract_confluence_refs(fetched_body, exclude_ids=seen_ids)
+
+
 def _load_context_documents_without_store(
     *,
     ctx: ContextAwareReviewConfig,
@@ -138,7 +151,25 @@ def _load_context_documents_without_store(
 ) -> list[tuple[str, str]]:
     docs_for_distill: list[tuple[str, str]] = []
     fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
+    seen_ids = {r.external_id for r in applicable}
+    # Two-pass: first fetch the original refs, then any transitive Confluence refs.
+    transitive: list[ContextReference] = []
     for ref in applicable:
+        fetched = fetch_reference(ref, cfg=fetch_cfg)
+        if fetched is None:
+            continue
+        docs_for_distill.append((ref.display, fetched.body))
+        if ref.ref_type == ReferenceType.JIRA:
+            transitive.extend(
+                _extract_transitive_confluence_refs(
+                    fetched.body, ctx=ctx, seen_ids=seen_ids,
+                )
+            )
+    for ref in transitive:
+        if ref.external_id in seen_ids:
+            continue
+        seen_ids.add(ref.external_id)
+        logger.info("context_aware: following transitive Confluence link %s from Jira", ref.display)
         fetched = fetch_reference(ref, cfg=fetch_cfg)
         if fetched is None:
             continue
@@ -158,10 +189,13 @@ def _load_context_documents(
     docs_for_distill: list[tuple[str, str]] = []
     doc_ids_for_rag: list[tuple[str, object]] = []
     fetch_cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
-    for ref in applicable:
+    seen_ids = {r.external_id for r in applicable}
+    transitive: list[ContextReference] = []
+
+    def _fetch_and_record(ref: ContextReference) -> None:
         src_name, base = _source_name_and_base(ref, ctx, scm)
         if not base and ref.ref_type != ReferenceType.GITHUB_ISSUE:
-            continue
+            return
         source_id = store.get_or_create_source(conn, src_name, base)
         row = store.load_document(conn, source_id, ref.external_id)
         if row is not None and row[3]:
@@ -174,11 +208,29 @@ def _load_context_documents(
                 cfg=fetch_cfg,
             )
             if fetched is None:
-                continue
+                return
             doc_id = store.upsert_document(conn, source_id, fetched)
             content = fetched.body
         docs_for_distill.append((ref.display, content))
         doc_ids_for_rag.append((ref.display, doc_id))
+        return content
+
+    for ref in applicable:
+        content = _fetch_and_record(ref)
+        if content is not None and ref.ref_type == ReferenceType.JIRA:
+            transitive.extend(
+                _extract_transitive_confluence_refs(
+                    content, ctx=ctx, seen_ids=seen_ids,
+                )
+            )
+
+    for ref in transitive:
+        if ref.external_id in seen_ids:
+            continue
+        seen_ids.add(ref.external_id)
+        logger.info("context_aware: following transitive Confluence link %s from Jira", ref.display)
+        _fetch_and_record(ref)
+
     return (docs_for_distill, doc_ids_for_rag)
 
 

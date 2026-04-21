@@ -429,3 +429,106 @@ def test_confluence_ref_resolved(_mock_distill, _simple_store):
 
     assert result is not None
     assert "Brief." in result
+
+
+# ---------------------------------------------------------------------------
+# Transitive Confluence following from Jira tickets
+# ---------------------------------------------------------------------------
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
+def test_jira_ticket_with_confluence_link_follows_transitively_no_store(mock_distill):
+    """When a Jira body contains a Confluence URL, the pipeline fetches that page too (no DB)."""
+    jira_body = (
+        "Key: PROJ-42\nSummary: Design\nDescription:\n"
+        "See https://wiki.example.com/wiki/spaces/ENG/pages/555/Spec for details"
+    )
+    jira_ref = ContextReference(
+        ref_type=ReferenceType.JIRA, external_id="PROJ-42", display="PROJ-42"
+    )
+
+    jira_doc = _make_fetched_doc(external_id="PROJ-42", body=jira_body, title="Design")
+    confluence_doc = _make_fetched_doc(
+        external_id="555", body="Title: Spec\nBody:\nThe spec content", title="Spec"
+    )
+
+    def _side_effect(ref, *, cfg):
+        if ref.ref_type == ReferenceType.JIRA:
+            return jira_doc
+        if ref.ref_type == ReferenceType.CONFLUENCE:
+            return confluence_doc
+        return None
+
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
+    ctx.jira_url = "https://jira.example.com"
+    ctx.confluence_url = "https://wiki.example.com"
+
+    with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
+
+    assert result is not None
+    # fetch_reference should have been called twice: once for Jira, once for Confluence
+    assert mf.call_count == 2
+    ref_types = [call.args[0].ref_type for call in mf.call_args_list]
+    assert ReferenceType.JIRA in ref_types
+    assert ReferenceType.CONFLUENCE in ref_types
+    # The distiller should have received both documents
+    raw = mock_distill.call_args.args[0]
+    assert "PROJ-42" in raw
+    assert "Spec" in raw
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
+def test_jira_transitive_skips_already_listed_confluence_ref(mock_distill):
+    """If a Confluence ref from the Jira body is already in the original refs, don't fetch twice."""
+    jira_body = "See https://wiki.example.com/wiki/spaces/ENG/pages/555/Spec"
+    jira_ref = ContextReference(
+        ref_type=ReferenceType.JIRA, external_id="PROJ-42", display="PROJ-42"
+    )
+    conf_ref = ContextReference(
+        ref_type=ReferenceType.CONFLUENCE, external_id="555", display="confluence-page:555"
+    )
+
+    jira_doc = _make_fetched_doc(external_id="PROJ-42", body=jira_body, title="Design")
+    confluence_doc = _make_fetched_doc(external_id="555", body="Spec body", title="Spec")
+
+    def _side_effect(ref, *, cfg):
+        if ref.ref_type == ReferenceType.JIRA:
+            return jira_doc
+        if ref.ref_type == ReferenceType.CONFLUENCE:
+            return confluence_doc
+        return None
+
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
+    ctx.jira_url = "https://jira.example.com"
+    ctx.confluence_url = "https://wiki.example.com"
+
+    with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref, conf_ref], "diff")
+
+    assert result is not None
+    # Confluence page 555 should be fetched only once (from the original ref list), not transitively
+    conf_calls = [c for c in mf.call_args_list if c.args[0].ref_type == ReferenceType.CONFLUENCE]
+    assert len(conf_calls) == 1
+
+
+@patch("code_review.context.pipeline.distill_context_text", return_value="Transitive brief.")
+def test_jira_transitive_does_not_follow_when_confluence_disabled(mock_distill):
+    """Even if Jira body has Confluence links, don't follow when confluence_enabled=False."""
+    jira_body = "See https://wiki.example.com/wiki/spaces/ENG/pages/555/Spec"
+    jira_ref = ContextReference(
+        ref_type=ReferenceType.JIRA, external_id="PROJ-42", display="PROJ-42"
+    )
+
+    jira_doc = _make_fetched_doc(external_id="PROJ-42", body=jira_body, title="Design")
+
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=False, db_url="")
+    ctx.jira_url = "https://jira.example.com"
+
+    with patch("code_review.context.pipeline.fetch_reference", return_value=jira_doc) as mf:
+        result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
+
+    assert result is not None
+    # Only the Jira fetch should have happened
+    assert mf.call_count == 1
+    assert mf.call_args_list[0].args[0].ref_type == ReferenceType.JIRA

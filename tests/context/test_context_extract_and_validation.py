@@ -6,7 +6,7 @@ import pytest
 
 from code_review.config import SCMConfig, get_context_aware_config, reset_config_cache
 from code_review.context.errors import ContextAwareFatalError
-from code_review.context.extract import extract_context_references
+from code_review.context.extract import extract_confluence_refs, extract_context_references
 from code_review.context.types import ReferenceType
 from code_review.context.validation import validate_context_aware_sources
 
@@ -155,6 +155,43 @@ def test_extract_ignores_non_string_segments():
     )
 
     assert [r.external_id for r in refs] == ["PROJ-123"]
+
+
+# ---------------------------------------------------------------------------
+# extract_confluence_refs (standalone, for transitive following)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_confluence_refs_from_text():
+    text = "See https://wiki.example.com/spaces/ENG/pages/555/Design for details"
+    refs = extract_confluence_refs(text)
+    assert len(refs) == 1
+    assert refs[0].ref_type == ReferenceType.CONFLUENCE
+    assert refs[0].external_id == "555"
+
+
+def test_extract_confluence_refs_excludes_known_ids():
+    text = (
+        "https://wiki.example.com/spaces/ENG/pages/111/A "
+        "https://wiki.example.com/spaces/ENG/pages/222/B"
+    )
+    refs = extract_confluence_refs(text, exclude_ids={"111"})
+    assert len(refs) == 1
+    assert refs[0].external_id == "222"
+
+
+def test_extract_confluence_refs_deduplicates():
+    text = (
+        "https://wiki.example.com/spaces/ENG/pages/100/A "
+        "https://wiki.example.com/pages/viewpage.action?pageId=100"
+    )
+    refs = extract_confluence_refs(text)
+    assert len(refs) == 1
+
+
+def test_extract_confluence_refs_returns_empty_for_no_links():
+    refs = extract_confluence_refs("No links here, just PROJ-123")
+    assert refs == []
 
 
 def _clear_context_env(monkeypatch: pytest.MonkeyPatch) -> None:

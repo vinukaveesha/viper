@@ -117,6 +117,30 @@ def _append_confluence_refs(add_ref, scanned: str) -> None:
         add_ref(ReferenceType.CONFLUENCE, pid, f"confluence-page:{pid}")
 
 
+def extract_confluence_refs(
+    text: str,
+    *,
+    exclude_ids: set[str] | None = None,
+) -> list[ContextReference]:
+    """Extract Confluence page references from arbitrary text.
+
+    Used to discover Confluence links embedded in fetched Jira ticket bodies
+    so they can be followed transitively.
+    """
+    _exclude = exclude_ids or set()
+    seen: set[str] = set()
+    out: list[ContextReference] = []
+
+    def _add(ref_type: ReferenceType, external_id: str, display: str) -> None:
+        if external_id in seen or external_id in _exclude:
+            return
+        seen.add(external_id)
+        out.append(ContextReference(ref_type=ref_type, external_id=external_id, display=display))
+
+    _append_confluence_refs(_add, text)
+    return out
+
+
 def extract_context_references(
     scm_provider: Literal["gitea", "github", "gitlab", "bitbucket", "bitbucket_server"],
     owner: str,
