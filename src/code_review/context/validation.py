@@ -28,10 +28,13 @@ def _validate_enabled_jira_source(ctx: ContextAwareReviewConfig) -> None:
     if not ctx.jira_enabled:
         return
     _require(bool(ctx.jira_url), "CONTEXT_JIRA_ENABLED requires CONTEXT_JIRA_URL.")
-    _require(bool(ctx.jira_email.strip()), "CONTEXT_JIRA_ENABLED requires CONTEXT_JIRA_EMAIL.")
     _require(
-        bool(ctx.jira_token and ctx.jira_token.get_secret_value()),
-        "CONTEXT_JIRA_ENABLED requires CONTEXT_JIRA_TOKEN.",
+        bool(ctx.atlassian_email.strip()),
+        "CONTEXT_JIRA_ENABLED requires CONTEXT_ATLASSIAN_EMAIL.",
+    )
+    _require(
+        bool(ctx.atlassian_token and ctx.atlassian_token.get_secret_value()),
+        "CONTEXT_JIRA_ENABLED requires CONTEXT_ATLASSIAN_TOKEN.",
     )
 
 
@@ -56,12 +59,12 @@ def _validate_enabled_confluence_source(ctx: ContextAwareReviewConfig) -> None:
         "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_CONFLUENCE_URL.",
     )
     _require(
-        bool(ctx.confluence_email.strip()),
-        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_CONFLUENCE_EMAIL.",
+        bool(ctx.atlassian_email.strip()),
+        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_ATLASSIAN_EMAIL.",
     )
     _require(
-        bool(ctx.confluence_token and ctx.confluence_token.get_secret_value()),
-        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_CONFLUENCE_TOKEN.",
+        bool(ctx.atlassian_token and ctx.atlassian_token.get_secret_value()),
+        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_ATLASSIAN_TOKEN.",
     )
 
 

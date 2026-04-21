@@ -59,10 +59,10 @@ The runner uses `SCM_TOKEN` for GitHub API access when `SCM_PROVIDER=github`.
 CONTEXT_AWARE_REVIEW_ENABLED=true
 CONTEXT_GITHUB_ISSUES_ENABLED=true
 
+CONTEXT_ATLASSIAN_EMAIL=you@yourcompany.com
+CONTEXT_ATLASSIAN_TOKEN=your_atlassian_api_token
 CONTEXT_JIRA_ENABLED=true
 CONTEXT_JIRA_URL=https://yourcompany.atlassian.net
-CONTEXT_JIRA_EMAIL=you@yourcompany.com
-CONTEXT_JIRA_TOKEN=your_jira_api_token
 ```
 
 ### 2.3 Add Confluence
@@ -70,8 +70,6 @@ CONTEXT_JIRA_TOKEN=your_jira_api_token
 ```bash
 CONTEXT_CONFLUENCE_ENABLED=true
 CONTEXT_CONFLUENCE_URL=https://yourcompany.atlassian.net/wiki
-CONTEXT_CONFLUENCE_EMAIL=you@yourcompany.com
-CONTEXT_CONFLUENCE_TOKEN=your_confluence_api_token
 ```
 
 ---
@@ -122,15 +120,13 @@ All variables are optional unless marked required by the source you enable.
 | `CONTEXT_AWARE_REVIEW_DB_URL` | — | Optional PostgreSQL DSN. Enables document cache and RAG for oversized context. When omitted, linked documents are fetched and distilled directly. |
 | `CONTEXT_GITHUB_ISSUES_ENABLED` | `false` | Enable GitHub issue fetching. |
 | `CONTEXT_GITLAB_ISSUES_ENABLED` | `false` | Enable GitLab issue fetching. |
+| `CONTEXT_ATLASSIAN_EMAIL` | — | Atlassian account email used for Jira and Confluence. |
+| `CONTEXT_ATLASSIAN_TOKEN` | — | Atlassian API token used for Jira and Confluence. |
 | `CONTEXT_JIRA_ENABLED` | `false` | Enable Jira fetching. |
 | `CONTEXT_JIRA_URL` | — | Jira base URL. |
-| `CONTEXT_JIRA_EMAIL` | — | Jira account email. |
-| `CONTEXT_JIRA_TOKEN` | — | Jira API token. |
 | `CONTEXT_JIRA_EXTRA_FIELDS` | — | Comma-separated extra Jira fields (for custom acceptance criteria, etc.). |
 | `CONTEXT_CONFLUENCE_ENABLED` | `false` | Enable Confluence fetching. |
 | `CONTEXT_CONFLUENCE_URL` | — | Confluence base URL. |
-| `CONTEXT_CONFLUENCE_EMAIL` | — | Confluence account email. |
-| `CONTEXT_CONFLUENCE_TOKEN` | — | Confluence API token. |
 | `CONTEXT_MAX_BYTES` | `20000` | Byte budget for context sent to distillation. Without DB, direct-mode input is clamped to this size; with DB/RAG enabled, over-budget context uses retrieval first. |
 | `CONTEXT_DISTILLED_MAX_TOKENS` | `4000` | Max output tokens for distilled context brief. |
 | `CONTEXT_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model used by RAG path. |
@@ -167,8 +163,9 @@ This prevents one temporarily unavailable external system from blocking all PR r
 
 Check required variables for every enabled source:
 
-- Jira: `CONTEXT_JIRA_URL`, `CONTEXT_JIRA_EMAIL`, `CONTEXT_JIRA_TOKEN`
-- Confluence: `CONTEXT_CONFLUENCE_URL`, `CONTEXT_CONFLUENCE_EMAIL`, `CONTEXT_CONFLUENCE_TOKEN`
+- Atlassian auth: `CONTEXT_ATLASSIAN_EMAIL`, `CONTEXT_ATLASSIAN_TOKEN`
+- Jira: `CONTEXT_JIRA_URL`
+- Confluence: `CONTEXT_CONFLUENCE_URL`
 - GitHub/GitLab with non-matching SCM provider: source-specific token vars
 
 ### "No context attached" even with links in PR text
@@ -208,16 +205,15 @@ CONTEXT_AWARE_REVIEW_DB_URL=postgresql://review:secret@postgres:5432/reviewdb
 
 CONTEXT_GITHUB_ISSUES_ENABLED=true
 
+CONTEXT_ATLASSIAN_EMAIL=review-bot@acme.com
+CONTEXT_ATLASSIAN_TOKEN=${ATLASSIAN_API_TOKEN}
+
 CONTEXT_JIRA_ENABLED=true
 CONTEXT_JIRA_URL=https://acme.atlassian.net
-CONTEXT_JIRA_EMAIL=review-bot@acme.com
-CONTEXT_JIRA_TOKEN=${JIRA_API_TOKEN}
 CONTEXT_JIRA_EXTRA_FIELDS=customfield_10016,customfield_10014
 
 CONTEXT_CONFLUENCE_ENABLED=true
 CONTEXT_CONFLUENCE_URL=https://acme.atlassian.net/wiki
-CONTEXT_CONFLUENCE_EMAIL=review-bot@acme.com
-CONTEXT_CONFLUENCE_TOKEN=${CONFLUENCE_API_TOKEN}
 ```
 
 ### Example: Tight budget for noisy docs

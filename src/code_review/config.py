@@ -230,13 +230,11 @@ class ContextAwareReviewConfig(BaseSettings):
     )
     jira_enabled: bool = Field(default=False, validation_alias="CONTEXT_JIRA_ENABLED")
     jira_url: str = Field(default="", validation_alias="CONTEXT_JIRA_URL")
-    jira_email: str = Field(default="", validation_alias="CONTEXT_JIRA_EMAIL")
-    jira_token: SecretStr | None = Field(default=None, validation_alias="CONTEXT_JIRA_TOKEN")
     confluence_enabled: bool = Field(default=False, validation_alias="CONTEXT_CONFLUENCE_ENABLED")
     confluence_url: str = Field(default="", validation_alias="CONTEXT_CONFLUENCE_URL")
-    confluence_email: str = Field(default="", validation_alias="CONTEXT_CONFLUENCE_EMAIL")
-    confluence_token: SecretStr | None = Field(
-        default=None, validation_alias="CONTEXT_CONFLUENCE_TOKEN"
+    atlassian_email: str = Field(default="", validation_alias="CONTEXT_ATLASSIAN_EMAIL")
+    atlassian_token: SecretStr | None = Field(
+        default=None, validation_alias="CONTEXT_ATLASSIAN_TOKEN"
     )
     max_bytes: int = Field(default=20_000, ge=1024, validation_alias="CONTEXT_MAX_BYTES")
     distilled_max_tokens: int = Field(
@@ -283,8 +281,7 @@ class ContextAwareReviewConfig(BaseSettings):
     )
 
     @field_validator(
-        "jira_token",
-        "confluence_token",
+        "atlassian_token",
         "github_token",
         "gitlab_token",
         mode="before",

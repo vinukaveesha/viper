@@ -79,17 +79,13 @@ def test_fetch_github_issue_404_returns_none():
 
 
 def test_fetch_github_issue_401_raises_auth_error():
-    with _patch_github_client(
-        side_effect=GithubException(401, {"message": "Unauthorized"})
-    ):
+    with _patch_github_client(side_effect=GithubException(401, {"message": "Unauthorized"})):
         with pytest.raises(ContextAwareAuthError):
             fetch_github_issue("https://api.github.com", "bad-tok", "org", "repo", "1")
 
 
 def test_fetch_github_issue_403_raises_auth_error():
-    with _patch_github_client(
-        side_effect=GithubException(403, {"message": "Forbidden"})
-    ):
+    with _patch_github_client(side_effect=GithubException(403, {"message": "Forbidden"})):
         with pytest.raises(ContextAwareAuthError):
             fetch_github_issue("https://api.github.com", "tok", "org", "repo", "1")
 
@@ -456,11 +452,9 @@ def _make_fetch_cfg(**overrides):
         "gitlab_api_base": "https://gitlab.com/api/v4",
         "gitlab_token": "tok",
         "jira_base": "https://jira.example.com",
-        "jira_email": "u@e.com",
-        "jira_token": "tok",
         "confluence_base": "https://wiki.example.com",
-        "confluence_email": "u@e.com",
-        "confluence_token": "tok",
+        "atlassian_email": "u@e.com",
+        "atlassian_token": "tok",
         "ctx_github_enabled": True,
         "ctx_gitlab_enabled": True,
         "ctx_jira_enabled": True,

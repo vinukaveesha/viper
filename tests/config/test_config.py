@@ -8,6 +8,7 @@ import pytest
 
 from code_review.config import (
     CodeReviewAppConfig,
+    ContextAwareReviewConfig,
     LLMConfig,
     SCMConfig,
     SummaryLLMConfig,
@@ -271,7 +272,7 @@ def test_startup_config_snapshot_logs_models_and_redacts_secrets():
             "LLM_SUMMARY_API_KEY": "super-secret-summary",
             "CONTEXT_AWARE_REVIEW_ENABLED": "true",
             "CONTEXT_JIRA_ENABLED": "true",
-            "CONTEXT_JIRA_TOKEN": "super-secret-jira",
+            "CONTEXT_ATLASSIAN_TOKEN": "super-secret-atlassian",
         },
         clear=True,
     ):
@@ -302,7 +303,23 @@ def test_startup_config_snapshot_logs_models_and_redacts_secrets():
     assert "api_key" not in rendered
     assert "SCM_TOKEN" not in rendered
     assert "LLM_API_KEY" not in rendered
-    assert "CONTEXT_JIRA_TOKEN" not in rendered
+    assert "CONTEXT_ATLASSIAN_TOKEN" not in rendered
+
+
+def test_context_aware_config_uses_shared_atlassian_credentials():
+    with patch.dict(
+        os.environ,
+        {
+            "CONTEXT_ATLASSIAN_EMAIL": "review-bot@example.com",
+            "CONTEXT_ATLASSIAN_TOKEN": "atlassian-token",
+        },
+        clear=True,
+    ):
+        cfg = ContextAwareReviewConfig()
+
+    assert cfg.atlassian_email == "review-bot@example.com"
+    assert cfg.atlassian_token is not None
+    assert cfg.atlassian_token.get_secret_value() == "atlassian-token"
 
 
 def test_format_startup_config_lines_flattens_snapshot():

@@ -50,11 +50,9 @@ class FetchReferenceConfig:
     gitlab_api_base: str
     gitlab_token: str
     jira_base: str
-    jira_email: str
-    jira_token: str
     confluence_base: str
-    confluence_email: str
-    confluence_token: str
+    atlassian_email: str
+    atlassian_token: str
     ctx_github_enabled: bool
     ctx_gitlab_enabled: bool
     ctx_jira_enabled: bool
@@ -122,14 +120,9 @@ def fetch_github_issue(
         raise ContextAwareFatalError(f"GitHub issue fetch failed ({status}): {path}") from exc
 
     labels = [
-        str(getattr(label, "name", label) or "")
-        for label in (getattr(issue, "labels", None) or [])
+        str(getattr(label, "name", label) or "") for label in (getattr(issue, "labels", None) or [])
     ]
-    labels = [
-        label
-        for label in labels
-        if label
-    ]
+    labels = [label for label in labels if label]
     meta = {
         "state": getattr(issue, "state", None),
         "labels": labels,
@@ -363,14 +356,14 @@ def fetch_reference(
         if ref.ref_type == ReferenceType.JIRA and cfg.ctx_jira_enabled:
             return fetch_jira_issue(
                 cfg.jira_base,
-                cfg.jira_email,
-                cfg.jira_token,
+                cfg.atlassian_email,
+                cfg.atlassian_token,
                 ref.external_id,
                 extra_fields=list(cfg.jira_extra_fields),
             )
         if ref.ref_type == ReferenceType.CONFLUENCE and cfg.ctx_confluence_enabled:
             return fetch_confluence_page(
-                cfg.confluence_base, cfg.confluence_email, cfg.confluence_token, ref.external_id
+                cfg.confluence_base, cfg.atlassian_email, cfg.atlassian_token, ref.external_id
             )
     except ContextAwareAuthError:
         # Auth/credential failures (401/403) are always fatal – re-raise so the runner

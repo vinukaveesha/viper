@@ -61,11 +61,9 @@ def _make_ctx(
     ctx.github_token = None
     ctx.gitlab_token = None
     ctx.jira_url = ""
-    ctx.jira_email = ""
-    ctx.jira_token = None
     ctx.confluence_url = ""
-    ctx.confluence_email = ""
-    ctx.confluence_token = None
+    ctx.atlassian_email = ""
+    ctx.atlassian_token = None
     ctx.github_api_url = None
     ctx.gitlab_api_url = None
     ctx.jira_extra_fields = ""
@@ -103,12 +101,9 @@ def test_get_external_credentials_builds_single_value_object():
     ctx.gitlab_api_url = "https://gitlab.example.com/api/v4"
     ctx.gitlab_token = MagicMock()
     ctx.gitlab_token.get_secret_value.return_value = "gl-token"
-    ctx.jira_email = "jira@example.com"
-    ctx.jira_token = MagicMock()
-    ctx.jira_token.get_secret_value.return_value = "jira-token"
-    ctx.confluence_email = "conf@example.com"
-    ctx.confluence_token = MagicMock()
-    ctx.confluence_token.get_secret_value.return_value = "conf-token"
+    ctx.atlassian_email = "atlassian@example.com"
+    ctx.atlassian_token = MagicMock()
+    ctx.atlassian_token.get_secret_value.return_value = "atlassian-token"
 
     creds = pipeline_module._get_external_credentials(_make_scm(provider="gitea"), ctx)
 
@@ -117,10 +112,8 @@ def test_get_external_credentials_builds_single_value_object():
         github_token="gh-token",
         gitlab_api="https://gitlab.example.com/api/v4",
         gitlab_token="gl-token",
-        jira_email="jira@example.com",
-        jira_token="jira-token",
-        confluence_email="conf@example.com",
-        confluence_token="conf-token",
+        atlassian_email="atlassian@example.com",
+        atlassian_token="atlassian-token",
     )
 
 

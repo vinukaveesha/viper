@@ -91,17 +91,14 @@ def _source_name_and_base(
 def _get_external_credentials(scm: SCMConfig, ctx: ContextAwareReviewConfig) -> ExternalCredentials:
     gh_api, gh_tok = _github_api_and_token(scm, ctx)
     gl_api, gl_tok = _gitlab_api_and_token(scm, ctx)
-    jira_tok = ctx.jira_token.get_secret_value() if ctx.jira_token else ""
-    conf_tok = ctx.confluence_token.get_secret_value() if ctx.confluence_token else ""
+    atlassian_tok = ctx.atlassian_token.get_secret_value() if ctx.atlassian_token else ""
     return ExternalCredentials(
         github_api=gh_api,
         github_token=gh_tok,
         gitlab_api=gl_api,
         gitlab_token=gl_tok,
-        jira_email=ctx.jira_email.strip(),
-        jira_token=jira_tok,
-        confluence_email=ctx.confluence_email.strip(),
-        confluence_token=conf_tok,
+        atlassian_email=ctx.atlassian_email.strip(),
+        atlassian_token=atlassian_tok,
     )
 
 
@@ -117,11 +114,9 @@ def _build_fetch_reference_config(
         gitlab_api_base=creds.gitlab_api,
         gitlab_token=creds.gitlab_token,
         jira_base=ctx.jira_url,
-        jira_email=creds.jira_email,
-        jira_token=creds.jira_token,
         confluence_base=ctx.confluence_url,
-        confluence_email=creds.confluence_email,
-        confluence_token=creds.confluence_token,
+        atlassian_email=creds.atlassian_email,
+        atlassian_token=creds.atlassian_token,
         ctx_github_enabled=ctx.github_issues_enabled,
         ctx_gitlab_enabled=ctx.gitlab_issues_enabled,
         ctx_jira_enabled=ctx.jira_enabled,
