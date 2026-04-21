@@ -501,14 +501,34 @@ def startup_config_snapshot() -> dict[str, object]:
     }
 
 
+def _flatten_startup_config(prefix: str, value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return [f"{prefix}: {value}"]
+    lines: list[str] = []
+    for key, item in value.items():
+        child_prefix = f"{prefix}.{key}" if prefix else str(key)
+        lines.extend(_flatten_startup_config(child_prefix, item))
+    return lines
+
+
+def format_startup_config_lines(snapshot: dict[str, object]) -> list[str]:
+    """Format startup configuration as redacted one-setting-per-line text."""
+    lines = ["Viper startup configuration:"]
+    for section, value in snapshot.items():
+        lines.extend(_flatten_startup_config(str(section), value))
+    return lines
+
+
 def log_startup_configuration(log: logging.Logger | None = None) -> None:
     """Log startup-critical configuration without exposing secrets."""
     target = log or logger
-    snapshot = startup_config_snapshot()
+    lines = format_startup_config_lines(startup_config_snapshot())
     if target.isEnabledFor(logging.INFO):
-        target.info("Viper startup configuration: %s", snapshot)
+        for line in lines:
+            target.info(line)
         return
-    print(f"Viper startup configuration: {snapshot}", flush=True)
+    for line in lines:
+        print(line, flush=True)
 
 
 def reset_config_cache() -> None:

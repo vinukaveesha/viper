@@ -11,6 +11,7 @@ from code_review.config import (
     SCMConfig,
     SummaryLLMConfig,
     VerificationLLMConfig,
+    format_startup_config_lines,
     get_llm_config,
     get_scm_config,
     get_summary_llm_config,
@@ -297,20 +298,43 @@ def test_startup_config_snapshot_logs_models_and_redacts_secrets():
     assert "CONTEXT_JIRA_TOKEN" not in rendered
 
 
+def test_format_startup_config_lines_flattens_snapshot():
+    lines = format_startup_config_lines(
+        {
+            "llm": {"primary": {"provider": "openai", "model": "gpt-5.4"}},
+            "review": {"review_visible_lines": False},
+        }
+    )
+
+    assert lines == [
+        "Viper startup configuration:",
+        "llm.primary.provider: openai",
+        "llm.primary.model: gpt-5.4",
+        "review.review_visible_lines: False",
+    ]
+
+
 def test_log_startup_configuration_uses_supplied_logger():
     fake_logger = type(
         "FakeLogger",
         (),
         {
             "isEnabledFor": lambda self, level: True,
-            "info": lambda self, *args: setattr(self, "args", args),
+            "info": lambda self, *args: self.calls.append(args),
         },
     )()
+    fake_logger.calls = []
 
-    with patch("code_review.config.startup_config_snapshot", return_value={"llm": {}}):
+    with patch(
+        "code_review.config.startup_config_snapshot",
+        return_value={"llm": {"primary": {"model": "gpt-5.4"}}},
+    ):
         log_startup_configuration(fake_logger)
 
-    assert fake_logger.args == ("Viper startup configuration: %s", {"llm": {}})
+    assert fake_logger.calls == [
+        ("Viper startup configuration:",),
+        ("llm.primary.model: gpt-5.4",),
+    ]
 
 
 def test_log_startup_configuration_prints_when_info_disabled(monkeypatch):
@@ -325,10 +349,16 @@ def test_log_startup_configuration_prints_when_info_disabled(monkeypatch):
         lambda *args, **kwargs: print_calls.append((args, kwargs)),
     )
 
-    with patch("code_review.config.startup_config_snapshot", return_value={"llm": {}}):
+    with patch(
+        "code_review.config.startup_config_snapshot",
+        return_value={"llm": {"primary": {"model": "gpt-5.4"}}},
+    ):
         log_startup_configuration(fake_logger)
 
-    assert print_calls == [(("Viper startup configuration: {'llm': {}}",), {"flush": True})]
+    assert print_calls == [
+        (("Viper startup configuration:",), {"flush": True}),
+        (("llm.primary.model: gpt-5.4",), {"flush": True}),
+    ]
 
 
 def test_code_review_app_review_decision_only_from_env():
