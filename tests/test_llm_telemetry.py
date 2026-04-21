@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from code_review.llm_telemetry import (
     effective_llm_identity,
+    log_adk_llm_usage,
     log_llm_usage,
     usage_from_litellm_response,
 )
@@ -88,6 +89,21 @@ def test_log_llm_usage_normalizes_litellm_usage(caplog):
     assert "prompt_tokens=11" in caplog.text
     assert "completion_tokens=7" in caplog.text
     assert "total_tokens=18" in caplog.text
+
+
+def test_log_adk_llm_usage_preserves_partial_caller_identity(caplog):
+    logger = logging.getLogger("code_review.test_adk_litellm_telemetry")
+    response = SimpleNamespace(usage_metadata=None, content=SimpleNamespace(parts=[]))
+
+    caplog.set_level(logging.INFO)
+    logger.setLevel(logging.INFO)
+    with patch(
+        "code_review.llm_telemetry.effective_llm_identity",
+        return_value=("gemini", "gemini-3.1"),
+    ):
+        log_adk_llm_usage(logger, task="summary", response=response, provider="anthropic")
+
+    assert "llm_usage task=summary provider=anthropic model=gemini-3.1" in caplog.text
 
 
 def test_usage_from_litellm_response_supports_dict_and_object():

@@ -101,9 +101,12 @@ def log_adk_llm_usage(
     model: str | None = None,
 ) -> None:
     """Log usage from an ADK model response."""
-    resolved_provider, resolved_model = (
-        (provider, model) if provider and model else effective_llm_identity(task)
-    )
+    if provider and model:
+        resolved_provider, resolved_model = provider, model
+    else:
+        fallback_provider, fallback_model = effective_llm_identity(task)
+        resolved_provider = provider or fallback_provider
+        resolved_model = model or fallback_model
     log_llm_usage(
         logger,
         task=task,

@@ -199,6 +199,7 @@ class TaskLLMConfig(BaseSettings):
             return None
         return SecretStr(normalized)
 
+
 class SummaryLLMConfig(TaskLLMConfig):
     """Optional LLM overrides for PR summary generation."""
 
@@ -536,13 +537,18 @@ def format_startup_config_lines(snapshot: dict[str, object]) -> list[str]:
 def log_startup_configuration(log: logging.Logger | None = None) -> None:
     """Log startup-critical configuration without exposing secrets."""
     target = log or logger
-    lines = format_startup_config_lines(startup_config_snapshot())
+    try:
+        lines = format_startup_config_lines(startup_config_snapshot())
+    except Exception as exc:
+        target.warning("Viper startup configuration unavailable: %s", exc.__class__.__name__)
+        return
     if target.isEnabledFor(logging.INFO):
         for line in lines:
             target.info(line)
         return
+    level = target.getEffectiveLevel() if hasattr(target, "getEffectiveLevel") else logging.WARNING
     for line in lines:
-        print(line, flush=True)
+        target.log(level, line)
 
 
 def reset_config_cache() -> None:

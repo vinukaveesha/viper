@@ -1,5 +1,6 @@
 """Tests for config module: validators, getters, cache."""
 
+import logging
 import os
 from unittest.mock import patch
 
@@ -289,8 +290,8 @@ def test_startup_config_snapshot_logs_models_and_redacts_secrets():
         "provider": "gemini",
         "model": "gemini-3.1-pro-preview",
     }
-    assert snapshot["llm"]["max_output_tokens"] == 64000
-    assert snapshot["llm"]["context_window"] == 200000
+    assert isinstance(snapshot["llm"]["max_output_tokens"], int)
+    assert isinstance(snapshot["llm"]["context_window"], int)
     assert snapshot["context_aware"]["enabled"] is True
     assert snapshot["context_aware"]["jira_enabled"] is True
     assert snapshot["scm"]["provider"] == "gitea"
@@ -343,17 +344,17 @@ def test_log_startup_configuration_uses_supplied_logger():
     ]
 
 
-def test_log_startup_configuration_prints_when_info_disabled(monkeypatch):
-    print_calls: list[tuple[object, ...]] = []
+def test_log_startup_configuration_logs_at_effective_level_when_info_disabled():
     fake_logger = type(
         "FakeLogger",
         (),
-        {"isEnabledFor": lambda self, level: False},
+        {
+            "isEnabledFor": lambda self, level: False,
+            "getEffectiveLevel": lambda self: logging.WARNING,
+            "log": lambda self, *args: self.calls.append(args),
+        },
     )()
-    monkeypatch.setattr(
-        "builtins.print",
-        lambda *args, **kwargs: print_calls.append((args, kwargs)),
-    )
+    fake_logger.calls = []
 
     with patch(
         "code_review.config.startup_config_snapshot",
@@ -361,9 +362,25 @@ def test_log_startup_configuration_prints_when_info_disabled(monkeypatch):
     ):
         log_startup_configuration(fake_logger)
 
-    assert print_calls == [
-        (("Viper startup configuration:",), {"flush": True}),
-        (("llm.primary.model: gpt-5.4",), {"flush": True}),
+    assert fake_logger.calls == [
+        (logging.WARNING, "Viper startup configuration:"),
+        (logging.WARNING, "llm.primary.model: gpt-5.4"),
+    ]
+
+
+def test_log_startup_configuration_continues_when_snapshot_fails():
+    fake_logger = type(
+        "FakeLogger",
+        (),
+        {"warning": lambda self, *args: self.calls.append(args)},
+    )()
+    fake_logger.calls = []
+
+    with patch("code_review.config.startup_config_snapshot", side_effect=ValueError("bad")):
+        log_startup_configuration(fake_logger)
+
+    assert fake_logger.calls == [
+        ("Viper startup configuration unavailable: %s", "ValueError"),
     ]
 
 

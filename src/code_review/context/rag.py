@@ -67,7 +67,7 @@ def build_semantic_query_from_diff(diff_text: str, max_diff_chars: int = 14_000)
             logger,
             task="semantic_query",
             provider=llm.provider,
-            model=llm.model,
+            model=model,
             usage=usage_from_litellm_response(resp),
             response_text_len=None,
         )
