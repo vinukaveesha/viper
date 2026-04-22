@@ -100,10 +100,11 @@ def test_log_adk_llm_usage_preserves_partial_caller_identity(caplog):
     with patch(
         "code_review.llm_telemetry.effective_llm_identity",
         return_value=("gemini", "gemini-3.1"),
-    ):
-        log_adk_llm_usage(logger, task="summary", response=response, provider="anthropic")
+    ) as mock_effective_identity:
+        log_adk_llm_usage(logger, task="summary", response=response, provider="", model=None)
 
-    assert "llm_usage task=summary provider=anthropic model=gemini-3.1" in caplog.text
+    mock_effective_identity.assert_called_once_with("summary")
+    assert "llm_usage task=summary provider= model=gemini-3.1" in caplog.text
 
 
 def test_usage_from_litellm_response_supports_dict_and_object():
