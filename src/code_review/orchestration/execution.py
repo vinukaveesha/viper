@@ -107,10 +107,15 @@ def _run_sequential_batch_review_mode(
     review_visible_lines: bool | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
+    _attach_batch_user_messages(
+        runner,
+        pr_ctx=pr_ctx,
+        batches=batches,
+        prompt_suffix=prompt_suffix,
+    )
     content = build_batch_review_content(
         pr_ctx=pr_ctx,
         batch_count=batch_count,
-        prompt_suffix=prompt_suffix,
     )
     logger.info(
         "[batch] Invoking SequentialAgent runner: session=%s batch_count=%d",
@@ -214,12 +219,13 @@ def build_batch_review_content(
     prompt_suffix: str = "",
     retry_attempt: int = 0,
 ):
-    """Build the user message used to execute a prepared batch-review workflow."""
+    """Build the root user message used to execute a prepared batch-review workflow."""
     msg = (
         "Review the prepared PR batches sequentially. "
         f"owner={pr_ctx.owner}, repo={pr_ctx.repo}, pr_number={pr_ctx.pr_number}."
         + (f" head_sha={pr_ctx.head_sha}." if pr_ctx.head_sha else "")
-        + f" Prepared batch count: {batch_count}."
+        + f" Prepared batch count: {batch_count}. "
+        "Each batch reviewer receives its prepared diff payload as a separate user message."
     )
     if retry_attempt > 0:
         msg += (
@@ -245,6 +251,41 @@ def build_batch_review_content(
             msg,
         )
     return runner_mod.types.Content(role="user", parts=[runner_mod.types.Part(text=msg)])
+
+
+def _attach_batch_user_messages(
+    runner,
+    *,
+    pr_ctx: PRContext,
+    batches: list[ReviewBatch],
+    prompt_suffix: str = "",
+    retry_attempt: int = 0,
+) -> None:
+    """Attach one cache-friendly user message per prepared batch to the workflow agent."""
+    from code_review.agent.workflows import build_prepared_batch_user_message
+
+    agent = getattr(runner, "agent", None)
+    if not hasattr(agent, "batch_user_messages"):
+        return
+    agent.batch_user_messages = [
+        runner_mod.types.Content(
+            role="user",
+            parts=[
+                runner_mod.types.Part(
+                    text=build_prepared_batch_user_message(
+                        batch=batch,
+                        owner=pr_ctx.owner,
+                        repo=pr_ctx.repo,
+                        pr_number=pr_ctx.pr_number,
+                        head_sha=pr_ctx.head_sha,
+                        prompt_suffix=prompt_suffix,
+                        retry_attempt=retry_attempt,
+                    )
+                )
+            ],
+        )
+        for batch in batches
+    ]
 
 
 def findings_from_batch_responses(
@@ -369,10 +410,16 @@ def _run_isolated_batches_with_retry(
             context_brief_attached=context_brief_attached,
             review_visible_lines=review_visible_lines,
         )
+        _attach_batch_user_messages(
+            runner,
+            pr_ctx=pr_ctx,
+            batches=[batch],
+            prompt_suffix=prompt_suffix,
+            retry_attempt=attempt,
+        )
         content = build_batch_review_content(
             pr_ctx=pr_ctx,
             batch_count=1,
-            prompt_suffix=prompt_suffix,
             retry_attempt=attempt,
         )
         try:

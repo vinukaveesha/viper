@@ -2,23 +2,39 @@
 
 from unittest.mock import MagicMock, patch
 
-from code_review.agent.workflows import create_sequential_batch_review_agent
+import pytest
+from google.adk.agents import BaseAgent
+from google.genai import types
+from pydantic import Field
+
+from code_review.agent.workflows import (
+    BatchReviewWorkflowAgent,
+    build_prepared_batch_user_message,
+    create_sequential_batch_review_agent,
+)
 from code_review.batching import ReviewBatch, ReviewSegment
 
 
-@patch("google.adk.agents.SequentialAgent")
+class _FakeReviewAgent(BaseAgent):
+    instruction: str = "base instruction"
+    disallow_transfer_to_parent: bool = False
+    disallow_transfer_to_peers: bool = False
+    seen_user_messages: list[str] = Field(default_factory=list)
+
+    async def run_async(self, ctx):
+        self.seen_user_messages.append(ctx.user_content.parts[0].text)
+        if False:
+            yield None
+
+
 @patch("code_review.agent.workflows.create_review_agent")
 def test_create_sequential_batch_review_agent_builds_one_sub_agent_per_batch(
-    mock_create_review_agent, mock_sequential_agent_cls
+    mock_create_review_agent,
 ) -> None:
     provider = MagicMock()
-    sub_agent_a = MagicMock(name="sub_agent_a")
-    sub_agent_a.instruction = "base instruction"
-    sub_agent_b = MagicMock(name="sub_agent_b")
-    sub_agent_b.instruction = "base instruction"
+    sub_agent_a = _FakeReviewAgent(name="sub_agent_a")
+    sub_agent_b = _FakeReviewAgent(name="sub_agent_b")
     mock_create_review_agent.side_effect = [sub_agent_a, sub_agent_b]
-    sequential_instance = MagicMock()
-    mock_sequential_agent_cls.return_value = sequential_instance
 
     batches = [
         ReviewBatch(
@@ -67,7 +83,6 @@ def test_create_sequential_batch_review_agent_builds_one_sub_agent_per_batch(
         context_brief_attached=True,
     )
 
-    assert result is sequential_instance
     assert mock_create_review_agent.call_count == 2
     mock_create_review_agent.assert_any_call(
         provider,
@@ -77,12 +92,80 @@ def test_create_sequential_batch_review_agent_builds_one_sub_agent_per_batch(
         slim_output=True,
         output_key=None,
     )
-    _, kwargs = mock_sequential_agent_cls.call_args
-    assert kwargs["name"] == "sequential_batch_review_agent"
-    assert len(kwargs["sub_agents"]) == 2
-    assert kwargs["sub_agents"][0].name == "batch_review_0"
-    assert kwargs["sub_agents"][1].name == "batch_review_1"
-    assert "Review exactly one prepared batch" in kwargs["sub_agents"][0].instruction
-    assert "a.py, b.py" in kwargs["sub_agents"][0].instruction
-    assert "Segment: full-file segment for a.py" in kwargs["sub_agents"][0].instruction
-    assert "2:+new" in kwargs["sub_agents"][0].instruction
+    assert result.name == "sequential_batch_review_agent"
+    assert len(result.sub_agents) == 2
+    assert result.sub_agents[0].name == "batch_review_0"
+    assert result.sub_agents[1].name == "batch_review_1"
+    assert "review exactly one prepared batch" in result.sub_agents[0].instruction
+    assert "Prepared batch segments" not in result.sub_agents[0].instruction
+    assert "Segment: full-file segment for a.py" not in result.sub_agents[0].instruction
+    assert "2:+new" not in result.sub_agents[0].instruction
+
+
+def test_build_prepared_batch_user_message_contains_batch_payload() -> None:
+    batch = ReviewBatch(
+        batch_index=0,
+        estimated_tokens=10,
+        paths=("a.py",),
+        segments=(
+            ReviewSegment(
+                path="a.py",
+                diff_text=(
+                    "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+                    "@@ -1,1 +1,2 @@\n old\n+new\n"
+                ),
+                estimated_tokens=5,
+                segment_index=0,
+                total_segments=1,
+                split_strategy="whole_file",
+            ),
+        ),
+    )
+
+    message = build_prepared_batch_user_message(
+        batch=batch,
+        owner="o",
+        repo="r",
+        pr_number=1,
+        head_sha="sha1",
+        prompt_suffix="extra context",
+    )
+
+    assert "owner=o, repo=r, pr_number=1" in message
+    assert "head_sha=sha1" in message
+    assert "extra context" in message
+    assert "Prepared batch segments" in message
+    assert "Segment: full-file segment for a.py" in message
+    assert "2:+new" in message
+
+
+@pytest.mark.asyncio
+async def test_batch_review_workflow_passes_distinct_user_messages_to_sub_agents() -> None:
+    sub_agent_a = _FakeReviewAgent(name="batch_review_0")
+    sub_agent_b = _FakeReviewAgent(name="batch_review_1")
+    workflow = BatchReviewWorkflowAgent(
+        name="sequential_batch_review_agent",
+        sub_agents=[sub_agent_a, sub_agent_b],
+        batch_user_messages=[
+            types.Content(role="user", parts=[types.Part(text="batch A")]),
+            types.Content(role="user", parts=[types.Part(text="batch B")]),
+        ],
+    )
+
+    class _Ctx:
+        def __init__(self, user_content):
+            self.user_content = user_content
+
+        def model_copy(self, update):
+            return _Ctx(update.get("user_content", self.user_content))
+
+        def should_pause_invocation(self, _event):
+            return False
+
+    ctx = _Ctx(types.Content(role="user", parts=[types.Part(text="root")]))
+
+    async for _event in workflow._run_async_impl(ctx):
+        pass
+
+    assert sub_agent_a.seen_user_messages == ["batch A"]
+    assert sub_agent_b.seen_user_messages == ["batch B"]
