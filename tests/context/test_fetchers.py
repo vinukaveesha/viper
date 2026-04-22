@@ -214,6 +214,47 @@ def test_fetch_jira_issue_plain_text_description():
     assert "Plain text description" in doc.body
 
 
+def test_fetch_jira_issue_appends_remote_links_when_requested():
+    data = {
+        "id": "10002",
+        "fields": {
+            "summary": "Review linked spec",
+            "description": "Related Confluence Page",
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Open"},
+            "updated": None,
+        },
+    }
+    remote_links = [
+        {
+            "object": {
+                "title": "KAN-9 implementation notes",
+                "url": "https://example.atlassian.net/wiki/spaces/ENG/pages/555/KAN-9",
+            }
+        }
+    ]
+    client_mock = _make_multi_response_client(
+        [_mock_httpx_response(200, data), _mock_httpx_response(200, remote_links)]
+    )
+
+    with patch("httpx.Client", return_value=client_mock):
+        doc = fetch_jira_issue(
+            "https://example.atlassian.net",
+            "user@example.com",
+            "token",
+            "KAN-9",
+            include_remote_links=True,
+        )
+
+    assert doc is not None
+    assert "Related Confluence Page" in doc.body
+    assert "Remote links:" in doc.body
+    assert "https://example.atlassian.net/wiki/spaces/ENG/pages/555/KAN-9" in doc.body
+    assert client_mock.get.call_args_list[1].args[0] == (
+        "https://example.atlassian.net/rest/api/3/issue/KAN-9/remotelink"
+    )
+
+
 def test_fetch_jira_issue_404_returns_none():
     with _patch_client(_mock_httpx_response(404)):
         doc = fetch_jira_issue("https://jira.example.com", "u", "t", "PROJ-999")
@@ -591,6 +632,16 @@ def test_fetch_reference_dispatches_to_jira():
     mock_jira.assert_called_once()
     _, kwargs = mock_jira.call_args
     assert kwargs.get("key") == "PROJ-99" or mock_jira.call_args[0][3] == "PROJ-99"
+    assert kwargs["include_remote_links"] is True
+
+
+def test_fetch_reference_skips_jira_remote_links_when_confluence_disabled():
+    ref = _make_ref(ReferenceType.JIRA, "PROJ-99")
+    cfg = _make_fetch_cfg(ctx_confluence_enabled=False)
+    with patch("code_review.context.fetchers.fetch_jira_issue", return_value=None) as mock_jira:
+        fetch_reference(ref, cfg=cfg)
+    _, kwargs = mock_jira.call_args
+    assert kwargs["include_remote_links"] is False
 
 
 def test_fetch_reference_dispatches_to_confluence():

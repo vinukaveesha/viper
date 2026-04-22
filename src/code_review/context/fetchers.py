@@ -245,6 +245,47 @@ def _jira_extra_field_lines(fields_d: dict, extra: list[str]) -> list[str]:
     return lines
 
 
+def _jira_remote_link_lines(remote_links: Any) -> list[str]:
+    if not isinstance(remote_links, list):
+        return []
+    lines: list[str] = []
+    for item in remote_links:
+        if not isinstance(item, dict):
+            continue
+        obj = item.get("object")
+        if not isinstance(obj, dict):
+            continue
+        url = str(obj.get("url") or "").strip()
+        if not url:
+            continue
+        title = str(obj.get("title") or "").strip()
+        lines.append(f"- {title}: {url}" if title else f"- {url}")
+    return lines
+
+
+def _fetch_jira_remote_links(
+    client: httpx.Client,
+    *,
+    root: str,
+    email: str,
+    api_token: str,
+    key: str,
+) -> list[str]:
+    path = f"{root}/rest/api/3/issue/{key}/remotelink"
+    r = client.get(path, auth=(email, api_token))
+    if r.status_code != 200:
+        _raise_auth("GET", path, r.status_code, r.text)
+        logger.warning("Jira remote links fetch failed (%s): %s", r.status_code, path)
+        return []
+    try:
+        return _jira_remote_link_lines(
+            _json_or_context_error(r, source="Jira remote links", url=path)
+        )
+    except ContextAwareFatalError as exc:
+        logger.warning("Skipping Jira remote links for %s: %s", key, exc)
+        return []
+
+
 def fetch_jira_issue(
     base_url: str,
     email: str,
@@ -252,6 +293,7 @@ def fetch_jira_issue(
     key: str,
     timeout: float = 30.0,
     extra_fields: list[str] | None = None,
+    include_remote_links: bool = False,
 ) -> FetchedDocument | None:
     root = base_url.rstrip("/")
     path = f"{root}/rest/api/3/issue/{key}"
@@ -271,6 +313,17 @@ def fetch_jira_issue(
             _raise_auth("GET", path, r.status_code, r.text)
             raise ContextAwareFatalError(f"Jira fetch failed ({r.status_code}): {path}")
         data = _json_or_context_error(r, source="Jira issue", url=path)
+        remote_link_lines = (
+            _fetch_jira_remote_links(
+                client,
+                root=root,
+                email=email,
+                api_token=api_token,
+                key=key,
+            )
+            if include_remote_links
+            else []
+        )
     fields_d = data.get("fields") or {}
     summary = (fields_d.get("summary") or "").strip()
     issue_type = _jira_field_name(fields_d.get("issuetype") or {})
@@ -287,6 +340,9 @@ def fetch_jira_issue(
         lines.append("Description:")
         lines.append(desc_text)
     lines.extend(_jira_extra_field_lines(fields_d, extra))
+    if remote_link_lines:
+        lines.append("Remote links:")
+        lines.extend(remote_link_lines)
     return FetchedDocument(
         external_id=key.upper(),
         title=summary,
@@ -377,6 +433,7 @@ def fetch_reference(
                 cfg.atlassian_token,
                 ref.external_id,
                 extra_fields=list(cfg.jira_extra_fields),
+                include_remote_links=cfg.ctx_confluence_enabled,
             )
         if ref.ref_type == ReferenceType.CONFLUENCE and cfg.ctx_confluence_enabled:
             return fetch_confluence_page(
