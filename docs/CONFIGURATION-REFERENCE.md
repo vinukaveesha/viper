@@ -175,10 +175,9 @@ Loaded via `ContextAwareReviewConfig` (case-insensitive env names). Optional fea
 | `CONTEXT_ATLASSIAN_EMAIL` | `""` | Atlassian API user email for Jira and Confluence. |
 | `CONTEXT_ATLASSIAN_TOKEN` | — | Atlassian API token for Jira and Confluence. |
 | `CONTEXT_JIRA_ENABLED` | `false` | Fetch Jira issues. |
-| `CONTEXT_JIRA_URL` | `""` | Jira base URL. |
 | `CONTEXT_JIRA_EXTRA_FIELDS` | `""` | Comma-separated extra Jira field IDs/names. |
 | `CONTEXT_CONFLUENCE_ENABLED` | `false` | Fetch Confluence pages. |
-| `CONTEXT_CONFLUENCE_URL` | `""` | Confluence base URL. |
+| `CONTEXT_ATLASSIAN_URL` | `""` | Atlassian site URL used for Jira and Confluence, e.g. `https://yourcompany.atlassian.net`. |
 | `CONTEXT_MAX_BYTES` | `20000` | Byte budget for context sent to distillation. Without DB, direct-mode input is clamped to this size; with DB/RAG enabled, over-budget context uses retrieval first. |
 | `CONTEXT_DISTILLED_MAX_TOKENS` | `4000` | Max output tokens for distilled context brief. |
 | `CONTEXT_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model (RAG path; litellm). |

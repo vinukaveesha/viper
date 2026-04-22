@@ -272,6 +272,7 @@ def test_startup_config_snapshot_logs_models_and_redacts_secrets():
             "LLM_SUMMARY_API_KEY": "super-secret-summary",
             "CONTEXT_AWARE_REVIEW_ENABLED": "true",
             "CONTEXT_JIRA_ENABLED": "true",
+            "CONTEXT_ATLASSIAN_URL": "https://acme.atlassian.net",
             "CONTEXT_ATLASSIAN_TOKEN": "super-secret-atlassian",
         },
         clear=True,
@@ -310,6 +311,7 @@ def test_context_aware_config_uses_shared_atlassian_credentials():
     with patch.dict(
         os.environ,
         {
+            "CONTEXT_ATLASSIAN_URL": " https://acme.atlassian.net/ ",
             "CONTEXT_ATLASSIAN_EMAIL": "review-bot@example.com",
             "CONTEXT_ATLASSIAN_TOKEN": "atlassian-token",
         },
@@ -317,6 +319,7 @@ def test_context_aware_config_uses_shared_atlassian_credentials():
     ):
         cfg = ContextAwareReviewConfig()
 
+    assert cfg.atlassian_url == "https://acme.atlassian.net"
     assert cfg.atlassian_email == "review-bot@example.com"
     assert cfg.atlassian_token is not None
     assert cfg.atlassian_token.get_secret_value() == "atlassian-token"

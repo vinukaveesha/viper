@@ -7,7 +7,7 @@ import pytest
 
 import code_review.context.pipeline as pipeline_module
 from code_review.context.errors import ContextAwareFatalError
-from code_review.context.pipeline import build_context_brief_for_pr
+from code_review.context.pipeline import _build_fetch_reference_config, build_context_brief_for_pr
 from code_review.context.types import ContextReference, ExternalCredentials, ReferenceType
 
 
@@ -60,8 +60,7 @@ def _make_ctx(
     ctx.embedding_dimensions = embedding_dimensions
     ctx.github_token = None
     ctx.gitlab_token = None
-    ctx.jira_url = ""
-    ctx.confluence_url = ""
+    ctx.atlassian_url = ""
     ctx.atlassian_email = ""
     ctx.atlassian_token = None
     ctx.github_api_url = None
@@ -78,6 +77,24 @@ def _make_scm(provider="github", url="https://api.github.com", token="tok"):
     tok.get_secret_value.return_value = token
     scm.token = tok
     return scm
+
+
+def test_build_fetch_reference_config_uses_common_atlassian_url_for_jira_and_confluence():
+    ctx = _make_ctx(jira_enabled=True, confluence_enabled=True)
+    ctx.atlassian_url = "https://acme.atlassian.net"
+    creds = ExternalCredentials(
+        github_api="https://api.github.com",
+        github_token="gh",
+        gitlab_api="https://gitlab.com/api/v4",
+        gitlab_token="gl",
+        atlassian_email="review-bot@example.com",
+        atlassian_token="atl",
+    )
+
+    cfg = _build_fetch_reference_config(ctx=ctx, creds=creds)
+
+    assert cfg.jira_base == "https://acme.atlassian.net"
+    assert cfg.confluence_base == "https://acme.atlassian.net"
 
 
 def _make_fetched_doc(external_id="org/repo#1", body="Issue body text", title="Issue title"):
@@ -367,7 +384,7 @@ def test_jira_ref_resolved(_mock_distill, _simple_store):
         ref_type=ReferenceType.JIRA, external_id="PROJ-42", display="PROJ-42"
     )
     ctx = _make_ctx(jira_enabled=True)
-    ctx.jira_url = "https://jira.example.com"
+    ctx.atlassian_url = "https://jira.example.com"
 
     with patch("code_review.context.pipeline.ContextStore", return_value=_simple_store):
         with patch(
@@ -409,7 +426,7 @@ def test_confluence_ref_resolved(_mock_distill, _simple_store):
         display="99999",
     )
     ctx = _make_ctx(confluence_enabled=True)
-    ctx.confluence_url = "https://wiki.example.com"
+    ctx.atlassian_url = "https://wiki.example.com"
 
     with patch("code_review.context.pipeline.ContextStore", return_value=_simple_store):
         with patch(
@@ -451,8 +468,7 @@ def test_jira_ticket_with_confluence_link_follows_transitively_no_store(mock_dis
         return None
 
     ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
-    ctx.jira_url = "https://jira.example.com"
-    ctx.confluence_url = "https://wiki.example.com"
+    ctx.atlassian_url = "https://atlassian.example.com"
 
     with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
         result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
@@ -491,8 +507,7 @@ def test_jira_transitive_skips_already_listed_confluence_ref(mock_distill):
         return None
 
     ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
-    ctx.jira_url = "https://jira.example.com"
-    ctx.confluence_url = "https://wiki.example.com"
+    ctx.atlassian_url = "https://atlassian.example.com"
 
     with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
         result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref, conf_ref], "diff")
@@ -518,8 +533,7 @@ def test_jira_transitive_allows_same_id_as_non_confluence_ref_no_store(mock_dist
         return None
 
     ctx = _make_ctx(jira_enabled=True, confluence_enabled=True, db_url="")
-    ctx.jira_url = "https://jira.example.com"
-    ctx.confluence_url = "https://wiki.example.com"
+    ctx.atlassian_url = "https://atlassian.example.com"
 
     with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
         result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")
@@ -552,8 +566,7 @@ def test_jira_transitive_allows_same_id_as_non_confluence_ref_with_store(mock_di
         return None
 
     ctx = _make_ctx(jira_enabled=True, confluence_enabled=True)
-    ctx.jira_url = "https://jira.example.com"
-    ctx.confluence_url = "https://wiki.example.com"
+    ctx.atlassian_url = "https://atlassian.example.com"
 
     with patch("code_review.context.pipeline.ContextStore", return_value=store):
         with patch("code_review.context.pipeline.fetch_reference", side_effect=_side_effect) as mf:
@@ -577,7 +590,7 @@ def test_jira_transitive_does_not_follow_when_confluence_disabled(mock_distill):
     jira_doc = _make_fetched_doc(external_id="PROJ-42", body=jira_body, title="Design")
 
     ctx = _make_ctx(jira_enabled=True, confluence_enabled=False, db_url="")
-    ctx.jira_url = "https://jira.example.com"
+    ctx.atlassian_url = "https://jira.example.com"
 
     with patch("code_review.context.pipeline.fetch_reference", return_value=jira_doc) as mf:
         result = build_context_brief_for_pr(ctx, _make_scm(), [jira_ref], "diff")

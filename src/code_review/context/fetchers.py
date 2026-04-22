@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -72,6 +73,22 @@ def _raise_auth(method: str, url: str, status: int, body: str) -> None:
         raise ContextAwareAuthError(
             f"Context fetch auth failed ({status}) for {method} {url}: {snippet}"
         )
+
+
+def _response_preview(response: httpx.Response) -> str:
+    text = (response.text or "").strip().replace("\n", "\\n")
+    return text[:300] if text else "<empty body>"
+
+
+def _json_or_context_error(response: httpx.Response, *, source: str, url: str) -> Any:
+    try:
+        return response.json()
+    except json.JSONDecodeError as exc:
+        content_type = response.headers.get("content-type", "<missing>")
+        raise ContextAwareFatalError(
+            f"{source} returned non-JSON response ({response.status_code}, "
+            f"content-type={content_type}) for {url}: {_response_preview(response)}"
+        ) from exc
 
 
 def _build_github_api_client(api_base: str, token: str, timeout: float) -> GitHubApiClient:
@@ -182,7 +199,7 @@ def fetch_gitlab_issue(
         if r.status_code != 200:
             _raise_auth("GET", path, r.status_code, r.text)
             raise ContextAwareFatalError(f"GitLab issue fetch failed ({r.status_code}): {path}")
-        data = r.json()
+        data = _json_or_context_error(r, source="GitLab issue", url=path)
     labels = [str(lb) for lb in (data.get("labels") or [])]
     title = (data.get("title") or "").strip()
     body_raw = (data.get("description") or "").strip()
@@ -253,7 +270,7 @@ def fetch_jira_issue(
         if r.status_code != 200:
             _raise_auth("GET", path, r.status_code, r.text)
             raise ContextAwareFatalError(f"Jira fetch failed ({r.status_code}): {path}")
-        data = r.json()
+        data = _json_or_context_error(r, source="Jira issue", url=path)
     fields_d = data.get("fields") or {}
     summary = (fields_d.get("summary") or "").strip()
     issue_type = _jira_field_name(fields_d.get("issuetype") or {})
@@ -319,7 +336,7 @@ def fetch_confluence_page(
         if r.status_code != 200:
             _raise_auth("GET", path, r.status_code, r.text)
             raise ContextAwareFatalError(f"Confluence fetch failed ({r.status_code}): {path}")
-        data = r.json()
+        data = _json_or_context_error(r, source="Confluence page", url=path)
     title = (data.get("title") or "").strip()
     body_storage = ((data.get("body") or {}).get("storage") or {}).get("value") or ""
     plain = _strip_html_to_text(body_storage)

@@ -82,9 +82,9 @@ def _source_name_and_base(
         api, _ = _gitlab_api_and_token(scm, ctx)
         return ("gitlab", api)
     if ref.ref_type == ReferenceType.JIRA:
-        return ("jira", ctx.jira_url)
+        return ("jira", ctx.atlassian_url)
     if ref.ref_type == ReferenceType.CONFLUENCE:
-        return ("confluence", ctx.confluence_url)
+        return ("confluence", ctx.atlassian_url)
     return ("unknown", "")
 
 
@@ -113,8 +113,8 @@ def _build_fetch_reference_config(
         github_token=creds.github_token,
         gitlab_api_base=creds.gitlab_api,
         gitlab_token=creds.gitlab_token,
-        jira_base=ctx.jira_url,
-        confluence_base=ctx.confluence_url,
+        jira_base=ctx.atlassian_url,
+        confluence_base=ctx.atlassian_url,
         atlassian_email=creds.atlassian_email,
         atlassian_token=creds.atlassian_token,
         ctx_github_enabled=ctx.github_issues_enabled,

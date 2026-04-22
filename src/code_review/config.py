@@ -229,9 +229,8 @@ class ContextAwareReviewConfig(BaseSettings):
         default=False, validation_alias="CONTEXT_GITLAB_ISSUES_ENABLED"
     )
     jira_enabled: bool = Field(default=False, validation_alias="CONTEXT_JIRA_ENABLED")
-    jira_url: str = Field(default="", validation_alias="CONTEXT_JIRA_URL")
     confluence_enabled: bool = Field(default=False, validation_alias="CONTEXT_CONFLUENCE_ENABLED")
-    confluence_url: str = Field(default="", validation_alias="CONTEXT_CONFLUENCE_URL")
+    atlassian_url: str = Field(default="", validation_alias="CONTEXT_ATLASSIAN_URL")
     atlassian_email: str = Field(default="", validation_alias="CONTEXT_ATLASSIAN_EMAIL")
     atlassian_token: SecretStr | None = Field(
         default=None, validation_alias="CONTEXT_ATLASSIAN_TOKEN"
@@ -304,7 +303,7 @@ class ContextAwareReviewConfig(BaseSettings):
         normalized = str(v).strip()
         return normalized or None
 
-    @field_validator("jira_url", "confluence_url", "gitlab_api_url", mode="after")
+    @field_validator("atlassian_url", "gitlab_api_url", mode="after")
     @classmethod
     def _strip_urls(cls, v: str) -> str:
         return (v or "").strip().rstrip("/")

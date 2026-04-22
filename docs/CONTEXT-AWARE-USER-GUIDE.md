@@ -62,14 +62,14 @@ CONTEXT_GITHUB_ISSUES_ENABLED=true
 CONTEXT_ATLASSIAN_EMAIL=you@yourcompany.com
 CONTEXT_ATLASSIAN_TOKEN=your_atlassian_api_token
 CONTEXT_JIRA_ENABLED=true
-CONTEXT_JIRA_URL=https://yourcompany.atlassian.net
+CONTEXT_ATLASSIAN_URL=https://yourcompany.atlassian.net
 ```
 
 ### 2.3 Add Confluence
 
 ```bash
+CONTEXT_ATLASSIAN_URL=https://yourcompany.atlassian.net
 CONTEXT_CONFLUENCE_ENABLED=true
-CONTEXT_CONFLUENCE_URL=https://yourcompany.atlassian.net/wiki
 ```
 
 ---
@@ -123,10 +123,9 @@ All variables are optional unless marked required by the source you enable.
 | `CONTEXT_ATLASSIAN_EMAIL` | — | Atlassian account email used for Jira and Confluence. |
 | `CONTEXT_ATLASSIAN_TOKEN` | — | Atlassian API token used for Jira and Confluence. |
 | `CONTEXT_JIRA_ENABLED` | `false` | Enable Jira fetching. |
-| `CONTEXT_JIRA_URL` | — | Jira base URL. |
 | `CONTEXT_JIRA_EXTRA_FIELDS` | — | Comma-separated extra Jira fields (for custom acceptance criteria, etc.). |
 | `CONTEXT_CONFLUENCE_ENABLED` | `false` | Enable Confluence fetching. |
-| `CONTEXT_CONFLUENCE_URL` | — | Confluence base URL. |
+| `CONTEXT_ATLASSIAN_URL` | — | Atlassian site URL used for Jira and Confluence, e.g. `https://yourcompany.atlassian.net`. |
 | `CONTEXT_MAX_BYTES` | `20000` | Byte budget for context sent to distillation. Without DB, direct-mode input is clamped to this size; with DB/RAG enabled, over-budget context uses retrieval first. |
 | `CONTEXT_DISTILLED_MAX_TOKENS` | `4000` | Max output tokens for distilled context brief. |
 | `CONTEXT_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model used by RAG path. |
@@ -164,8 +163,7 @@ This prevents one temporarily unavailable external system from blocking all PR r
 Check required variables for every enabled source:
 
 - Atlassian auth: `CONTEXT_ATLASSIAN_EMAIL`, `CONTEXT_ATLASSIAN_TOKEN`
-- Jira: `CONTEXT_JIRA_URL`
-- Confluence: `CONTEXT_CONFLUENCE_URL`
+- Jira and Confluence: `CONTEXT_ATLASSIAN_URL`
 - GitHub/GitLab with non-matching SCM provider: source-specific token vars
 
 ### "No context attached" even with links in PR text
@@ -209,11 +207,10 @@ CONTEXT_ATLASSIAN_EMAIL=review-bot@acme.com
 CONTEXT_ATLASSIAN_TOKEN=${ATLASSIAN_API_TOKEN}
 
 CONTEXT_JIRA_ENABLED=true
-CONTEXT_JIRA_URL=https://acme.atlassian.net
+CONTEXT_ATLASSIAN_URL=https://acme.atlassian.net
 CONTEXT_JIRA_EXTRA_FIELDS=customfield_10016,customfield_10014
 
 CONTEXT_CONFLUENCE_ENABLED=true
-CONTEXT_CONFLUENCE_URL=https://acme.atlassian.net/wiki
 ```
 
 ### Example: Tight budget for noisy docs

@@ -27,7 +27,7 @@ def _validate_enabled_github_source(ctx: ContextAwareReviewConfig, scm: SCMConfi
 def _validate_enabled_jira_source(ctx: ContextAwareReviewConfig) -> None:
     if not ctx.jira_enabled:
         return
-    _require(bool(ctx.jira_url), "CONTEXT_JIRA_ENABLED requires CONTEXT_JIRA_URL.")
+    _require(bool(ctx.atlassian_url), "CONTEXT_JIRA_ENABLED requires CONTEXT_ATLASSIAN_URL.")
     _require(
         bool(ctx.atlassian_email.strip()),
         "CONTEXT_JIRA_ENABLED requires CONTEXT_ATLASSIAN_EMAIL.",
@@ -55,8 +55,8 @@ def _validate_enabled_confluence_source(ctx: ContextAwareReviewConfig) -> None:
     if not ctx.confluence_enabled:
         return
     _require(
-        bool(ctx.confluence_url),
-        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_CONFLUENCE_URL.",
+        bool(ctx.atlassian_url),
+        "CONTEXT_CONFLUENCE_ENABLED requires CONTEXT_ATLASSIAN_URL.",
     )
     _require(
         bool(ctx.atlassian_email.strip()),

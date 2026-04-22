@@ -1,5 +1,6 @@
 """Unit tests for context fetchers (mocked HTTP via httpx)."""
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -24,6 +25,7 @@ def _mock_httpx_response(status_code: int, json_data=None, text: str = "") -> Ma
     resp = MagicMock()
     resp.status_code = status_code
     resp.text = text
+    resp.headers = {}
     if json_data is not None:
         resp.json.return_value = json_data
     return resp
@@ -171,6 +173,30 @@ def test_fetch_jira_issue_happy_path():
     assert "Story" in doc.body
 
 
+def test_fetch_jira_issue_uses_top_level_atlassian_url():
+    data = {
+        "id": "10001",
+        "fields": {
+            "summary": "Use top-level URL",
+            "description": None,
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Open"},
+            "updated": None,
+        },
+    }
+    client_mock = MagicMock()
+    client_mock.__enter__ = MagicMock(return_value=client_mock)
+    client_mock.__exit__ = MagicMock(return_value=False)
+    client_mock.get.return_value = _mock_httpx_response(200, data)
+
+    with patch("httpx.Client", return_value=client_mock):
+        fetch_jira_issue("https://example.atlassian.net", "u", "t", "KAN-6")
+
+    assert client_mock.get.call_args.args[0] == (
+        "https://example.atlassian.net/rest/api/3/issue/KAN-6"
+    )
+
+
 def test_fetch_jira_issue_plain_text_description():
     data = {
         "id": "10002",
@@ -230,6 +256,21 @@ def test_fetch_confluence_page_happy_path():
     assert "architecture" in doc.body.lower()
     assert doc.external_id == "12345"
     assert doc.version == "3"
+
+
+def test_fetch_confluence_page_uses_top_level_atlassian_url():
+    resp_data = _confluence_response("Page", "<p>content</p>")
+    client_mock = MagicMock()
+    client_mock.__enter__ = MagicMock(return_value=client_mock)
+    client_mock.__exit__ = MagicMock(return_value=False)
+    client_mock.get.return_value = _mock_httpx_response(200, resp_data)
+
+    with patch("httpx.Client", return_value=client_mock):
+        fetch_confluence_page("https://example.atlassian.net", "u", "t", "42")
+
+    assert client_mock.get.call_args.args[0] == (
+        "https://example.atlassian.net/wiki/rest/api/content/42"
+    )
 
 
 def test_fetch_confluence_page_strips_html_tags():
@@ -335,6 +376,16 @@ def test_fetch_jira_issue_400_retries_without_extra_fields():
 def test_fetch_jira_issue_500_raises_fatal():
     with _patch_client(_mock_httpx_response(500, text="Internal Error")):
         with pytest.raises(ContextAwareFatalError):
+            fetch_jira_issue("https://jira.example.com", "u", "t", "PROJ-1")
+
+
+def test_fetch_jira_issue_non_json_response_raises_context_error():
+    resp = _mock_httpx_response(200, text="<html>login</html>")
+    resp.headers = {"content-type": "text/html"}
+    resp.json.side_effect = json.JSONDecodeError("Expecting value", resp.text, 0)
+
+    with _patch_client(resp):
+        with pytest.raises(ContextAwareFatalError, match="Jira issue returned non-JSON"):
             fetch_jira_issue("https://jira.example.com", "u", "t", "PROJ-1")
 
 
