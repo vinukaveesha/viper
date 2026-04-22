@@ -270,20 +270,21 @@ def _fetch_jira_remote_links(
     email: str,
     api_token: str,
     key: str,
-) -> list[str]:
+) -> tuple[list[str], bool]:
     path = f"{root}/rest/api/3/issue/{key}/remotelink"
     r = client.get(path, auth=(email, api_token))
     if r.status_code != 200:
         _raise_auth("GET", path, r.status_code, r.text)
         logger.warning("Jira remote links fetch failed (%s): %s", r.status_code, path)
-        return []
+        return ([], False)
     try:
-        return _jira_remote_link_lines(
+        lines = _jira_remote_link_lines(
             _json_or_context_error(r, source="Jira remote links", url=path)
         )
     except ContextAwareFatalError as exc:
         logger.warning("Skipping Jira remote links for %s: %s", key, exc)
-        return []
+        return ([], False)
+    return (lines, True)
 
 
 def fetch_jira_issue(
@@ -313,7 +314,7 @@ def fetch_jira_issue(
             _raise_auth("GET", path, r.status_code, r.text)
             raise ContextAwareFatalError(f"Jira fetch failed ({r.status_code}): {path}")
         data = _json_or_context_error(r, source="Jira issue", url=path)
-        remote_link_lines = (
+        remote_link_lines, remote_links_included = (
             _fetch_jira_remote_links(
                 client,
                 root=root,
@@ -322,7 +323,7 @@ def fetch_jira_issue(
                 key=key,
             )
             if include_remote_links
-            else []
+            else ([], False)
         )
     fields_d = data.get("fields") or {}
     summary = (fields_d.get("summary") or "").strip()
@@ -347,14 +348,39 @@ def fetch_jira_issue(
         external_id=key.upper(),
         title=summary,
         body="\n".join(lines),
-        metadata={"issuetype": issue_type, "status": status_name},
+        metadata={
+            "issuetype": issue_type,
+            "status": status_name,
+            "jira_remote_links_included": remote_links_included,
+            "jira_remote_link_count": len(remote_link_lines),
+        },
         version=str(data.get("id", "")),
         external_updated_at=updated if isinstance(updated, str) else None,
     )
 
 
+def _adf_link_urls(node: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    attrs = node.get("attrs")
+    if isinstance(attrs, dict):
+        for key in ("url", "href"):
+            value = attrs.get(key)
+            if isinstance(value, str) and value.strip():
+                urls.append(value.strip())
+    for mark in node.get("marks") or []:
+        if not isinstance(mark, dict):
+            continue
+        attrs = mark.get("attrs")
+        if not isinstance(attrs, dict):
+            continue
+        href = attrs.get("href")
+        if isinstance(href, str) and href.strip():
+            urls.append(href.strip())
+    return list(dict.fromkeys(urls))
+
+
 def _adf_to_plain(node: Any) -> str:
-    """Minimal Atlassian Document Format → plain text (paragraphs, text nodes)."""
+    """Minimal Atlassian Document Format -> plain text, preserving link URLs."""
     if not isinstance(node, dict):
         return ""
     parts: list[str] = []
@@ -362,10 +388,16 @@ def _adf_to_plain(node: Any) -> str:
     if ntype == "text":
         t = node.get("text")
         if t:
-            parts.append(str(t))
+            text = str(t)
+            urls = [url for url in _adf_link_urls(node) if url not in text]
+            parts.append(" ".join([text, *urls]))
+    if ntype in ("inlineCard", "blockCard", "embedCard"):
+        urls = _adf_link_urls(node)
+        if urls:
+            parts.extend(urls)
     for child in node.get("content") or []:
         parts.append(_adf_to_plain(child))
-    if ntype in ("paragraph", "heading", "listItem", "doc"):
+    if ntype in ("paragraph", "heading", "listItem", "doc", "blockCard", "embedCard"):
         inner = "".join(parts).strip()
         if inner:
             return inner + "\n"

@@ -250,9 +250,53 @@ def test_fetch_jira_issue_appends_remote_links_when_requested():
     assert "Related Confluence Page" in doc.body
     assert "Remote links:" in doc.body
     assert "https://example.atlassian.net/wiki/spaces/ENG/pages/555/KAN-9" in doc.body
+    assert doc.metadata["jira_remote_links_included"] is True
+    assert doc.metadata["jira_remote_link_count"] == 1
     assert client_mock.get.call_args_list[1].args[0] == (
         "https://example.atlassian.net/rest/api/3/issue/KAN-9/remotelink"
     )
+
+
+def test_fetch_jira_issue_preserves_confluence_link_from_adf_description():
+    data = {
+        "id": "10002",
+        "fields": {
+            "summary": "Review linked spec",
+            "description": {
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "Related Confluence Page"}],
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "inlineCard",
+                                "attrs": {
+                                    "url": (
+                                        "https://example.atlassian.net/wiki/spaces/ENG/pages/"
+                                        "555/KAN-9"
+                                    )
+                                },
+                            }
+                        ],
+                    },
+                ],
+            },
+            "issuetype": {"name": "Task"},
+            "status": {"name": "Open"},
+            "updated": None,
+        },
+    }
+
+    with _patch_client(_mock_httpx_response(200, data)):
+        doc = fetch_jira_issue("https://example.atlassian.net", "user@example.com", "token", "KAN-9")
+
+    assert doc is not None
+    assert "Related Confluence Page" in doc.body
+    assert "https://example.atlassian.net/wiki/spaces/ENG/pages/555/KAN-9" in doc.body
 
 
 def test_fetch_jira_issue_404_returns_none():
@@ -528,6 +572,54 @@ def test_adf_to_plain_nested_doc():
     result = _adf_to_plain(node)
     assert "first" in result
     assert "second" in result
+
+
+def test_adf_to_plain_preserves_text_link_mark_href():
+    node = {
+        "type": "text",
+        "text": "Related Confluence Page",
+        "marks": [
+            {
+                "type": "link",
+                "attrs": {
+                    "href": "https://example.atlassian.net/wiki/spaces/ENG/pages/555/Spec"
+                },
+            }
+        ],
+    }
+
+    result = _adf_to_plain(node)
+
+    assert "Related Confluence Page" in result
+    assert "https://example.atlassian.net/wiki/spaces/ENG/pages/555/Spec" in result
+
+
+def test_adf_to_plain_preserves_inline_card_url():
+    node = {
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "Related Confluence Page"}],
+            },
+            {
+                "type": "paragraph",
+                "content": [
+                    {
+                        "type": "inlineCard",
+                        "attrs": {
+                            "url": "https://example.atlassian.net/wiki/spaces/ENG/pages/555/Spec"
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    result = _adf_to_plain(node)
+
+    assert "Related Confluence Page" in result
+    assert "https://example.atlassian.net/wiki/spaces/ENG/pages/555/Spec" in result
 
 
 # ---------------------------------------------------------------------------
