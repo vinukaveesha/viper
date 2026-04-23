@@ -100,10 +100,12 @@ def test_create_runner_keeps_plain_runner_when_cache_not_supported(
     mock_get_llm_config, mock_runner_cls
 ):
     mock_get_llm_config.return_value = _llm_cfg(model="gemini-2.5-flash")
+    runner = SimpleNamespace()
+    mock_runner_cls.return_value = runner
     session_service = MagicMock()
     agent = SimpleNamespace(model="gemini-2.5-flash")
 
-    create_runner(agent=agent, app_name="code_review", session_service=session_service)
+    result = create_runner(agent=agent, app_name="code_review", session_service=session_service)
 
     mock_runner_cls.assert_called_once_with(
         agent=agent,
@@ -111,3 +113,5 @@ def test_create_runner_keeps_plain_runner_when_cache_not_supported(
         session_service=session_service,
         auto_create_session=True,
     )
+    assert result.context_cache_enabled is False
+    assert result.context_cache_config is None

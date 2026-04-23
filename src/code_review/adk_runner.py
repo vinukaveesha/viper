@@ -24,18 +24,21 @@ def create_runner(
     """Create an ADK Runner, enabling Gemini context caching when supported."""
     from google.adk.runners import Runner
 
-    llm_cfg = get_llm_config()
     cache_config = build_context_cache_config(agent=agent)
     if cache_config is None:
-        return Runner(
+        runner = Runner(
             agent=agent,
             app_name=app_name,
             session_service=session_service,
             auto_create_session=auto_create_session,
         )
+        runner.context_cache_enabled = False
+        runner.context_cache_config = None
+        return runner
 
     from google.adk.apps.app import App
 
+    llm_cfg = get_llm_config()
     app = App(
         name=app_name,
         root_agent=agent,
