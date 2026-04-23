@@ -29,8 +29,8 @@ from code_review.providers.base import (
     unified_diff_for_path,
 )
 from code_review.providers.bot_blocking_common import (
-    _mine_github_style_reviews,
     _last_non_pending_review_raw,
+    _mine_github_style_reviews,
     _norm_review_state,
     blocking_state_from_token_and_github_style_review_list,
 )
@@ -706,9 +706,13 @@ class GitHubProvider(ProviderInterface):
                 "falling back to configured bot identity when available: %s",
                 e,
             )
+        return self._github_configured_bot_login_lower()
+
+    def _github_configured_bot_login_lower(self) -> str | None:
         if self._bot_identity:
             return self._bot_identity.lower()
-        return None
+        app_bot_login = os.environ.get("SCM_GITHUB_APP_BOT_LOGIN", "").strip()
+        return app_bot_login.lower() or None
 
     def _github_list_pull_reviews(self, owner: str, repo: str, pr_number: int) -> list[Any] | None:
         """List PR reviews, or ``None`` if the listing failed (caller maps to ``UNKNOWN``)."""
@@ -772,11 +776,9 @@ class GitHubProvider(ProviderInterface):
                 return BotAttributionIdentity(login=login, id_str=uid)
         except Exception as e:
             logger.warning("GitHub get_bot_attribution_identity /user failed: %s", e)
-        if self._bot_identity:
-            return BotAttributionIdentity(login=self._bot_identity.lower())
-        app_bot_login = os.environ.get("SCM_GITHUB_APP_BOT_LOGIN", "").strip()
-        if app_bot_login:
-            return BotAttributionIdentity(login=app_bot_login.lower())
+        configured_login = self._github_configured_bot_login_lower()
+        if configured_login:
+            return BotAttributionIdentity(login=configured_login)
         return BotAttributionIdentity()
 
     def _github_build_dismissal_context_from_comment_nodes(

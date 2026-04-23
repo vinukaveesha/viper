@@ -40,11 +40,14 @@ def create_runner(
         context_cache_config=cache_config,
     )
     logger.debug("ADK context caching enabled for app=%s config=%s", app_name, cache_config)
-    return Runner(
+    runner = Runner(
         app=app,
         session_service=session_service,
         auto_create_session=auto_create_session,
     )
+    if not hasattr(runner, "agent"):
+        runner.agent = agent
+    return runner
 
 
 def build_context_cache_config(*, agent=None) -> Any | None:

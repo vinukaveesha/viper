@@ -49,20 +49,42 @@ def test_create_runner_wraps_gemini_3_agent_in_cached_app(
 ):
     mock_get_llm_config.return_value = _llm_cfg()
     mock_app_cls.return_value = MagicMock(name="cached_app")
+    runner = SimpleNamespace()
+    mock_runner_cls.return_value = runner
     session_service = MagicMock()
     agent = SimpleNamespace(model="gemini-3-flash-preview")
 
-    create_runner(agent=agent, app_name="code_review", session_service=session_service)
+    result = create_runner(agent=agent, app_name="code_review", session_service=session_service)
 
     _, app_kwargs = mock_app_cls.call_args
     assert app_kwargs["name"] == "code_review"
     assert app_kwargs["root_agent"] is agent
     assert app_kwargs["context_cache_config"] is not None
+    assert result.agent is agent
     mock_runner_cls.assert_called_once_with(
         app=mock_app_cls.return_value,
         session_service=session_service,
         auto_create_session=True,
     )
+
+
+@patch("google.adk.apps.app.App")
+@patch("google.adk.runners.Runner")
+@patch("code_review.adk_runner.get_llm_config")
+def test_create_runner_preserves_cached_runner_agent_when_adk_exposes_one(
+    mock_get_llm_config, mock_runner_cls, mock_app_cls
+):
+    mock_get_llm_config.return_value = _llm_cfg()
+    mock_app_cls.return_value = MagicMock(name="cached_app")
+    existing_agent = SimpleNamespace(model="gemini-3-flash-preview")
+    runner = SimpleNamespace(agent=existing_agent)
+    mock_runner_cls.return_value = runner
+    session_service = MagicMock()
+    agent = SimpleNamespace(model="gemini-3-flash-preview")
+
+    result = create_runner(agent=agent, app_name="code_review", session_service=session_service)
+
+    assert result.agent is existing_agent
 
 
 @patch("google.adk.runners.Runner")

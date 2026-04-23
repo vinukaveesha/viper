@@ -665,6 +665,17 @@ def test_get_bot_attribution_identity_falls_back_to_configured_bot_identity():
     assert bid.id_str == ""
 
 
+def test_get_bot_attribution_identity_falls_back_to_github_app_bot_login(monkeypatch):
+    monkeypatch.setenv("SCM_GITHUB_APP_BOT_LOGIN", "MyAppBot")
+    client = MagicMock()
+    client.get_authenticated_user.side_effect = RuntimeError("403")
+    p = GitHubProvider("https://api.github.com", "tok")
+    with patch.object(GitHubProvider, "_client", return_value=client):
+        bid = p.get_bot_attribution_identity("o", "r", 1)
+    assert bid.login == "myappbot"
+    assert bid.id_str == ""
+
+
 def test_get_bot_blocking_state_falls_back_to_configured_bot_identity():
     client = MagicMock()
     client.get_authenticated_user.side_effect = RuntimeError("403")
@@ -736,6 +747,38 @@ def test_is_bot_currently_approved_returns_false_when_user_login_unavailable():
     client = MagicMock()
     client.get_authenticated_user.side_effect = RuntimeError("403")
     p = GitHubProvider("https://api.github.com", "tok")
+    with patch.object(GitHubProvider, "_client", return_value=client):
+        assert p.is_bot_currently_approved("o", "r", 1) is False
+
+
+def test_is_bot_currently_approved_uses_github_app_bot_login(monkeypatch):
+    monkeypatch.setenv("SCM_GITHUB_APP_BOT_LOGIN", "MyAppBot")
+    client = MagicMock()
+    client.get_authenticated_user.side_effect = RuntimeError("403")
+    pull = MagicMock()
+    pull.get_reviews.return_value = [
+        _fake_review(1, "COMMENTED", "myappbot"),
+        _fake_review(2, "APPROVED", "myappbot"),
+    ]
+    client.get_pull.return_value = pull
+    p = GitHubProvider("https://api.github.com", "tok")
+
+    with patch.object(GitHubProvider, "_client", return_value=client):
+        assert p.is_bot_currently_approved("o", "r", 1) is True
+
+
+def test_is_bot_currently_approved_app_login_respects_latest_review(monkeypatch):
+    monkeypatch.setenv("SCM_GITHUB_APP_BOT_LOGIN", "MyAppBot")
+    client = MagicMock()
+    client.get_authenticated_user.side_effect = RuntimeError("403")
+    pull = MagicMock()
+    pull.get_reviews.return_value = [
+        _fake_review(1, "APPROVED", "myappbot"),
+        _fake_review(2, "CHANGES_REQUESTED", "myappbot"),
+    ]
+    client.get_pull.return_value = pull
+    p = GitHubProvider("https://api.github.com", "tok")
+
     with patch.object(GitHubProvider, "_client", return_value=client):
         assert p.is_bot_currently_approved("o", "r", 1) is False
 
