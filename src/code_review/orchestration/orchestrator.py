@@ -5,6 +5,7 @@ import uuid
 
 from code_review import __version__, observability
 from code_review import orchestration_deps as runner_mod
+from code_review.config import LLMConfig, SCMConfig
 from code_review.models import PRContext
 from code_review.orchestration.context_enricher import ContextEnricher
 from code_review.orchestration.filter import ReviewFilter
@@ -40,6 +41,8 @@ class ReviewOrchestrator:
         review_decision_medium_threshold: int | None = None,
         review_decision_only: bool = False,
         event_context: ReviewDecisionEventContext | None = None,
+        scm_config: SCMConfig | None = None,
+        llm_config: LLMConfig | None = None,
     ):
         self.pr_ctx = PRContext(owner, repo, pr_number, head_sha)
         self.dry_run = dry_run
@@ -49,6 +52,8 @@ class ReviewOrchestrator:
         self._review_decision_medium_threshold_override = review_decision_medium_threshold
         self._review_decision_only = review_decision_only
         self._event_context = event_context
+        self._scm_config_override = scm_config
+        self._llm_config_override = llm_config
 
     @property
     def owner(self) -> str:
@@ -68,7 +73,7 @@ class ReviewOrchestrator:
 
     def _load_config_and_provider(self):
         """Load SCM/LLM config and create the provider instance."""
-        cfg = runner_mod.get_scm_config()
+        cfg = self._scm_config_override or runner_mod.get_scm_config()
         overrides: dict[str, bool | int] = {}
         if self._review_decision_enabled_override is not None:
             overrides["review_decision_enabled"] = self._review_decision_enabled_override
@@ -82,7 +87,7 @@ class ReviewOrchestrator:
             )
         if overrides:
             cfg = cfg.model_copy(update=overrides)
-        llm_cfg = runner_mod.get_llm_config()
+        llm_cfg = self._llm_config_override or runner_mod.get_llm_config()
         token_val = (
             cfg.token.get_secret_value() if hasattr(cfg.token, "get_secret_value") else cfg.token
         )

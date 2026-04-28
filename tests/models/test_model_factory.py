@@ -7,6 +7,7 @@ import pytest
 
 import code_review.models as model_factory
 from code_review.models import (
+    PRContext,
     get_configured_model,
     get_configured_summary_model,
     get_configured_verification_model,
@@ -152,6 +153,14 @@ def test_get_model_metadata_refreshed_gemini_limits():
     assert metadata is not None
     assert metadata.context_window_tokens == 200_000
     assert metadata.max_output_tokens_default == 65_536
+
+
+def test_pr_context_gitlab_url_strips_api_prefix():
+    cfg = MagicMock(provider="gitlab", url="https://gitlab.example.com/api/v4")
+
+    pr_url = PRContext("group/subgroup", "demo", 7).pr_url(cfg)
+
+    assert pr_url == "https://gitlab.example.com/group/subgroup/demo/-/merge_requests/7"
 
 
 def test_get_effective_temperature_for_model_omits_fixed_temperature_models():

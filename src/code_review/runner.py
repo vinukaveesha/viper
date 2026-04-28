@@ -39,6 +39,7 @@ from code_review.refinement.filters.patch_validator import (  # noqa: F401
 from code_review.refinement.filters.self_retraction import (  # noqa: F401
     _finding_message_looks_self_retracted,
 )
+from code_review.config import LLMConfig, SCMConfig
 from code_review.schemas.findings import FindingV1
 from code_review.schemas.review_decision_event import (
     ReviewDecisionEventContext,
@@ -59,6 +60,8 @@ def run_review(
     review_decision_medium_threshold: int | None = None,
     review_decision_only: bool = False,
     event_context: ReviewDecisionEventContext | None = None,
+    scm_config: SCMConfig | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> list[FindingV1]:
     """
     Run the code review agent (findings-only mode). Fetches existing comments,
@@ -76,6 +79,10 @@ def run_review(
     ``CODE_REVIEW_EVENT_*`` environment variables are parsed into
     :class:`~code_review.schemas.review_decision_event.ReviewDecisionEventContext`
     (used for review-decision-only logging and head SHA hints).
+
+    *scm_config* and *llm_config* may be supplied programmatically to bypass
+    process environment loading. When omitted, the existing environment-driven
+    configuration path is preserved.
     """
     resolved_event = event_context or review_decision_event_context_from_env()
     orchestrator = ReviewOrchestrator(
@@ -90,5 +97,7 @@ def run_review(
         review_decision_medium_threshold=review_decision_medium_threshold,
         review_decision_only=review_decision_only,
         event_context=resolved_event,
+        scm_config=scm_config,
+        llm_config=llm_config,
     )
     return orchestrator.run()

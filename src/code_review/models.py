@@ -66,7 +66,10 @@ class PRContext:
             case "github":
                 return f"{base_url}/{self.owner}/{self.repo}/pull/{self.pr_number}"
             case "gitlab":
-                return f"{base_url}/{self.owner}/{self.repo}/-/merge_requests/{self.pr_number}"
+                web_base_url = (
+                    base_url[: -len("/api/v4")] if base_url.lower().endswith("/api/v4") else base_url
+                )
+                return f"{web_base_url}/{self.owner}/{self.repo}/-/merge_requests/{self.pr_number}"
             case "bitbucket":
                 return f"https://bitbucket.org/{self.owner}/{self.repo}/pull-requests/{self.pr_number}"
             case "bitbucket_server":

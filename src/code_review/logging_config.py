@@ -73,5 +73,14 @@ def emit_package_log(logger: logging.Logger, level: int, msg: str, *args) -> Non
     """
     logger.log(level, msg, *args)
     package_logger = logging.getLogger("code_review")
-    if package_logger.handlers and not package_logger.propagate:
-        logging.getLogger().log(level, msg, *args)
+    if not package_logger.propagate:
+        record = logger.makeRecord(
+            logger.name,
+            level,
+            fn="",
+            lno=0,
+            msg=msg,
+            args=args,
+            exc_info=None,
+        )
+        logging.getLogger().handle(record)

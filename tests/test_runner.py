@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_review.config import LLMConfig, SCMConfig
 from code_review.agent import create_review_agent
 from code_review.providers.base import (
     BotAttributionIdentity,
@@ -15,6 +16,7 @@ from code_review.providers.base import (
 )
 from code_review.providers.bitbucket_server import BitbucketServerProvider
 from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
+from code_review.runner import run_review
 from tests.conftest import runner_run_async_returning, sample_unified_diff
 
 
@@ -200,6 +202,70 @@ def _reply_dismissal_unresolved_item(
         body=body,
         inferred_severity=inferred_severity,
     )
+
+
+def test_run_review_passes_explicit_config_objects_to_orchestrator():
+    scm_cfg = SCMConfig.model_construct(
+        provider="github",
+        url="https://api.github.com",
+        token="token",
+        owner="",
+        repo="",
+        pr_num=None,
+        head_sha="",
+        base_sha="",
+        event="",
+        skip_label="",
+        skip_title_pattern="",
+        review_decision_enabled=False,
+        review_decision_high_threshold=1,
+        review_decision_medium_threshold=3,
+        allowed_hosts=None,
+        bot_identity="",
+        bitbucket_server_user_slug="",
+    )
+    llm_cfg = LLMConfig.model_construct(
+        provider="openai",
+        api_key=None,
+        model="gpt-5.4",
+        context_window=128000,
+        max_output_tokens=4096,
+        temperature=0.0,
+        timeout_seconds=60.0,
+        max_retries=3,
+    )
+
+    with patch("code_review.runner.ReviewOrchestrator") as mock_orchestrator_cls:
+        orchestrator = MagicMock()
+        orchestrator.run.return_value = []
+        mock_orchestrator_cls.return_value = orchestrator
+
+        result = run_review(
+            "acme",
+            "demo",
+            7,
+            head_sha="abc123",
+            scm_config=scm_cfg,
+            llm_config=llm_cfg,
+        )
+
+    assert result == []
+    mock_orchestrator_cls.assert_called_once_with(
+        "acme",
+        "demo",
+        7,
+        "abc123",
+        dry_run=False,
+        print_findings=False,
+        review_decision_enabled=None,
+        review_decision_high_threshold=None,
+        review_decision_medium_threshold=None,
+        review_decision_only=False,
+        event_context=None,
+        scm_config=scm_cfg,
+        llm_config=llm_cfg,
+    )
+    orchestrator.run.assert_called_once_with()
 
 
 def _reply_dismissal_context(

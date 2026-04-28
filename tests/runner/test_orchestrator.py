@@ -213,6 +213,39 @@ def test_load_config_and_provider_calls_deps_and_returns_tuple(
 @patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
 @patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
+def test_load_config_and_provider_prefers_explicit_config_objects(
+    mock_get_scm_config, mock_get_llm_config, mock_get_provider
+):
+    cfg = MagicMock(provider="gitlab", url="https://gitlab.example/api/v4", token="job-token")
+    cfg.bot_identity = "viper-bot"
+    llm_cfg = MagicMock(provider="openai", model="gpt-5.4")
+    provider = MagicMock()
+    mock_get_provider.return_value = provider
+
+    orchestrator = ReviewOrchestrator(
+        "o",
+        "r",
+        1,
+        scm_config=cfg,
+        llm_config=llm_cfg,
+    )
+
+    result = orchestrator._load_config_and_provider()
+
+    mock_get_scm_config.assert_not_called()
+    mock_get_llm_config.assert_not_called()
+    mock_get_provider.assert_called_once_with(
+        "gitlab",
+        "https://gitlab.example/api/v4",
+        "job-token",
+        bot_identity="viper-bot",
+    )
+    assert result == (cfg, llm_cfg, provider)
+
+
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
 def test_load_config_and_provider_unwraps_secret_str(
     mock_get_scm_config, mock_get_llm_config, mock_get_provider
 ):
