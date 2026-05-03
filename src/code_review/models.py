@@ -72,7 +72,9 @@ class PRContext:
                 return f"{base_url}/{self.owner}/{self.repo}/pull/{self.pr_number}"
             case "gitlab":
                 web_base_url = (
-                    base_url[: -len("/api/v4")] if base_url.lower().endswith("/api/v4") else base_url
+                    base_url[: -len("/api/v4")]
+                    if base_url.lower().endswith("/api/v4")
+                    else base_url
                 )
                 return f"{web_base_url}/{self.owner}/{self.repo}/-/merge_requests/{self.pr_number}"
             case "bitbucket":
@@ -344,7 +346,9 @@ def get_max_output_tokens_for_config(config: LLMConfig) -> int:
 _FIXED_TEMPERATURE_PREFIXES: tuple[str, ...] = ("gpt-5",)
 
 
-def get_effective_temperature_for_model(provider: str, model: str, requested: float) -> float | None:
+def get_effective_temperature_for_model(
+    provider: str, model: str, requested: float
+) -> float | None:
     """Return the temperature to pass for a provider/model pair, or None to omit it.
 
     Some models (e.g. the gpt-5 family) only support a fixed temperature value

@@ -6,6 +6,7 @@ import subprocess
 import time
 
 import pytest
+import requests
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,6 @@ def _reset_code_review_logger():
     log.setLevel(saved_level)
     log.propagate = saved_propagate
     log.handlers[:] = saved_handlers
-import requests
 
 
 def runner_run_async_returning(events):

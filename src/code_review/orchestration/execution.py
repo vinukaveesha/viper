@@ -81,6 +81,7 @@ def run_agent_and_collect_findings(
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run batch review and parse responses into findings."""
     if not batches:
@@ -96,6 +97,7 @@ def run_agent_and_collect_findings(
         context_brief_attached=context_brief_attached,
         prompt_suffix=prompt_suffix,
         review_visible_lines=review_visible_lines,
+        llm_config=llm_config,
     )
 
 
@@ -111,6 +113,7 @@ def _run_sequential_batch_review_mode(
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
     _attach_batch_user_messages(
@@ -168,6 +171,7 @@ def _run_sequential_batch_review_mode(
                         context_brief_attached=context_brief_attached,
                         prompt_suffix=prompt_suffix,
                         review_visible_lines=review_visible_lines,
+                        llm_config=llm_config,
                         initial_retry_attempt=1,
                     )
                 )
@@ -180,6 +184,7 @@ def _run_sequential_batch_review_mode(
                     context_brief_attached=context_brief_attached,
                     prompt_suffix=prompt_suffix,
                     review_visible_lines=review_visible_lines,
+                    llm_config=llm_config,
                 )
             )
             return findings
@@ -212,6 +217,7 @@ def _run_sequential_batch_review_mode(
                 context_brief_attached=context_brief_attached,
                 prompt_suffix=prompt_suffix,
                 review_visible_lines=review_visible_lines,
+                llm_config=llm_config,
                 initial_retry_attempt=1,
             )
         )
@@ -408,6 +414,7 @@ def _run_isolated_batches_with_retry(
     context_brief_attached: bool,
     prompt_suffix: str,
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
     initial_retry_attempt: int = 0,
     max_retries: int = 2,
 ) -> list[runner_mod.FindingV1]:
@@ -431,6 +438,7 @@ def _run_isolated_batches_with_retry(
             [batch],
             context_brief_attached=context_brief_attached,
             review_visible_lines=review_visible_lines,
+            llm_config=llm_config,
         )
         _attach_batch_user_messages(
             runner,

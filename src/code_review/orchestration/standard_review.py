@@ -473,6 +473,7 @@ class StandardReviewHandler:
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
             review_visible_lines=review_visible_lines,
+            llm_config=agent_llm_config,
         )
         return self._ReviewExecution(all_findings, context_brief_attached, prompt_suffix)
 

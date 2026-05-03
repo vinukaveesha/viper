@@ -435,6 +435,7 @@ def test_execution_sequential_batch_mode_forwards_supported_args_only(mock_run_b
         context_brief_attached=True,
         prompt_suffix="extra context",
         review_visible_lines=None,
+        llm_config=None,
     )
 
 

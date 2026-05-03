@@ -25,6 +25,9 @@ class RequestScopedReviewRunner:
         bot_login: str = "",
     ):
         base_scm = get_scm_config()
+        # Validate the incoming URL via SCMConfig's field validator before
+        # applying it; model_copy skips validators so bad URLs must be caught here.
+        type(base_scm)._validate_url(self.scm_url)
         return base_scm.model_copy(
             update={
                 "provider": self.scm_provider,
