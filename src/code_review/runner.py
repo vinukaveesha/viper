@@ -39,7 +39,7 @@ from code_review.refinement.filters.patch_validator import (  # noqa: F401
 from code_review.refinement.filters.self_retraction import (  # noqa: F401
     _finding_message_looks_self_retracted,
 )
-from code_review.config import LLMConfig, SCMConfig
+from code_review.config import CodeReviewAppConfig, LLMConfig, SCMConfig
 from code_review.schemas.findings import FindingV1
 from code_review.schemas.review_decision_event import (
     ReviewDecisionEventContext,
@@ -62,6 +62,7 @@ def run_review(
     event_context: ReviewDecisionEventContext | None = None,
     scm_config: SCMConfig | None = None,
     llm_config: LLMConfig | None = None,
+    app_config: CodeReviewAppConfig | None = None,
 ) -> list[FindingV1]:
     """
     Run the code review agent (findings-only mode). Fetches existing comments,
@@ -80,7 +81,7 @@ def run_review(
     :class:`~code_review.schemas.review_decision_event.ReviewDecisionEventContext`
     (used for review-decision-only logging and head SHA hints).
 
-    *scm_config* and *llm_config* may be supplied programmatically to bypass
+    *scm_config*, *llm_config*, and *app_config* may be supplied programmatically to bypass
     process environment loading. When omitted, the existing environment-driven
     configuration path is preserved.
     """
@@ -99,5 +100,6 @@ def run_review(
         event_context=resolved_event,
         scm_config=scm_config,
         llm_config=llm_config,
+        app_config=app_config,
     )
     return orchestrator.run()

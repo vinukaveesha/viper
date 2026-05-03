@@ -8,12 +8,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from code_review.config import get_code_review_app_config, get_llm_config
+from code_review.config import LLMConfig, get_code_review_app_config, get_llm_config
 from code_review.llm_telemetry import log_adk_llm_usage
 from code_review.models import (
     get_configured_model,
+    get_configured_model_for_config,
     get_effective_temperature,
+    get_effective_temperature_for_model,
     get_max_output_tokens,
+    get_max_output_tokens_for_config,
 )
 from code_review.providers.base import ProviderInterface
 from code_review.schemas.findings import FindingsBatchV1
@@ -464,6 +467,7 @@ def create_review_agent(
     review_visible_lines: bool | None = None,
     slim_output: bool = False,
     output_key: str | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> Agent:
     """Create the code review LlmAgent.
 
@@ -477,11 +481,19 @@ def create_review_agent(
     from google.adk.agents import Agent
     from google.genai import types
 
-    llm_cfg = get_llm_config()
-    _temperature = get_effective_temperature(llm_cfg.temperature)
+    llm_cfg = llm_config or get_llm_config()
+    _temperature = (
+        get_effective_temperature_for_model(llm_cfg.provider, llm_cfg.model, llm_cfg.temperature)
+        if llm_config is not None
+        else get_effective_temperature(llm_cfg.temperature)
+    )
     generate_content_config = types.GenerateContentConfig(
         **({"temperature": _temperature} if _temperature is not None else {}),
-        max_output_tokens=get_max_output_tokens(),
+        max_output_tokens=(
+            get_max_output_tokens_for_config(llm_cfg)
+            if llm_config is not None
+            else get_max_output_tokens()
+        ),
     )
 
     instruction = BATCH_EMBEDDED_DIFF_REVIEW_INSTRUCTION if slim_output else EMBEDDED_DIFF_REVIEW_INSTRUCTION
@@ -508,7 +520,11 @@ def create_review_agent(
         )
 
     agent_kwargs: dict = {
-        "model": get_configured_model(),
+        "model": (
+            get_configured_model_for_config(llm_cfg)
+            if llm_config is not None
+            else get_configured_model()
+        ),
         "name": "code_review_agent",
         "instruction": instruction,
         "tools": [],

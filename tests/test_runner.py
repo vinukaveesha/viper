@@ -235,7 +235,10 @@ def test_run_review_passes_explicit_config_objects_to_orchestrator():
         max_retries=3,
     )
 
-    with patch("code_review.runner.ReviewOrchestrator") as mock_orchestrator_cls:
+    with (
+        patch("code_review.runner.review_decision_event_context_from_env", return_value=None),
+        patch("code_review.runner.ReviewOrchestrator") as mock_orchestrator_cls,
+    ):
         orchestrator = MagicMock()
         orchestrator.run.return_value = []
         mock_orchestrator_cls.return_value = orchestrator
@@ -264,6 +267,7 @@ def test_run_review_passes_explicit_config_objects_to_orchestrator():
         event_context=None,
         scm_config=scm_cfg,
         llm_config=llm_cfg,
+        app_config=None,
     )
     orchestrator.run.assert_called_once_with()
 

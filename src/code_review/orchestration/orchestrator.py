@@ -5,7 +5,7 @@ import uuid
 
 from code_review import __version__, observability
 from code_review import orchestration_deps as runner_mod
-from code_review.config import LLMConfig, SCMConfig
+from code_review.config import CodeReviewAppConfig, LLMConfig, SCMConfig
 from code_review.models import PRContext
 from code_review.orchestration.context_enricher import ContextEnricher
 from code_review.orchestration.filter import ReviewFilter
@@ -43,6 +43,7 @@ class ReviewOrchestrator:
         event_context: ReviewDecisionEventContext | None = None,
         scm_config: SCMConfig | None = None,
         llm_config: LLMConfig | None = None,
+        app_config: CodeReviewAppConfig | None = None,
     ):
         self.pr_ctx = PRContext(owner, repo, pr_number, head_sha)
         self.dry_run = dry_run
@@ -54,6 +55,7 @@ class ReviewOrchestrator:
         self._event_context = event_context
         self._scm_config_override = scm_config
         self._llm_config_override = llm_config
+        self._app_config_override = app_config
 
     @property
     def owner(self) -> str:
@@ -205,7 +207,7 @@ class ReviewOrchestrator:
             self.pr_number,
         )
         cfg, llm_cfg, provider = self._load_config_and_provider()
-        app_cfg = runner_mod.get_code_review_app_config()
+        app_cfg = self._app_config_override or runner_mod.get_code_review_app_config()
         review_decision_handler, standard_review_handler = self._build_handlers()
         run_handle = observability.start_run(trace_id)
         run_observability = ReviewRunObservability(
@@ -230,4 +232,5 @@ class ReviewOrchestrator:
                 self._compute_idempotency_and_maybe_short_circuit
             ),
             incremental_base_sha_fn=self._incremental_base_sha,
+            agent_llm_config=self._llm_config_override,
         )

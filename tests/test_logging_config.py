@@ -1,5 +1,6 @@
 """Tests for logging configuration."""
 
+import io
 import logging
 import os
 from unittest.mock import patch
@@ -7,6 +8,7 @@ from unittest.mock import patch
 from code_review.logging_config import (
     LOG_LEVEL_ENV,
     configure_logging,
+    emit_package_log,
 )
 
 
@@ -47,3 +49,63 @@ def test_configure_logging_updates_existing_handler_levels():
     assert log.level == logging.DEBUG
     assert log.handlers
     assert all(handler.level == logging.DEBUG for handler in log.handlers)
+
+
+def test_emit_package_log_does_not_mirror_disabled_level_to_root():
+    stream = io.StringIO()
+    root = logging.getLogger()
+    package_logger = logging.getLogger("code_review")
+    child_logger = logging.getLogger("code_review.test")
+    old_root_handlers = list(root.handlers)
+    old_root_level = root.level
+    old_package_level = package_logger.level
+    old_package_propagate = package_logger.propagate
+    try:
+        root.handlers.clear()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.NOTSET)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        package_logger.setLevel(logging.WARNING)
+        package_logger.propagate = False
+
+        emit_package_log(child_logger, logging.INFO, "hidden-info")
+        handler.flush()
+
+        assert stream.getvalue() == ""
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(old_root_handlers)
+        root.setLevel(old_root_level)
+        package_logger.setLevel(old_package_level)
+        package_logger.propagate = old_package_propagate
+
+
+def test_emit_package_log_mirrors_enabled_level_to_root():
+    stream = io.StringIO()
+    root = logging.getLogger()
+    package_logger = logging.getLogger("code_review")
+    child_logger = logging.getLogger("code_review.test")
+    old_root_handlers = list(root.handlers)
+    old_root_level = root.level
+    old_package_level = package_logger.level
+    old_package_propagate = package_logger.propagate
+    try:
+        root.handlers.clear()
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(logging.NOTSET)
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        package_logger.setLevel(logging.INFO)
+        package_logger.propagate = False
+
+        emit_package_log(child_logger, logging.INFO, "visible-info")
+        handler.flush()
+
+        assert "visible-info" in stream.getvalue()
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(old_root_handlers)
+        root.setLevel(old_root_level)
+        package_logger.setLevel(old_package_level)
+        package_logger.propagate = old_package_propagate
