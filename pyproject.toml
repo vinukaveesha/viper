@@ -25,7 +25,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "typer>=0.12",
-    "litellm>=1.50",
+    "litellm>=1.83.7",
 ]
 
 [project.optional-dependencies]
