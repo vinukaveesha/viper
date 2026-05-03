@@ -76,9 +76,6 @@ def emit_package_log(logger: logging.Logger, level: int, msg: str, *args) -> Non
     if not package_logger.propagate:
         if not logger.isEnabledFor(level):
             return
-        root_logger = logging.getLogger()
-        if not root_logger.isEnabledFor(level):
-            return
         record = logger.makeRecord(
             logger.name,
             level,
@@ -88,4 +85,4 @@ def emit_package_log(logger: logging.Logger, level: int, msg: str, *args) -> Non
             args=args,
             exc_info=None,
         )
-        root_logger.handle(record)
+        logging.getLogger().handle(record)
