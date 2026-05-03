@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import SecretStr
 
 from code_review.config import get_code_review_app_config, get_scm_config
-from code_review.runner import run_review
+from code_review.runner import ReviewDecisionConfig, run_review
 from code_review.service_models import ServiceReviewJob
 
 
@@ -61,8 +61,10 @@ class RequestScopedReviewRunner:
             pr_number=job.pr_number,
             head_sha=job.head_sha,
             dry_run=self.dry_run,
-            review_decision_only=job.review_decision_only,
-            event_context=job.event_context,
+            review_decision=ReviewDecisionConfig(
+                only=job.review_decision_only,
+                event_context=job.event_context,
+            ),
             scm_config=scm_cfg,
             app_config=app_cfg,
         )

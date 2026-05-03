@@ -400,7 +400,6 @@ class StandardReviewHandler:
         self,
         provider: ProviderInterface,
         cfg: Any,
-        llm_cfg: Any,
         agent_llm_config: Any | None,
         app_cfg: Any,
         run_observability: ReviewRunObservability,
@@ -700,7 +699,6 @@ class StandardReviewHandler:
         execution = self._execute_review_agent(
             provider,
             cfg,
-            llm_cfg,
             agent_llm_config,
             app_cfg,
             run_observability,

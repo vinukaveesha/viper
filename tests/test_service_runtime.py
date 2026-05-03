@@ -52,7 +52,7 @@ def test_request_scoped_runner_passes_explicit_configs_without_env_mutation():
     assert kwargs["pr_number"] == 7
     assert kwargs["head_sha"] == "head123"
     assert kwargs["dry_run"] is True
-    assert kwargs["review_decision_only"] is True
+    assert kwargs["review_decision"].only is True
     assert scm_cfg.provider == "github"
     assert scm_cfg.url == "https://github.example/api"
     assert scm_cfg.token.get_secret_value() == "job-token"

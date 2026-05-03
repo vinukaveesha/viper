@@ -23,6 +23,7 @@ from code_review.config import (
     startup_config_snapshot,
 )
 from code_review.orchestration.orchestrator import ReviewOrchestrator
+from code_review.schemas.review_decision_event import ReviewDecisionConfig
 
 
 def test_scm_config_invalid_url_raises():
@@ -245,8 +246,7 @@ def test_review_decision_cli_overrides_use_copy_not_cached_mutation():
             1,
             head_sha="abc",
             dry_run=True,
-            review_decision_enabled=True,
-            review_decision_high_threshold=9,
+            review_decision=ReviewDecisionConfig(enabled=True, high_threshold=9),
         )
         cfg, _, _ = orch._load_config_and_provider()
         assert cfg.review_decision_enabled is True

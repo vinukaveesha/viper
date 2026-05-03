@@ -7,6 +7,7 @@ this normalized shape via :func:`review_decision_event_context_from_env` or prog
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -77,6 +78,17 @@ def event_allows_decision_only_skip_when_bot_not_blocking(
     if event is None or not event.has_audit_fields():
         return False
     return bool((event.comment_id or "").strip())
+
+
+@dataclass
+class ReviewDecisionConfig:
+    """Groups all per-run review-decision overrides for :func:`run_review`."""
+
+    enabled: bool | None = None
+    high_threshold: int | None = None
+    medium_threshold: int | None = None
+    only: bool = False
+    event_context: ReviewDecisionEventContext | None = field(default=None)
 
 
 def review_decision_event_context_from_env() -> ReviewDecisionEventContext | None:

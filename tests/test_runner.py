@@ -16,7 +16,7 @@ from code_review.providers.base import (
 )
 from code_review.providers.bitbucket_server import BitbucketServerProvider
 from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
-from code_review.runner import run_review
+from code_review.runner import ReviewDecisionConfig, run_review
 from tests.conftest import runner_run_async_returning, sample_unified_diff
 
 
@@ -260,11 +260,7 @@ def test_run_review_passes_explicit_config_objects_to_orchestrator():
         "abc123",
         dry_run=False,
         print_findings=False,
-        review_decision_enabled=None,
-        review_decision_high_threshold=None,
-        review_decision_medium_threshold=None,
-        review_decision_only=False,
-        event_context=None,
+        review_decision=ReviewDecisionConfig(),
         scm_config=scm_cfg,
         llm_config=llm_cfg,
         app_config=None,
@@ -361,8 +357,10 @@ def _run_review_decision_only_with_provider(
         1,
         head_sha=head_sha,
         dry_run=False,
-        review_decision_only=True,
-        event_context=event_context or _review_decision_event_context(),
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=event_context or _review_decision_event_context(),
+        ),
     )
 
 
@@ -532,10 +530,12 @@ def test_run_review_decision_only_reply_dismissal_sends_anchored_diff_context(
         1,
         head_sha="sha",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="11",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="11",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1129,7 +1129,7 @@ def test_run_review_decision_only_skips_agent_and_inline(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
+        review_decision=ReviewDecisionConfig(only=True),
     )
 
     assert posted == []
@@ -1176,10 +1176,12 @@ def test_run_review_decision_only_skips_when_skip_if_bot_not_blocking_and_reply(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="42",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="42",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1225,10 +1227,12 @@ def test_run_review_decision_only_skip_opt_in_ignored_when_bot_blocking(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="42",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="42",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1272,9 +1276,11 @@ def test_run_review_decision_only_skip_opt_in_ignored_for_comment_deleted(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                source="webhook_comment",
+            ),
         ),
     )
 

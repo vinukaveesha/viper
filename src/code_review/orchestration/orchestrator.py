@@ -19,7 +19,10 @@ from code_review.orchestration.runner_utils import (
 )
 from code_review.orchestration.standard_review import StandardReviewHandler
 from code_review.schemas.findings import FindingV1
-from code_review.schemas.review_decision_event import ReviewDecisionEventContext
+from code_review.schemas.review_decision_event import (
+    ReviewDecisionConfig,
+    ReviewDecisionEventContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,23 +39,20 @@ class ReviewOrchestrator:
         *,
         dry_run: bool = False,
         print_findings: bool = False,
-        review_decision_enabled: bool | None = None,
-        review_decision_high_threshold: int | None = None,
-        review_decision_medium_threshold: int | None = None,
-        review_decision_only: bool = False,
-        event_context: ReviewDecisionEventContext | None = None,
+        review_decision: ReviewDecisionConfig | None = None,
         scm_config: SCMConfig | None = None,
         llm_config: LLMConfig | None = None,
         app_config: CodeReviewAppConfig | None = None,
     ):
+        rd = review_decision or ReviewDecisionConfig()
         self.pr_ctx = PRContext(owner, repo, pr_number, head_sha)
         self.dry_run = dry_run
         self.print_findings = print_findings
-        self._review_decision_enabled_override = review_decision_enabled
-        self._review_decision_high_threshold_override = review_decision_high_threshold
-        self._review_decision_medium_threshold_override = review_decision_medium_threshold
-        self._review_decision_only = review_decision_only
-        self._event_context = event_context
+        self._review_decision_enabled_override = rd.enabled
+        self._review_decision_high_threshold_override = rd.high_threshold
+        self._review_decision_medium_threshold_override = rd.medium_threshold
+        self._review_decision_only = rd.only
+        self._event_context = rd.event_context
         self._scm_config_override = scm_config
         self._llm_config_override = llm_config
         self._app_config_override = app_config
