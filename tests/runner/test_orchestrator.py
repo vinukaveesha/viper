@@ -32,7 +32,7 @@ def test_build_batch_review_content_logs_user_prompt_when_enabled(caplog):
     with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
         reset_config_cache()
         try:
-            caplog.set_level(logging.INFO)
+            caplog.set_level(logging.INFO, logger="code_review")
             build_batch_review_content(
                 pr_ctx=PRContext("o", "r", 1, head_sha="abc123"),
                 batch_count=2,
@@ -81,7 +81,7 @@ def test_create_sequential_batch_review_agent_logs_instruction_when_enabled(
     with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
         reset_config_cache()
         try:
-            caplog.set_level(logging.INFO)
+            caplog.set_level(logging.INFO, logger="code_review")
             create_sequential_batch_review_agent(
                 provider=MagicMock(),
                 review_standards="### Python",
