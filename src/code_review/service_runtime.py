@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pydantic import SecretStr
-
 from code_review.config import get_code_review_app_config, get_scm_config
 from code_review.runner import ReviewDecisionConfig, run_review
 from code_review.service_models import ServiceReviewJob
@@ -25,14 +23,12 @@ class RequestScopedReviewRunner:
         bot_login: str = "",
     ):
         base_scm = get_scm_config()
-        # Validate the incoming URL via SCMConfig's field validator before
-        # applying it; model_copy skips validators so bad URLs must be caught here.
-        type(base_scm)._validate_url(self.scm_url)
-        return base_scm.model_copy(
-            update={
+        return base_scm.__class__.model_validate(
+            {
+                **base_scm.model_dump(),
                 "provider": self.scm_provider,
                 "url": self.scm_url,
-                "token": SecretStr(scm_token),
+                "token": scm_token,
                 "base_sha": job.base_sha,
                 "bot_identity": (bot_login or "").strip(),
             }
