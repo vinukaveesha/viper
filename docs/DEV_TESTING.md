@@ -88,20 +88,10 @@ existing Docker data is not affected.
 
 ---
 
-## C) With an External Orchestration Service (Optional)
+## C) Concurrency Testing
 
-For high-concurrency testing, you can introduce a separate orchestration service (sister project) that:
+If you want to test repeated reviews against changing PR heads, run the CLI multiple times
+with different `--head-sha` values and confirm that idempotency behaves as expected.
 
-- Receives SCM webhooks or CI callbacks.
-- Enqueues review jobs and debounces by PR/head (latest `head_sha` wins).
-- Starts worker processes/containers that run:
-  - `code-review --owner ... --repo ... --pr ... --head-sha ...`
-
-In that setup:
-
-- Use sections **A** or **B** to verify the worker image/CLI locally (one review at a time).
-- Use the orchestration project’s own docs (see `ORCHESTRATION_PLAN_SERVICE.md`) to:
-  - Run a local instance of the webhook/queue/worker stack.
-  - Verify that multiple rapid PR updates result in a **single** review for the latest head SHA.
-
-The Python package itself remains unchanged; only how you **schedule** reviews differs.
+Use sections **A** or **B** to verify the worker image/CLI locally. The Python package
+itself remains unchanged; only the calling process decides when to invoke it.
