@@ -154,7 +154,7 @@ def test_cli_allows_missing_head_sha_with_review_decision_only():
         finally:
             reset_config_cache()
         kw = mock_run.call_args[1]
-        assert kw["review_decision_only"] is True
+        assert kw["review_decision"].only is True
         assert kw["head_sha"] == ""
 
 
@@ -206,9 +206,9 @@ def test_cli_review_decision_options_passed_to_run_review():
         )
         mock_run.assert_called_once()
         kw = mock_run.call_args[1]
-        assert kw["review_decision_enabled"] is True
-        assert kw["review_decision_high_threshold"] == 4
-        assert kw["review_decision_medium_threshold"] == 6
+        assert kw["review_decision"].enabled is True
+        assert kw["review_decision"].high_threshold == 4
+        assert kw["review_decision"].medium_threshold == 6
 
 
 def test_cli_main_module_entry_point():

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api repos/e4c5/.*)",
+      "Bash(gh api graphql.*)"
+    ]
+  }
+}

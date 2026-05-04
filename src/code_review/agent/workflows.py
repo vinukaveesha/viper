@@ -12,7 +12,7 @@ from pydantic import Field
 
 from code_review.agent.agent import create_review_agent
 from code_review.batching import ReviewBatch
-from code_review.config import get_code_review_app_config
+from code_review.config import LLMConfig, get_code_review_app_config
 from code_review.diff.parser import annotate_diff_with_line_numbers
 from code_review.logging_config import emit_package_log
 from code_review.providers.base import ProviderInterface
@@ -138,6 +138,7 @@ def create_sequential_batch_review_agent(
     context_brief_attached: bool = False,
     review_visible_lines: bool | None = None,
     use_output_key: bool = False,
+    llm_config: LLMConfig | None = None,
 ):
     """Build a workflow agent that reviews prepared diff batches one after another."""
 
@@ -146,14 +147,15 @@ def create_sequential_batch_review_agent(
         # output_key only safe for single-batch sessions: multiple sub-agents sharing
         # a session would overwrite each other's state entry.
         output_key = "findings_result" if (use_output_key and len(batches) == 1) else None
-        agent = create_review_agent(
-            provider,
-            review_standards,
-            context_brief_attached=context_brief_attached,
-            review_visible_lines=review_visible_lines,
-            slim_output=True,
-            output_key=output_key,
-        )
+        agent_kwargs = {
+            "context_brief_attached": context_brief_attached,
+            "review_visible_lines": review_visible_lines,
+            "slim_output": True,
+            "output_key": output_key,
+        }
+        if llm_config is not None:
+            agent_kwargs["llm_config"] = llm_config
+        agent = create_review_agent(provider, review_standards, **agent_kwargs)
         agent.name = f"batch_review_{index}"
         agent.instruction = agent.instruction.rstrip() + "\n\n" + _BATCH_USER_MESSAGE_INSTRUCTION
         agent.include_contents = "none"

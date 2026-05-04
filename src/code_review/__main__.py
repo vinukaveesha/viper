@@ -8,7 +8,7 @@ from typer.models import OptionInfo
 
 from code_review.config import get_code_review_app_config, log_startup_configuration
 from code_review.logging_config import configure_logging
-from code_review.runner import run_review
+from code_review.runner import ReviewDecisionConfig, run_review
 
 
 def _ensure_logging() -> None:
@@ -187,10 +187,12 @@ def review(
         head_sha=head_sha_val,
         dry_run=dry_run,
         print_findings=print_findings,
-        review_decision_enabled=review_decision_enabled,
-        review_decision_high_threshold=review_decision_high_threshold,
-        review_decision_medium_threshold=review_decision_medium_threshold,
-        review_decision_only=review_decision_only,
+        review_decision=ReviewDecisionConfig(
+            enabled=review_decision_enabled,
+            high_threshold=review_decision_high_threshold,
+            medium_threshold=review_decision_medium_threshold,
+            only=review_decision_only,
+        ),
     )
     if fail_on_critical and any(f.severity == "high" for f in findings):
         raise typer.Exit(2)

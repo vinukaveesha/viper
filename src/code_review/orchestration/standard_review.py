@@ -400,16 +400,25 @@ class StandardReviewHandler:
         self,
         provider: ProviderInterface,
         cfg: Any,
+        agent_llm_config: Any | None,
         app_cfg: Any,
         run_observability: ReviewRunObservability,
         env: _ReviewEnv,
         review_standards: Any,
     ) -> _ReviewExecution:
         """Handle batching, prompt enrichment, and running the review agent."""
-        context_window = runner_mod.get_context_window()
+        context_window = (
+            runner_mod.get_context_window_for_config(agent_llm_config)
+            if agent_llm_config is not None
+            else runner_mod.get_context_window()
+        )
         batch_budget = build_review_batch_budget(
             context_window_tokens=context_window,
-            max_output_tokens=runner_mod.get_max_output_tokens(),
+            max_output_tokens=(
+                runner_mod.get_max_output_tokens_for_config(agent_llm_config)
+                if agent_llm_config is not None
+                else runner_mod.get_max_output_tokens()
+            ),
             diff_budget_ratio=runner_mod.DIFF_TOKEN_BUDGET_RATIO,
         )
         diff_budget = batch_budget.effective_diff_budget_tokens
@@ -451,6 +460,7 @@ class StandardReviewHandler:
             batches,
             context_brief_attached=context_brief_attached,
             review_visible_lines=review_visible_lines,
+            llm_config=agent_llm_config,
         )
         all_findings = execution_mod.run_agent_and_collect_findings(
             self.pr_ctx,
@@ -462,6 +472,7 @@ class StandardReviewHandler:
             context_brief_attached=context_brief_attached,
             prompt_suffix=prompt_suffix,
             review_visible_lines=review_visible_lines,
+            llm_config=agent_llm_config,
         )
         return self._ReviewExecution(all_findings, context_brief_attached, prompt_suffix)
 
@@ -650,6 +661,7 @@ class StandardReviewHandler:
         skip_if_needed: Callable[..., list[FindingV1] | None],
         compute_idempotency_and_maybe_short_circuit: Callable[..., list[FindingV1] | None],
         incremental_base_sha_fn: Callable[[Any, str], str],
+        agent_llm_config: Any | None = None,
     ) -> list[FindingV1]:
         """Execute the full non-decision-only review path."""
         pr_url = self.pr_ctx.pr_url(cfg)
@@ -685,7 +697,13 @@ class StandardReviewHandler:
 
         _, review_standards = self.detect_languages_for_files(env.paths)
         execution = self._execute_review_agent(
-            provider, cfg, app_cfg, run_observability, env, review_standards
+            provider,
+            cfg,
+            agent_llm_config,
+            app_cfg,
+            run_observability,
+            env,
+            review_standards,
         )
         if execution.early_exit_result is not None:
             return execution.early_exit_result

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_review.config import LLMConfig, SCMConfig
 from code_review.agent import create_review_agent
 from code_review.providers.base import (
     BotAttributionIdentity,
@@ -15,6 +16,7 @@ from code_review.providers.base import (
 )
 from code_review.providers.bitbucket_server import BitbucketServerProvider
 from code_review.reply_dismissal_state import REPLY_DISMISSAL_ACCEPTED_REPLY_TEXT
+from code_review.runner import ReviewDecisionConfig, run_review
 from tests.conftest import runner_run_async_returning, sample_unified_diff
 
 
@@ -202,6 +204,70 @@ def _reply_dismissal_unresolved_item(
     )
 
 
+def test_run_review_passes_explicit_config_objects_to_orchestrator():
+    scm_cfg = SCMConfig.model_construct(
+        provider="github",
+        url="https://api.github.com",
+        token="token",
+        owner="",
+        repo="",
+        pr_num=None,
+        head_sha="",
+        base_sha="",
+        event="",
+        skip_label="",
+        skip_title_pattern="",
+        review_decision_enabled=False,
+        review_decision_high_threshold=1,
+        review_decision_medium_threshold=3,
+        allowed_hosts=None,
+        bot_identity="",
+        bitbucket_server_user_slug="",
+    )
+    llm_cfg = LLMConfig.model_construct(
+        provider="openai",
+        api_key=None,
+        model="gpt-5.4",
+        context_window=128000,
+        max_output_tokens=4096,
+        temperature=0.0,
+        timeout_seconds=60.0,
+        max_retries=3,
+    )
+
+    with (
+        patch("code_review.runner.review_decision_event_context_from_env", return_value=None),
+        patch("code_review.runner.ReviewOrchestrator") as mock_orchestrator_cls,
+    ):
+        orchestrator = MagicMock()
+        orchestrator.run.return_value = []
+        mock_orchestrator_cls.return_value = orchestrator
+
+        result = run_review(
+            "acme",
+            "demo",
+            7,
+            head_sha="abc123",
+            scm_config=scm_cfg,
+            llm_config=llm_cfg,
+        )
+
+    assert result == []
+    mock_orchestrator_cls.assert_called_once_with(
+        "acme",
+        "demo",
+        7,
+        "abc123",
+        dry_run=False,
+        print_findings=False,
+        review_decision=ReviewDecisionConfig(),
+        scm_config=scm_cfg,
+        llm_config=llm_cfg,
+        app_config=None,
+    )
+    orchestrator.run.assert_called_once_with()
+
+
 def _reply_dismissal_context(
     *,
     gate_exclusion_stable_id="github:thread:PRRT_1",
@@ -291,8 +357,10 @@ def _run_review_decision_only_with_provider(
         1,
         head_sha=head_sha,
         dry_run=False,
-        review_decision_only=True,
-        event_context=event_context or _review_decision_event_context(),
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=event_context or _review_decision_event_context(),
+        ),
     )
 
 
@@ -462,10 +530,12 @@ def test_run_review_decision_only_reply_dismissal_sends_anchored_diff_context(
         1,
         head_sha="sha",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="11",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="11",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1059,7 +1129,7 @@ def test_run_review_decision_only_skips_agent_and_inline(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
+        review_decision=ReviewDecisionConfig(only=True),
     )
 
     assert posted == []
@@ -1106,10 +1176,12 @@ def test_run_review_decision_only_skips_when_skip_if_bot_not_blocking_and_reply(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="42",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="42",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1155,10 +1227,12 @@ def test_run_review_decision_only_skip_opt_in_ignored_when_bot_blocking(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            comment_id="42",
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                comment_id="42",
+                source="webhook_comment",
+            ),
         ),
     )
 
@@ -1202,9 +1276,11 @@ def test_run_review_decision_only_skip_opt_in_ignored_for_comment_deleted(
         1,
         head_sha="",
         dry_run=False,
-        review_decision_only=True,
-        event_context=ReviewDecisionEventContext(
-            source="webhook_comment",
+        review_decision=ReviewDecisionConfig(
+            only=True,
+            event_context=ReviewDecisionEventContext(
+                source="webhook_comment",
+            ),
         ),
     )
 

@@ -32,7 +32,7 @@ def test_build_batch_review_content_logs_user_prompt_when_enabled(caplog):
     with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
         reset_config_cache()
         try:
-            caplog.set_level(logging.INFO)
+            caplog.set_level(logging.INFO, logger="code_review")
             build_batch_review_content(
                 pr_ctx=PRContext("o", "r", 1, head_sha="abc123"),
                 batch_count=2,
@@ -81,7 +81,7 @@ def test_create_sequential_batch_review_agent_logs_instruction_when_enabled(
     with patch.dict(os.environ, {"CODE_REVIEW_LOG_PROMPTS": "true"}, clear=False):
         reset_config_cache()
         try:
-            caplog.set_level(logging.INFO)
+            caplog.set_level(logging.INFO, logger="code_review")
             create_sequential_batch_review_agent(
                 provider=MagicMock(),
                 review_standards="### Python",
@@ -206,6 +206,39 @@ def test_load_config_and_provider_calls_deps_and_returns_tuple(
         "https://gitea.example.com",
         "token123",
         bot_identity="",
+    )
+    assert result == (cfg, llm_cfg, provider)
+
+
+@patch("code_review.orchestration.orchestrator.runner_mod.get_provider")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_llm_config")
+@patch("code_review.orchestration.orchestrator.runner_mod.get_scm_config")
+def test_load_config_and_provider_prefers_explicit_config_objects(
+    mock_get_scm_config, mock_get_llm_config, mock_get_provider
+):
+    cfg = MagicMock(provider="gitlab", url="https://gitlab.example/api/v4", token="job-token")
+    cfg.bot_identity = "viper-bot"
+    llm_cfg = MagicMock(provider="openai", model="gpt-5.4")
+    provider = MagicMock()
+    mock_get_provider.return_value = provider
+
+    orchestrator = ReviewOrchestrator(
+        "o",
+        "r",
+        1,
+        scm_config=cfg,
+        llm_config=llm_cfg,
+    )
+
+    result = orchestrator._load_config_and_provider()
+
+    mock_get_scm_config.assert_not_called()
+    mock_get_llm_config.assert_not_called()
+    mock_get_provider.assert_called_once_with(
+        "gitlab",
+        "https://gitlab.example/api/v4",
+        "job-token",
+        bot_identity="viper-bot",
     )
     assert result == (cfg, llm_cfg, provider)
 
@@ -402,6 +435,7 @@ def test_execution_sequential_batch_mode_forwards_supported_args_only(mock_run_b
         context_brief_attached=True,
         prompt_suffix="extra context",
         review_visible_lines=None,
+        llm_config=None,
     )
 
 

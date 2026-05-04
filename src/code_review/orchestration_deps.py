@@ -45,8 +45,10 @@ from code_review.diff.utils import estimate_tokens as _estimate_tokens  # noqa: 
 from code_review.diff.utils import normalize_path as _normalize_path_for_anchor  # noqa: F401
 from code_review.models import (
     PRContext,
-    get_context_window,  # noqa: F401
-    get_max_output_tokens,  # noqa: F401
+    get_context_window as _model_get_context_window,
+    get_context_window_for_config as _model_get_context_window_for_config,
+    get_max_output_tokens as _model_get_max_output_tokens,
+    get_max_output_tokens_for_config as _model_get_max_output_tokens_for_config,
 )
 from code_review.providers import get_provider  # noqa: F401
 from code_review.providers.base import (
@@ -89,6 +91,34 @@ APP_NAME = "code_review"
 USER_ID = "reviewer"
 AGENT_VERSION = getattr(code_review, "__version__", "0.1.0")
 logger = logging.getLogger(__name__)
+
+
+def get_context_window() -> int:
+    return _model_get_context_window()
+
+
+_DEFAULT_GET_CONTEXT_WINDOW = get_context_window
+
+
+def get_context_window_for_config(config) -> int:
+    current_get_context_window = globals()["get_context_window"]
+    if current_get_context_window is not _DEFAULT_GET_CONTEXT_WINDOW:
+        return current_get_context_window()
+    return _model_get_context_window_for_config(config)
+
+
+def get_max_output_tokens() -> int:
+    return _model_get_max_output_tokens()
+
+
+_DEFAULT_GET_MAX_OUTPUT_TOKENS = get_max_output_tokens
+
+
+def get_max_output_tokens_for_config(config) -> int:
+    current_get_max_output_tokens = globals()["get_max_output_tokens"]
+    if current_get_max_output_tokens is not _DEFAULT_GET_MAX_OUTPUT_TOKENS:
+        return current_get_max_output_tokens()
+    return _model_get_max_output_tokens_for_config(config)
 
 # Fraction of context window reserved for diff content; rest for system prompt and response.
 # Configurable via LLM_DIFF_BUDGET_RATIO env var.

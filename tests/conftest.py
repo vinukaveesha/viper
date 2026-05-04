@@ -1,11 +1,31 @@
 """Pytest configuration and shared fixtures."""
 
+import logging
 import os
 import subprocess
 import time
 
 import pytest
 import requests
+
+
+@pytest.fixture(autouse=True)
+def _reset_code_review_logger():
+    """Restore code_review logger state after each test.
+
+    configure_logging() sets propagate=False and installs handlers on the
+    code_review logger. Without cleanup this leaks into subsequent tests and
+    breaks caplog capture (records never reach the root handler caplog attaches
+    to). Saving and restoring these attributes keeps tests isolated.
+    """
+    log = logging.getLogger("code_review")
+    saved_level = log.level
+    saved_propagate = log.propagate
+    saved_handlers = list(log.handlers)
+    yield
+    log.setLevel(saved_level)
+    log.propagate = saved_propagate
+    log.handlers[:] = saved_handlers
 
 
 def runner_run_async_returning(events):

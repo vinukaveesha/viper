@@ -138,6 +138,33 @@ def test_create_review_agent_adds_linked_context_instruction_when_attached(
     assert "Compare those requirements against the actual diff" in kwargs["instruction"]
 
 
+@patch("google.adk.agents.Agent")
+@patch("code_review.agent.agent.get_configured_model_for_config", return_value="custom-model")
+@patch("code_review.agent.agent.get_max_output_tokens_for_config", return_value=1234)
+@patch("code_review.agent.agent.get_effective_temperature_for_model", return_value=0.2)
+@patch("code_review.agent.agent.get_llm_config")
+def test_create_review_agent_uses_explicit_llm_config(
+    mock_get_llm_config,
+    mock_temperature,
+    mock_max_tokens,
+    mock_model,
+    mock_agent_cls,
+) -> None:
+    provider = MagicMock()
+    llm_cfg = SimpleNamespace(provider="openai", model="gpt-5.4", temperature=0.2)
+    mock_agent_cls.return_value = MagicMock()
+
+    create_review_agent(provider, llm_config=llm_cfg)
+
+    mock_get_llm_config.assert_not_called()
+    mock_temperature.assert_called_once_with("openai", "gpt-5.4", 0.2)
+    mock_max_tokens.assert_called_once_with(llm_cfg)
+    mock_model.assert_called_once_with(llm_cfg)
+    _, kwargs = mock_agent_cls.call_args
+    assert kwargs["model"] == "custom-model"
+    assert kwargs["generate_content_config"].max_output_tokens == 1234
+
+
 # --- EMBEDDED_DIFF_REVIEW_INSTRUCTION content ---
 
 

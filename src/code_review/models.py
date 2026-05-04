@@ -10,7 +10,12 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from code_review.config import get_llm_config, get_summary_llm_config, get_verification_llm_config
+from code_review.config import (
+    LLMConfig,
+    get_llm_config,
+    get_summary_llm_config,
+    get_verification_llm_config,
+)
 
 # Env var name per provider (used when LLM_API_KEY is set; Ollama has no key).
 _PROVIDER_API_KEY_ENV: dict[str, str] = {
@@ -66,7 +71,12 @@ class PRContext:
             case "github":
                 return f"{base_url}/{self.owner}/{self.repo}/pull/{self.pr_number}"
             case "gitlab":
-                return f"{base_url}/{self.owner}/{self.repo}/-/merge_requests/{self.pr_number}"
+                web_base_url = (
+                    base_url[: -len("/api/v4")]
+                    if base_url.lower().endswith("/api/v4")
+                    else base_url
+                )
+                return f"{web_base_url}/{self.owner}/{self.repo}/-/merge_requests/{self.pr_number}"
             case "bitbucket":
                 return f"https://bitbucket.org/{self.owner}/{self.repo}/pull-requests/{self.pr_number}"
             case "bitbucket_server":
@@ -279,6 +289,11 @@ def get_configured_model() -> Any:
     return _get_configured_model_from_config(get_llm_config())
 
 
+def get_configured_model_for_config(config: LLMConfig) -> Any:
+    """Return the primary review LLM instance for an explicit config object."""
+    return _get_configured_model_from_config(config)
+
+
 def get_configured_summary_model() -> Any:
     """Return the configured summary LLM, falling back to the primary LLM field by field."""
     return _get_configured_model_from_config(
@@ -299,6 +314,11 @@ def get_context_window() -> int:
     Explicit LLM_CONTEXT_WINDOW still wins. Otherwise use model metadata when available.
     """
     config = get_llm_config()
+    return get_context_window_for_config(config)
+
+
+def get_context_window_for_config(config: LLMConfig) -> int:
+    """Return context window size for an explicit config object."""
     if not os.getenv("LLM_CONTEXT_WINDOW", "").strip():
         metadata = get_model_metadata(config.provider, config.model)
         if metadata and metadata.context_window_tokens is not None:
@@ -309,6 +329,11 @@ def get_context_window() -> int:
 def get_max_output_tokens() -> int:
     """Return max output tokens from config or model metadata."""
     config = get_llm_config()
+    return get_max_output_tokens_for_config(config)
+
+
+def get_max_output_tokens_for_config(config: LLMConfig) -> int:
+    """Return max output tokens for an explicit config object."""
     if not os.getenv("LLM_MAX_OUTPUT_TOKENS", "").strip():
         metadata = get_model_metadata(config.provider, config.model)
         if metadata and metadata.max_output_tokens_default is not None:
@@ -321,7 +346,9 @@ def get_max_output_tokens() -> int:
 _FIXED_TEMPERATURE_PREFIXES: tuple[str, ...] = ("gpt-5",)
 
 
-def get_effective_temperature_for_model(provider: str, model: str, requested: float) -> float | None:
+def get_effective_temperature_for_model(
+    provider: str, model: str, requested: float
+) -> float | None:
     """Return the temperature to pass for a provider/model pair, or None to omit it.
 
     Some models (e.g. the gpt-5 family) only support a fixed temperature value

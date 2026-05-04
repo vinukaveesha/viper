@@ -11,6 +11,7 @@ from code_review.batching import (
     build_review_batches,
     split_file_diff_into_segments,
 )
+from code_review.config import LLMConfig
 from code_review.diff.utils import estimate_tokens
 from code_review.logging_config import emit_package_log
 from code_review.models import PRContext
@@ -35,6 +36,7 @@ def create_agent_and_runner(
     context_brief_attached: bool = False,
     review_visible_lines: bool | None = None,
     single_batch_mode: bool = False,
+    llm_config: LLMConfig | None = None,
 ):
     """Build the batch-review SequentialAgent, session service, and ADK Runner."""
     from google.adk.sessions import InMemorySessionService
@@ -42,13 +44,18 @@ def create_agent_and_runner(
     from code_review.adk_runner import create_runner
     from code_review.agent.workflows import create_sequential_batch_review_agent
 
+    agent_kwargs = {
+        "context_brief_attached": context_brief_attached,
+        "review_visible_lines": review_visible_lines,
+        "use_output_key": single_batch_mode,
+    }
+    if llm_config is not None:
+        agent_kwargs["llm_config"] = llm_config
     agent = create_sequential_batch_review_agent(
         provider,
         review_standards,
         batches,
-        context_brief_attached=context_brief_attached,
-        review_visible_lines=review_visible_lines,
-        use_output_key=single_batch_mode,
+        **agent_kwargs,
     )
     session_id = (
         f"{pr_ctx.owner}/{pr_ctx.repo}/pr-{pr_ctx.pr_number}/{runner_mod.uuid.uuid4().hex[:12]}"
@@ -74,6 +81,7 @@ def run_agent_and_collect_findings(
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run batch review and parse responses into findings."""
     if not batches:
@@ -89,6 +97,7 @@ def run_agent_and_collect_findings(
         context_brief_attached=context_brief_attached,
         prompt_suffix=prompt_suffix,
         review_visible_lines=review_visible_lines,
+        llm_config=llm_config,
     )
 
 
@@ -104,6 +113,7 @@ def _run_sequential_batch_review_mode(
     context_brief_attached: bool = False,
     prompt_suffix: str = "",
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
 ) -> list[runner_mod.FindingV1]:
     """Run the SequentialAgent batch workflow and preserve successful batches on rate limit."""
     _attach_batch_user_messages(
@@ -161,6 +171,7 @@ def _run_sequential_batch_review_mode(
                         context_brief_attached=context_brief_attached,
                         prompt_suffix=prompt_suffix,
                         review_visible_lines=review_visible_lines,
+                        llm_config=llm_config,
                         initial_retry_attempt=1,
                     )
                 )
@@ -173,6 +184,7 @@ def _run_sequential_batch_review_mode(
                     context_brief_attached=context_brief_attached,
                     prompt_suffix=prompt_suffix,
                     review_visible_lines=review_visible_lines,
+                    llm_config=llm_config,
                 )
             )
             return findings
@@ -205,6 +217,7 @@ def _run_sequential_batch_review_mode(
                 context_brief_attached=context_brief_attached,
                 prompt_suffix=prompt_suffix,
                 review_visible_lines=review_visible_lines,
+                llm_config=llm_config,
                 initial_retry_attempt=1,
             )
         )
@@ -401,6 +414,7 @@ def _run_isolated_batches_with_retry(
     context_brief_attached: bool,
     prompt_suffix: str,
     review_visible_lines: bool | None = None,
+    llm_config: LLMConfig | None = None,
     initial_retry_attempt: int = 0,
     max_retries: int = 2,
 ) -> list[runner_mod.FindingV1]:
@@ -424,6 +438,7 @@ def _run_isolated_batches_with_retry(
             [batch],
             context_brief_attached=context_brief_attached,
             review_visible_lines=review_visible_lines,
+            llm_config=llm_config,
         )
         _attach_batch_user_messages(
             runner,
